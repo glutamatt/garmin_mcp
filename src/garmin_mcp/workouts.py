@@ -91,26 +91,28 @@ def _normalize_repeat_group(step: dict) -> dict:
     """Normalize a repeat group step."""
     normalized = step.copy()
 
-    # Set correct type
-    normalized['type'] = 'RepeatGroupDTO'
+    # Set correct type if not already set or incorrect
+    if normalized.get('type') != 'RepeatGroupDTO':
+        normalized['type'] = 'RepeatGroupDTO'
 
-    # Ensure stepType has displayOrder
-    if 'stepType' in normalized:
-        normalized['stepType'].setdefault('displayOrder', 6)
+    # Ensure stepType has displayOrder (only if missing)
+    if 'stepType' in normalized and 'displayOrder' not in normalized['stepType']:
+        normalized['stepType']['displayOrder'] = 6
 
-    # Add required endCondition for iterations
-    normalized.setdefault('endCondition', {
-        'conditionTypeId': 7,
-        'conditionTypeKey': 'iterations',
-        'displayOrder': 7,
-        'displayable': False
-    })
+    # Add required endCondition for iterations (only if missing)
+    if 'endCondition' not in normalized:
+        normalized['endCondition'] = {
+            'conditionTypeId': 7,
+            'conditionTypeKey': 'iterations',
+            'displayOrder': 7,
+            'displayable': False
+        }
 
-    # Set endConditionValue to number of iterations
-    if 'numberOfIterations' in normalized:
+    # Set endConditionValue to number of iterations (only if missing)
+    if 'numberOfIterations' in normalized and 'endConditionValue' not in normalized:
         normalized['endConditionValue'] = float(normalized['numberOfIterations'])
 
-    # Add skipLastRestStep if missing
+    # Add defaults only if missing
     normalized.setdefault('skipLastRestStep', True)
     normalized.setdefault('smartRepeat', False)
 
@@ -125,11 +127,12 @@ def _normalize_executable_step(step: dict) -> dict:
     """Normalize an executable workout step."""
     normalized = step.copy()
 
-    # Set correct type
-    normalized['type'] = 'ExecutableStepDTO'
+    # Set correct type if not already set or incorrect
+    if normalized.get('type') != 'ExecutableStepDTO':
+        normalized['type'] = 'ExecutableStepDTO'
 
-    # Ensure stepType has displayOrder
-    if 'stepType' in normalized:
+    # Ensure stepType has displayOrder (all 6 basic step types + repeat)
+    if 'stepType' in normalized and 'displayOrder' not in normalized['stepType']:
         step_type_key = normalized['stepType'].get('stepTypeKey', '')
         display_order_map = {
             'warmup': 1,
@@ -137,38 +140,57 @@ def _normalize_executable_step(step: dict) -> dict:
             'interval': 3,
             'recovery': 4,
             'rest': 5,
-            'repeat': 6
+            'repeat': 6,
+            'other': 7
         }
-        normalized['stepType'].setdefault('displayOrder', display_order_map.get(step_type_key, 1))
+        if step_type_key in display_order_map:
+            normalized['stepType']['displayOrder'] = display_order_map[step_type_key]
 
-    # Ensure endCondition has displayOrder and displayable
+    # Ensure endCondition has displayOrder and displayable (only if missing)
     if 'endCondition' in normalized:
-        condition_key = normalized['endCondition'].get('conditionTypeKey', '')
-        condition_display_map = {
-            'lap.button': 1,
-            'time': 2,
-            'distance': 3,
-            'calories': 4,
-            'heart.rate': 5
+        if 'displayOrder' not in normalized['endCondition']:
+            condition_key = normalized['endCondition'].get('conditionTypeKey', '')
+            condition_display_map = {
+                'lap.button': 1,
+                'time': 2,
+                'distance': 3,
+                'calories': 4,
+                'heart.rate': 6
+            }
+            if condition_key in condition_display_map:
+                normalized['endCondition']['displayOrder'] = condition_display_map[condition_key]
+
+        # displayable defaults to true for most conditions
+        if 'displayable' not in normalized['endCondition']:
+            normalized['endCondition']['displayable'] = True
+
+    # Ensure targetType has displayOrder (only if missing)
+    if 'targetType' in normalized and 'displayOrder' not in normalized['targetType']:
+        target_key = normalized['targetType'].get('workoutTargetTypeKey', '')
+        target_display_map = {
+            'no.target': 1,
+            'speed.zone': 2,
+            'cadence': 3,
+            'heart.rate.zone': 4,
+            'power.zone': 5,
+            'pace.zone': 6
         }
-        normalized['endCondition'].setdefault('displayOrder', condition_display_map.get(condition_key, 1))
-        normalized['endCondition'].setdefault('displayable', True)
+        if target_key in target_display_map:
+            normalized['targetType']['displayOrder'] = target_display_map[target_key]
+        else:
+            normalized['targetType']['displayOrder'] = 1
 
-    # Ensure targetType has displayOrder
-    if 'targetType' in normalized:
-        normalized['targetType'].setdefault('displayOrder', 1)
+    # Only add strokeType if completely missing (can be empty object {})
+    if 'strokeType' not in normalized:
+        normalized['strokeType'] = {}
 
-    # Add required strokeType and equipmentType for running
-    normalized.setdefault('strokeType', {
-        'strokeTypeId': 0,
-        'strokeTypeKey': None,
-        'displayOrder': 0
-    })
-    normalized.setdefault('equipmentType', {
-        'strokeTypeId': 0,  # Yes, it's strokeTypeId in the API response
-        'strokeTypeKey': None,
-        'displayOrder': 0
-    })
+    # Only add equipmentType if completely missing
+    if 'equipmentType' not in normalized:
+        normalized['equipmentType'] = {
+            'equipmentTypeId': None,
+            'equipmentTypeKey': None,
+            'displayOrder': None
+        }
 
     return normalized
 
