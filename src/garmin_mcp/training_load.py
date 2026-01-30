@@ -550,6 +550,59 @@ def register_tools(app):
             return f"Error calculating ACWR trend: {str(e)}"
 
     @app.tool()
+    async def get_available_activity_types(days_of_activities: int = 90) -> str:
+        """Get list of distinct activity types from user's activities
+
+        Use this to discover what activity types are available before filtering
+        ACWR calculations. Returns activity types with counts to help the agent
+        decide which types to include.
+
+        Args:
+            days_of_activities: Days of history to scan (default 90)
+        """
+        try:
+            # Fetch activities
+            activities = garmin_client.get_activities(0, days_of_activities * 2)
+
+            if not activities:
+                return json.dumps({
+                    "error": "No activities found",
+                    "activity_types": []
+                }, indent=2)
+
+            # Count activity types
+            type_counts = {}
+            for activity in activities:
+                activity_type = activity.get('activityType', {})
+                type_key = activity_type.get('typeKey', 'unknown')
+                type_name = activity_type.get('typeId', type_key)  # More readable name
+
+                if type_key not in type_counts:
+                    type_counts[type_key] = {
+                        "type_key": type_key,
+                        "type_id": type_name,
+                        "count": 0
+                    }
+                type_counts[type_key]["count"] += 1
+
+            # Sort by count descending
+            sorted_types = sorted(
+                type_counts.values(),
+                key=lambda x: x["count"],
+                reverse=True
+            )
+
+            return json.dumps({
+                "total_activities": len(activities),
+                "days_scanned": days_of_activities,
+                "activity_types": sorted_types,
+                "hint": "Use type_key values (comma-separated) in activity_types parameter for ACWR tools"
+            }, indent=2)
+
+        except Exception as e:
+            return f"Error getting activity types: {str(e)}"
+
+    @app.tool()
     async def explain_acwr() -> str:
         """Get detailed explanation of ACWR and training load concepts
 
