@@ -375,13 +375,35 @@ Quantifies overall training stress considering intensity and duration.
 3. **Distance** - Distance-based load (km)
 4. **Calories** - Energy expenditure
 
+## Activity Type Selection (Critical!)
+
+**ACWR should be calculated per sport or training goal, not across all activities.**
+
+Before calculating ACWR, always:
+1. **Use `get_available_activity_types`** to discover what activities the athlete does
+2. **Filter by relevant activity types** based on their goal:
+   - Marathon training → `activity_types="running"`
+   - Triathlon → `activity_types="running,cycling,swimming_pool,open_water_swimming"`
+   - Cycling focus → `activity_types="cycling,virtual_ride"`
+   - General fitness → all activities (no filter)
+
+**Why this matters:**
+- A runner doing 5 easy bike rides doesn't reduce running injury risk
+- Mixing sports dilutes sport-specific load signals
+- Cross-training has different fatigue profiles than primary sport
+- Sport-specific ACWR better predicts injury risk for that sport
+
+**Common activity type keys:** `running`, `cycling`, `swimming_pool`, `open_water_swimming`,
+`trail_running`, `virtual_ride`, `walking`, `hiking`, `strength_training`
+
 ## How to Use
 
-1. **Use `get_acwr_analysis`** to get current ACWR and recommendations
-2. **Use `get_acwr_trend`** to see how ACWR has changed over time
-3. **When planning workouts**, aim to keep ACWR in the 0.8-1.3 zone
-4. **If ACWR > 1.5**, recommend recovery or easy workout
-5. **If ACWR < 0.8**, gradually increase training load
+1. **First, call `get_available_activity_types`** to see what the athlete does
+2. **Use `get_acwr_analysis`** with appropriate `activity_types` filter
+3. **Use `get_acwr_trend`** to see how ACWR has changed over time
+4. **When planning workouts**, aim to keep ACWR in the 0.8-1.3 zone
+5. **If ACWR > 1.5**, recommend recovery or easy workout
+6. **If ACWR < 0.8**, gradually increase training load
 
 ## Planning Guidance
 
