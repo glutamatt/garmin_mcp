@@ -329,24 +329,24 @@ def register_tools(app):
             if not status:
                 return f"No training status data found for {date}."
 
-            # Extract from nested structure
-            recent_status = status.get('mostRecentTrainingStatus', {})
-            latest_data = recent_status.get('latestTrainingStatusData', {})
+            # Extract from nested structure (use 'or {}' to handle None values)
+            recent_status = status.get('mostRecentTrainingStatus') or {}
+            latest_data = recent_status.get('latestTrainingStatusData') or {}
 
             # Get first device data (usually the primary device)
             device_data = {}
-            for device_id, data in latest_data.items():
-                device_data = data
+            for device_id, data in (latest_data or {}).items():
+                device_data = data or {}
                 break
 
-            acwr_data = device_data.get('acuteTrainingLoadDTO', {})
+            acwr_data = (device_data.get('acuteTrainingLoadDTO') or {})
 
             # VO2 Max data
-            vo2_data = status.get('mostRecentVO2Max', {}).get('generic', {})
+            vo2_data = (status.get('mostRecentVO2Max') or {}).get('generic') or {}
 
             # Training load balance
-            load_balance = status.get('mostRecentTrainingLoadBalance', {})
-            load_map = load_balance.get('metricsTrainingLoadBalanceDTOMap', {})
+            load_balance = status.get('mostRecentTrainingLoadBalance') or {}
+            load_map = (load_balance.get('metricsTrainingLoadBalanceDTOMap') or {})
             load_data = {}
             for device_id, data in load_map.items():
                 load_data = data
