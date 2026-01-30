@@ -524,6 +524,46 @@ def register_tools(app):
             return f"Error scheduling workout: {str(e)}"
 
     @app.tool()
+    async def schedule_workout_directly(workout_data: dict, date: str) -> str:
+        """Schedule a workout directly to calendar without saving to workout library
+
+        Creates a workout on the calendar for a specific date without persisting it
+        to your workout list. Similar to how third-party apps push workouts to Garmin.
+
+        This is useful when you want to plan a workout for a specific date without
+        cluttering your workout library with one-time workouts.
+
+        Args:
+            workout_data: Dictionary containing workout structure (name, sport type, segments, etc.)
+            date: Date to schedule the workout in YYYY-MM-DD format
+        """
+        try:
+            # Normalize the workout structure to match Garmin API requirements
+            normalized_data = _normalize_workout_structure(workout_data)
+
+            # Schedule directly without saving to library
+            result = garmin_client.schedule_workout_directly(normalized_data, date)
+
+            # Curate the response
+            if isinstance(result, dict):
+                workout = result.get('workout', {})
+                curated = {
+                    "workout_schedule_id": result.get('workoutScheduleId'),
+                    "workout_name": workout.get('workoutName') or normalized_data.get('workoutName'),
+                    "calendar_date": result.get('calendarDate') or date,
+                    "created_date": result.get('createdDate'),
+                    "status": "scheduled_directly",
+                    "message": "Workout scheduled to calendar without saving to workout library"
+                }
+                # Remove None values
+                curated = {k: v for k, v in curated.items() if v is not None}
+                return json.dumps(curated, indent=2)
+
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            return f"Error scheduling workout directly: {str(e)}"
+
+    @app.tool()
     async def upload_activity(file_path: str) -> str:
         """Upload an activity from a file
 
@@ -645,39 +685,6 @@ def register_tools(app):
             return json.dumps(curated, indent=2)
         except Exception as e:
             return f"Error retrieving training plan workouts: {str(e)}"
-
-    @app.tool()
-    async def schedule_workout(workout_id: int, calendar_date: str) -> str:
-        """Schedule a workout to a specific calendar date
-
-        This adds an existing workout from your Garmin workout library
-        to your Garmin Connect calendar on the specified date.
-
-        Args:
-            workout_id: ID of the workout to schedule (get IDs from get_workouts)
-            calendar_date: Date to schedule the workout in YYYY-MM-DD format
-        """
-        try:
-            url = f"workout-service/schedule/{workout_id}"
-            response = garmin_client.garth.post("connectapi", url, json={"date": calendar_date})
-
-            if response.status_code == 200:
-                return json.dumps({
-                    "status": "success",
-                    "workout_id": workout_id,
-                    "scheduled_date": calendar_date,
-                    "message": f"Successfully scheduled workout {workout_id} for {calendar_date}"
-                }, indent=2)
-            else:
-                return json.dumps({
-                    "status": "failed",
-                    "workout_id": workout_id,
-                    "scheduled_date": calendar_date,
-                    "http_status": response.status_code,
-                    "message": f"Failed to schedule workout: HTTP {response.status_code}"
-                }, indent=2)
-        except Exception as e:
-            return f"Error scheduling workout: {str(e)}"
 
     @app.tool()
     async def get_fbt_adaptive_workout_details(workout_uuid: str) -> str:
@@ -889,6 +896,457 @@ def register_tools(app):
             return json.dumps(curated_activities, indent=2)
         except Exception as e:
             return f"Error retrieving workout compliance: {str(e)}"
+
+    # =========================================================================
+    # COACHING-ORIENTED TOOLS
+    # These tools are designed for AI coaching agents to manage training
+    # =========================================================================
+
+    @app.tool()
+    async def plan_workout(workout_data: dict, date: str) -> str:
+        """Plan and schedule a workout in one step (RECOMMENDED for coaching)
+
+        Creates a workout and schedules it to the calendar. The workout will
+        appear in both the workout library and on the calendar for the specified date.
+
+        This is the recommended way to plan workouts as an AI coach, as it:
+        - Creates a reusable workout template in the library
+        - Schedules it to the athlete's calendar
+        - Returns IDs for both the workout and schedule entry
+
+        Args:
+            workout_data: Dictionary containing workout structure with:
+                - workoutName: Name of the workout (required)
+                - sportType: {sportTypeId, sportTypeKey} (required)
+                - workoutSegments: List of segments with workoutSteps
+            date: Date to schedule in YYYY-MM-DD format
+        """
+        try:
+            # Normalize the workout structure
+            normalized_data = _normalize_workout_structure(workout_data)
+
+            # Step 1: Create the workout
+            workout_json = json.dumps(normalized_data)
+            upload_result = garmin_client.upload_workout(workout_json)
+            workout_id = upload_result.get('workoutId')
+
+            if not workout_id:
+                return json.dumps({
+                    "status": "error",
+                    "message": "Failed to create workout - no workout ID returned"
+                }, indent=2)
+
+            # Step 2: Schedule the workout
+            schedule_result = garmin_client.schedule_workout(workout_id, date)
+
+            # Return combined result
+            curated = {
+                "status": "planned",
+                "workout_id": workout_id,
+                "workout_name": upload_result.get('workoutName'),
+                "schedule_id": schedule_result.get('workoutScheduleId'),
+                "calendar_date": schedule_result.get('calendarDate'),
+                "estimated_duration_seconds": upload_result.get('estimatedDurationInSecs'),
+                "message": f"Workout '{upload_result.get('workoutName')}' created and scheduled for {date}"
+            }
+            curated = {k: v for k, v in curated.items() if v is not None}
+            return json.dumps(curated, indent=2)
+
+        except Exception as e:
+            return f"Error planning workout: {str(e)}"
+
+    @app.tool()
+    async def get_training_calendar(start_date: str, end_date: str) -> str:
+        """Get comprehensive training calendar view (RECOMMENDED for coaching overview)
+
+        Returns a unified view of the athlete's training calendar including:
+        - Scheduled workouts (from library)
+        - Training plan workouts (adaptive coaching)
+        - Events and races
+        - Completed activities
+
+        This is the primary tool for understanding an athlete's training schedule.
+
+        Args:
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format
+        """
+        try:
+            # Get scheduled workouts via GraphQL
+            scheduled = garmin_client.get_scheduled_workouts_for_range(start_date, end_date)
+
+            # Get calendar items (includes events, training plan workouts)
+            calendar_items = garmin_client.get_calendar_items_for_range(start_date, end_date)
+
+            # Organize by date
+            by_date = {}
+
+            # Process scheduled workouts
+            for workout in scheduled:
+                date = workout.get('scheduleDate')
+                if date not in by_date:
+                    by_date[date] = {"date": date, "items": []}
+
+                by_date[date]["items"].append({
+                    "type": "scheduled_workout",
+                    "schedule_id": workout.get('scheduledWorkoutId'),
+                    "workout_id": workout.get('workoutId'),
+                    "workout_uuid": workout.get('workoutUuid'),
+                    "name": workout.get('workoutName'),
+                    "sport": workout.get('workoutType'),
+                    "duration_seconds": workout.get('estimatedDurationInSecs'),
+                    "training_plan": workout.get('tpPlanName'),
+                    "is_rest_day": workout.get('isRestDay'),
+                })
+
+            # Process calendar items (events, training plan items)
+            for item in calendar_items:
+                date = item.get('date')
+                item_type = item.get('itemType')
+
+                # Skip if already have this from scheduled workouts
+                if item_type == 'workout':
+                    continue
+
+                if date not in by_date:
+                    by_date[date] = {"date": date, "items": []}
+
+                if item_type == 'event':
+                    by_date[date]["items"].append({
+                        "type": "event",
+                        "name": item.get('title'),
+                        "is_race": item.get('isRace'),
+                        "location": item.get('location'),
+                    })
+                elif item_type == 'activity':
+                    by_date[date]["items"].append({
+                        "type": "completed_activity",
+                        "name": item.get('title'),
+                        "sport": item.get('sportTypeKey'),
+                        "duration_seconds": item.get('duration'),
+                        "distance_meters": item.get('distance'),
+                    })
+
+            # Sort by date and convert to list
+            result = {
+                "date_range": {"start": start_date, "end": end_date},
+                "total_days": len(by_date),
+                "calendar": sorted(by_date.values(), key=lambda x: x["date"])
+            }
+
+            return json.dumps(result, indent=2)
+
+        except Exception as e:
+            return f"Error getting training calendar: {str(e)}"
+
+    @app.tool()
+    async def cancel_scheduled_workout(schedule_id: int) -> str:
+        """Remove a scheduled workout from the calendar
+
+        Unschedules a workout without deleting the workout from the library.
+        Use this when an athlete needs to skip a planned workout.
+
+        Args:
+            schedule_id: The schedule ID (from get_training_calendar or plan_workout)
+        """
+        try:
+            success = garmin_client.unschedule_workout(schedule_id)
+
+            if success:
+                return json.dumps({
+                    "status": "cancelled",
+                    "schedule_id": schedule_id,
+                    "message": f"Workout schedule {schedule_id} removed from calendar"
+                }, indent=2)
+            else:
+                return json.dumps({
+                    "status": "failed",
+                    "schedule_id": schedule_id,
+                    "message": "Failed to cancel workout"
+                }, indent=2)
+
+        except Exception as e:
+            return f"Error cancelling workout: {str(e)}"
+
+    @app.tool()
+    async def reschedule_workout(schedule_id: int, new_date: str) -> str:
+        """Move a scheduled workout to a different date
+
+        Reschedules an existing workout to a new date. Useful when an athlete
+        needs to adjust their training schedule.
+
+        Args:
+            schedule_id: The schedule ID of the workout to move
+            new_date: New date in YYYY-MM-DD format
+        """
+        try:
+            result = garmin_client.reschedule_workout(schedule_id, new_date)
+
+            curated = {
+                "status": "rescheduled",
+                "schedule_id": schedule_id,
+                "new_date": new_date,
+                "workout_name": result.get('workout', {}).get('workoutName'),
+                "message": f"Workout rescheduled to {new_date}"
+            }
+            curated = {k: v for k, v in curated.items() if v is not None}
+            return json.dumps(curated, indent=2)
+
+        except Exception as e:
+            return f"Error rescheduling workout: {str(e)}"
+
+    @app.tool()
+    async def get_athlete_readiness() -> str:
+        """Get current training readiness and recovery status (RECOMMENDED before planning)
+
+        Returns the athlete's current readiness to train based on:
+        - Training readiness score
+        - HRV status
+        - Sleep quality
+        - Recovery time
+        - Recent training load
+
+        Use this before planning workouts to ensure appropriate intensity.
+        """
+        try:
+            from datetime import datetime
+            today = datetime.now().strftime('%Y-%m-%d')
+
+            # Get training readiness
+            try:
+                readiness = garmin_client.get_training_readiness(today)
+            except Exception:
+                readiness = None
+
+            # Get training status
+            try:
+                status = garmin_client.get_training_status(today)
+            except Exception:
+                status = None
+
+            # Get HRV
+            try:
+                hrv = garmin_client.get_hrv_data(today)
+            except Exception:
+                hrv = None
+
+            # Get sleep
+            try:
+                sleep = garmin_client.get_sleep_data(today)
+            except Exception:
+                sleep = None
+
+            curated = {
+                "date": today,
+                "training_readiness": None,
+                "training_status": None,
+                "hrv": None,
+                "sleep": None,
+                "recommendations": []
+            }
+
+            # Process readiness
+            if readiness:
+                curated["training_readiness"] = {
+                    "score": readiness.get('score') or readiness.get('trainingReadinessScore'),
+                    "level": readiness.get('level') or readiness.get('trainingReadinessLevel'),
+                    "feedback": readiness.get('feedbackPhrase'),
+                }
+
+            # Process training status
+            if status:
+                curated["training_status"] = {
+                    "status": status.get('trainingStatus') or status.get('status'),
+                    "load_7day": status.get('weeklyTrainingLoad'),
+                    "load_28day": status.get('monthlyTrainingLoad'),
+                    "vo2max": status.get('vo2Max'),
+                }
+
+            # Process HRV
+            if hrv:
+                hrv_value = hrv.get('hrvValue') or hrv.get('lastNightAvg')
+                if hrv_value:
+                    curated["hrv"] = {
+                        "value": hrv_value,
+                        "status": hrv.get('status') or hrv.get('hrvStatus'),
+                        "baseline": hrv.get('baseline') or hrv.get('weeklyAvg'),
+                    }
+
+            # Process sleep
+            if sleep:
+                curated["sleep"] = {
+                    "score": sleep.get('overallScore') or sleep.get('sleepScores', {}).get('overall'),
+                    "duration_seconds": sleep.get('sleepTimeSeconds'),
+                    "quality": sleep.get('sleepQualityType'),
+                }
+
+            # Generate recommendations
+            readiness_score = curated.get("training_readiness", {}).get("score")
+            if readiness_score:
+                if readiness_score >= 70:
+                    curated["recommendations"].append("Good readiness - suitable for high intensity")
+                elif readiness_score >= 50:
+                    curated["recommendations"].append("Moderate readiness - consider moderate intensity")
+                else:
+                    curated["recommendations"].append("Low readiness - recommend easy/recovery workout or rest")
+
+            # Remove None values
+            curated = {k: v for k, v in curated.items() if v is not None}
+            return json.dumps(curated, indent=2)
+
+        except Exception as e:
+            return f"Error getting athlete readiness: {str(e)}"
+
+    @app.tool()
+    async def get_weekly_training_summary(week_end_date: str = None) -> str:
+        """Get summary of training for a week (RECOMMENDED for weekly review)
+
+        Provides a comprehensive summary of the athlete's training week including:
+        - Total training load
+        - Workout compliance (planned vs completed)
+        - Activities by type
+        - Training effect distribution
+
+        Args:
+            week_end_date: End date of the week (YYYY-MM-DD), defaults to today
+        """
+        try:
+            from datetime import datetime, timedelta
+
+            if week_end_date:
+                end_dt = datetime.strptime(week_end_date, '%Y-%m-%d')
+            else:
+                end_dt = datetime.now()
+
+            start_dt = end_dt - timedelta(days=6)
+            start_date = start_dt.strftime('%Y-%m-%d')
+            end_date = end_dt.strftime('%Y-%m-%d')
+
+            # Get scheduled workouts
+            scheduled = garmin_client.get_scheduled_workouts_for_range(start_date, end_date)
+
+            # Get activities with compliance
+            try:
+                activities = garmin_client.get_activities_with_compliance(start_date, end_date)
+            except Exception:
+                activities = []
+
+            # Get weekly training load
+            try:
+                load = garmin_client.get_weekly_training_load(end_date, weeks=1)
+            except Exception:
+                load = None
+
+            # Calculate stats
+            planned_count = len(scheduled)
+            completed_count = len([a for a in activities if a.get('adaptiveCoachingWorkoutStatus') == 'COMPLETED'])
+
+            total_duration = sum(a.get('duration', 0) or 0 for a in activities)
+            total_distance = sum(a.get('distance', 0) or 0 for a in activities)
+
+            # Group activities by type
+            by_type = {}
+            for a in activities:
+                atype = a.get('activityType') or 'other'
+                if atype not in by_type:
+                    by_type[atype] = {"count": 0, "duration_seconds": 0, "distance_meters": 0}
+                by_type[atype]["count"] += 1
+                by_type[atype]["duration_seconds"] += a.get('duration', 0) or 0
+                by_type[atype]["distance_meters"] += a.get('distance', 0) or 0
+
+            summary = {
+                "week": {"start": start_date, "end": end_date},
+                "workouts": {
+                    "planned": planned_count,
+                    "completed": completed_count,
+                    "compliance_rate": round(completed_count / planned_count * 100, 1) if planned_count > 0 else None
+                },
+                "totals": {
+                    "activities": len(activities),
+                    "duration_seconds": total_duration,
+                    "duration_hours": round(total_duration / 3600, 1),
+                    "distance_meters": total_distance,
+                    "distance_km": round(total_distance / 1000, 1)
+                },
+                "by_activity_type": by_type
+            }
+
+            if load:
+                summary["training_load"] = {
+                    "weekly_load": load.get('weeklyTrainingLoad'),
+                    "load_status": load.get('loadStatus'),
+                }
+
+            # Remove None values recursively
+            def clean_nones(d):
+                if isinstance(d, dict):
+                    return {k: clean_nones(v) for k, v in d.items() if v is not None}
+                return d
+
+            return json.dumps(clean_nones(summary), indent=2)
+
+        except Exception as e:
+            return f"Error getting weekly summary: {str(e)}"
+
+    @app.tool()
+    async def delete_workout_from_library(workout_id: int) -> str:
+        """Delete a workout from the library
+
+        Permanently removes a workout from the workout library.
+        Note: This will also remove any scheduled instances of this workout.
+
+        Args:
+            workout_id: ID of the workout to delete
+        """
+        try:
+            success = garmin_client.delete_workout(workout_id)
+
+            if success:
+                return json.dumps({
+                    "status": "deleted",
+                    "workout_id": workout_id,
+                    "message": f"Workout {workout_id} deleted from library"
+                }, indent=2)
+            else:
+                return json.dumps({
+                    "status": "failed",
+                    "workout_id": workout_id,
+                    "message": "Failed to delete workout"
+                }, indent=2)
+
+        except Exception as e:
+            return f"Error deleting workout: {str(e)}"
+
+    @app.tool()
+    async def update_workout_in_library(workout_id: int, workout_data: dict) -> str:
+        """Update an existing workout in the library
+
+        Modifies a workout that already exists in the library.
+        All scheduled instances will reflect the updated workout.
+
+        Args:
+            workout_id: ID of the workout to update
+            workout_data: Updated workout structure
+        """
+        try:
+            # Normalize the workout structure
+            normalized_data = _normalize_workout_structure(workout_data)
+
+            # Update the workout
+            result = garmin_client.update_workout(workout_id, normalized_data)
+
+            curated = {
+                "status": "updated",
+                "workout_id": result.get('workoutId'),
+                "workout_name": result.get('workoutName'),
+                "updated_date": result.get('updatedDate'),
+                "message": f"Workout '{result.get('workoutName')}' updated"
+            }
+            curated = {k: v for k, v in curated.items() if v is not None}
+            return json.dumps(curated, indent=2)
+
+        except Exception as e:
+            return f"Error updating workout: {str(e)}"
 
     return app
 

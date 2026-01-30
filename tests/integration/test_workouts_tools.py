@@ -99,11 +99,19 @@ async def test_upload_workout_tool(app_with_workouts, mock_garmin_client):
         {"workout_data": workout_data}
     )
 
-    # Verify - the function converts dict to JSON string before calling API
+    # Verify - the function normalizes and converts dict to JSON string before calling API
     assert result is not None
     import json
-    expected_json = json.dumps(workout_data)
-    mock_garmin_client.upload_workout.assert_called_once_with(expected_json)
+    mock_garmin_client.upload_workout.assert_called_once()
+
+    # Verify the normalized payload contains the original data plus defaults
+    call_args = mock_garmin_client.upload_workout.call_args[0][0]
+    normalized_data = json.loads(call_args)
+    assert normalized_data["workoutName"] == "New Workout"
+    assert normalized_data["sportType"]["sportTypeId"] == 1
+    # Check normalization added required defaults
+    assert "avgTrainingSpeed" in normalized_data
+    assert "estimatedDurationInSecs" in normalized_data
 
 
 @pytest.mark.asyncio
@@ -119,6 +127,47 @@ async def test_upload_activity_tool(app_with_workouts, mock_garmin_client):
     # Verify - should return placeholder message
     assert result is not None
     assert "not supported" in str(result).lower()
+
+
+@pytest.mark.asyncio
+async def test_schedule_workout_directly_tool(app_with_workouts, mock_garmin_client):
+    """Test schedule_workout_directly tool - schedules workout without saving to library"""
+    # Setup mock
+    mock_garmin_client.schedule_workout_directly.return_value = {
+        "workoutScheduleId": 98765,
+        "workout": {"workoutName": "Quick Run"},
+        "calendarDate": "2024-01-20",
+        "createdDate": "2024-01-15T10:00:00.000"
+    }
+
+    # Call tool
+    workout_data = {
+        "workoutName": "Quick Run",
+        "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+        "workoutSegments": []
+    }
+    result = await app_with_workouts.call_tool(
+        "schedule_workout_directly",
+        {"workout_data": workout_data, "date": "2024-01-20"}
+    )
+
+    # Verify
+    assert result is not None
+    mock_garmin_client.schedule_workout_directly.assert_called_once()
+
+    # Verify the call included the normalized workout and date
+    call_args = mock_garmin_client.schedule_workout_directly.call_args
+    normalized_workout = call_args[0][0]
+    date = call_args[0][1]
+    assert normalized_workout["workoutName"] == "Quick Run"
+    assert "avgTrainingSpeed" in normalized_workout  # Normalization applied
+    assert date == "2024-01-20"
+
+    # Verify response
+    import json
+    response = json.loads(result[0].text)
+    assert response["status"] == "scheduled_directly"
+    assert response["workout_schedule_id"] == 98765
 
 
 @pytest.mark.asyncio
