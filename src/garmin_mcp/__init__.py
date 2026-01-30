@@ -23,6 +23,7 @@ from garmin_mcp import training
 from garmin_mcp import workouts
 from garmin_mcp import data_management
 from garmin_mcp import womens_health
+from garmin_mcp import training_load
 
 
 def is_interactive_terminal() -> bool:
@@ -221,6 +222,7 @@ def main():
     workouts.configure(garmin_client)
     data_management.configure(garmin_client)
     womens_health.configure(garmin_client)
+    training_load.configure(garmin_client)
 
     # Create the MCP app
     app = FastMCP("Garmin Connect v1.0")
@@ -237,6 +239,7 @@ def main():
     app = workouts.register_tools(app)
     app = data_management.register_tools(app)
     app = womens_health.register_tools(app)
+    app = training_load.register_tools(app)
 
     # Run the MCP server
     app.run()
