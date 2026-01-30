@@ -60,6 +60,72 @@ def _normalize_workout_structure(workout_data: dict) -> dict:
     return normalized
 
 
+def _restructure_flat_repeats(steps: list) -> list:
+    """Restructure flat repeat groups into nested structure.
+
+    Coach Apex sends repeat groups in a flat structure using childStepId:
+      [repeat{childStepId:3}, interval{stepId:3, childStepId:4}, recovery{stepId:4}]
+
+    Garmin expects nested structure:
+      [repeat{workoutSteps: [interval, recovery]}]
+
+    Args:
+        steps: Flat list of steps
+
+    Returns:
+        Restructured list with nested repeat groups
+    """
+    # Build stepId map for quick lookup
+    step_map = {}
+    for step in steps:
+        if 'stepId' in step:
+            step_map[step['stepId']] = step
+
+    # Track which steps have been moved into repeat groups
+    moved_step_ids = set()
+    restructured = []
+
+    for step in steps:
+        # Skip if this step was already moved into a repeat group
+        if step.get('stepId') in moved_step_ids:
+            continue
+
+        # Check if this is a repeat group without workoutSteps
+        is_repeat = (step.get('stepType', {}).get('stepTypeKey') == 'repeat' or
+                     step.get('numberOfIterations'))
+        has_child_id = 'childStepId' in step
+        has_workout_steps = 'workoutSteps' in step and step['workoutSteps']
+
+        if is_repeat and has_child_id and not has_workout_steps:
+            # This is a flat repeat that needs restructuring
+            child_steps = []
+            current_child_id = step.get('childStepId')
+
+            # Follow the childStepId chain to collect all child steps
+            while current_child_id and current_child_id in step_map:
+                child_step = step_map[current_child_id]
+                child_steps.append(child_step)
+                moved_step_ids.add(current_child_id)
+
+                # Check if this child points to another child
+                next_child_id = child_step.get('childStepId')
+
+                # Stop if next child points back (circular) or doesn't exist
+                if not next_child_id or next_child_id in moved_step_ids:
+                    break
+
+                # For repeat groups: collect numberOfIterations worth of steps
+                # But in practice, we collect until childStepId chain ends
+                current_child_id = next_child_id
+
+            # Add workoutSteps array to the repeat group
+            step['workoutSteps'] = child_steps
+
+        restructured.append(step)
+
+    return restructured
+
+
 def _normalize_steps(steps: list) -> list:
     """Recursively normalize workout steps.
 
@@ -69,6 +135,9 @@ def _normalize_steps(steps: list) -> list:
     Returns:
         Normalized steps with correct types and required fields
     """
+    # First, restructure any flat repeat groups
+    steps = _restructure_flat_repeats(steps)
+
     normalized_steps = []
 
     for step in steps:
