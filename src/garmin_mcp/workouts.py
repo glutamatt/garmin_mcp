@@ -391,4 +391,267 @@ def register_tools(app):
         except Exception as e:
             return f"Error scheduling workout: {str(e)}"
 
+    @app.tool()
+    async def get_fbt_adaptive_workout_details(workout_uuid: str) -> str:
+        """Get detailed structure of an FBT adaptive coaching workout
+
+        Returns complete workout details including intervals, pace/HR zones,
+        and step-by-step instructions for workouts from adaptive training plans.
+
+        Args:
+            workout_uuid: UUID of the workout (from training plan)
+        """
+        try:
+            workout = garmin_client.get_fbt_adaptive_workout(workout_uuid)
+            if not workout:
+                return f"No workout found with UUID {workout_uuid}"
+
+            # Curate to essential fields
+            curated = {
+                "workout_uuid": workout.get('workoutUuid'),
+                "workout_name": workout.get('workoutName'),
+                "description": workout.get('description'),
+                "sport_type": workout.get('sportType', {}).get('sportTypeKey'),
+                "estimated_duration_seconds": workout.get('estimatedDurationInSecs'),
+                "estimated_distance_meters": workout.get('estimatedDistanceInMeters'),
+                "training_effect_label": workout.get('trainingEffectLabel'),
+                "estimated_aerobic_effect": workout.get('estimatedTrainingEffect'),
+                "estimated_anaerobic_effect": workout.get('estimatedAnaerobicTrainingEffect'),
+                "workout_phrase": workout.get('workoutPhrase'),
+                "priority_type": workout.get('priorityType'),
+                "steps": []
+            }
+
+            # Parse workout steps
+            segments = workout.get('workoutSegments', [])
+            for segment in segments:
+                steps = segment.get('workoutSteps', [])
+                for step in steps:
+                    step_data = _parse_workout_step(step)
+                    if step_data:
+                        curated['steps'].append(step_data)
+
+            # Remove None values
+            curated = {k: v for k, v in curated.items() if v is not None}
+
+            return json.dumps(curated, indent=2)
+        except Exception as e:
+            return f"Error retrieving workout details: {str(e)}"
+
+    @app.tool()
+    async def get_adaptive_training_plan_full(plan_id: int) -> str:
+        """Get complete adaptive training plan with phases and all workouts
+
+        Returns full training plan details including:
+        - Plan information (level, dates, frequency)
+        - Current training phase (BASE/BUILD/PEAK/TAPER)
+        - All scheduled workouts with dates and status
+        - Phase timeline
+
+        Args:
+            plan_id: ID of the training plan
+        """
+        try:
+            plan = garmin_client.get_adaptive_training_plan_by_id(plan_id)
+            if not plan:
+                return f"No training plan found with ID {plan_id}"
+
+            # Curate plan info
+            curated = {
+                "plan_id": plan.get('trainingPlanId'),
+                "name": plan.get('name'),
+                "description": plan.get('description'),
+                "category": plan.get('trainingPlanCategory'),
+                "level": plan.get('trainingLevel', {}).get('levelKey'),
+                "training_type": plan.get('trainingType', {}).get('typeKey'),
+                "version": plan.get('trainingVersion', {}).get('versionName'),
+                "status": plan.get('trainingStatus', {}).get('statusKey'),
+                "duration_weeks": plan.get('durationInWeeks'),
+                "avg_weekly_workouts": plan.get('avgWeeklyWorkouts'),
+                "start_date": plan.get('startDate'),
+                "end_date": plan.get('endDate'),
+            }
+
+            # Add current phase
+            phases = plan.get('adaptivePlanPhases', [])
+            current_phase = next((p for p in phases if p.get('currentPhase')), None)
+            if current_phase:
+                curated['current_phase'] = {
+                    "phase": current_phase.get('trainingPhase'),
+                    "start_date": current_phase.get('startDate'),
+                    "end_date": current_phase.get('endDate'),
+                }
+
+            # Add all phases timeline
+            curated['phases'] = []
+            for phase in phases:
+                curated['phases'].append({
+                    "phase": phase.get('trainingPhase'),
+                    "start_date": phase.get('startDate'),
+                    "end_date": phase.get('endDate'),
+                    "is_current": phase.get('currentPhase', False),
+                })
+
+            # Add upcoming workouts (next 7 days)
+            today = datetime.now().date()
+            task_list = plan.get('taskList', [])
+            curated['upcoming_workouts'] = []
+
+            for task in task_list:
+                workout = task.get('taskWorkout', {})
+                if not workout:
+                    continue
+
+                cal_date_str = task.get('calendarDate')
+                if not cal_date_str:
+                    continue
+
+                try:
+                    cal_date = datetime.strptime(cal_date_str, '%Y-%m-%d').date()
+                    if cal_date >= today:
+                        curated['upcoming_workouts'].append({
+                            "date": cal_date_str,
+                            "workout_name": workout.get('workoutName'),
+                            "workout_description": workout.get('workoutDescription'),
+                            "workout_uuid": workout.get('workoutUuid'),
+                            "estimated_duration_seconds": workout.get('estimatedDurationInSecs'),
+                            "training_effect_label": workout.get('trainingEffectLabel'),
+                            "workout_phrase": workout.get('workoutPhrase'),
+                            "rest_day": workout.get('restDay', False),
+                            "status": workout.get('adaptiveCoachingWorkoutStatus'),
+                        })
+                except ValueError:
+                    continue
+
+            # Limit to next 10 workouts
+            curated['upcoming_workouts'] = curated['upcoming_workouts'][:10]
+
+            # Remove None values
+            curated = {k: v for k, v in curated.items() if v is not None}
+
+            return json.dumps(curated, indent=2)
+        except Exception as e:
+            return f"Error retrieving training plan: {str(e)}"
+
+    @app.tool()
+    async def get_adaptive_coaching_preferences() -> str:
+        """Get user's adaptive coaching preferences and settings
+
+        Returns user settings including available training days,
+        preferred long run days, and coaching plan type.
+        """
+        try:
+            settings = garmin_client.get_adaptive_coaching_settings()
+            if not settings:
+                return "No coaching settings found"
+
+            curated = {
+                "available_training_days": settings.get('availableTrainingDays', []),
+                "preferred_long_run_days": settings.get('preferredLongTrainingDays', []),
+                "preferred_swim_days": settings.get('preferredSwimTrainingDays', []),
+                "coaching_plan_type": settings.get('adaptiveCoachingPlanType'),
+            }
+
+            # Remove None/empty values
+            curated = {k: v for k, v in curated.items() if v}
+
+            return json.dumps(curated, indent=2)
+        except Exception as e:
+            return f"Error retrieving coaching settings: {str(e)}"
+
+    @app.tool()
+    async def get_workout_compliance(start_date: str, end_date: str) -> str:
+        """Get activities with workout compliance tracking
+
+        Returns activities showing which planned workouts were completed,
+        including compliance scores and training effect comparisons.
+
+        Args:
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format
+        """
+        try:
+            activities = garmin_client.get_activities_with_compliance(start_date, end_date)
+            if not activities:
+                return f"No activities found between {start_date} and {end_date}"
+
+            curated_activities = []
+            for activity in activities:
+                curated = {
+                    "activity_id": activity.get('activityId'),
+                    "name": activity.get('name'),
+                    "date": activity.get('startLocal'),
+                    "activity_type": activity.get('activityType'),
+                    "workout_type": activity.get('workoutType'),
+                    "adaptive_coaching_status": activity.get('adaptiveCoachingWorkoutStatus'),
+                    "compliance_score": activity.get('workoutComplianceScore'),
+                    "duration_seconds": activity.get('duration'),
+                    "distance_meters": activity.get('distance'),
+                    "avg_speed_mps": activity.get('avgSpeed'),
+                    "aerobic_training_effect": activity.get('aerobicTrainingEffect'),
+                    "training_effect_label": activity.get('trainingEffectLabel'),
+                    "workout_uuid": activity.get('workoutUuid'),
+                    "calendar_event_uuid": activity.get('calendarEventUuid'),
+                }
+
+                # Remove None values
+                curated = {k: v for k, v in curated.items() if v is not None}
+                curated_activities.append(curated)
+
+            return json.dumps(curated_activities, indent=2)
+        except Exception as e:
+            return f"Error retrieving workout compliance: {str(e)}"
+
     return app
+
+
+def _parse_workout_step(step: dict) -> dict:
+    """Helper function to parse a workout step into readable format."""
+    step_type = step.get('type')
+
+    if step_type == 'RepeatGroupDTO':
+        # Handle repeat groups
+        iterations = step.get('numberOfIterations')
+        inner_steps = []
+        for inner_step in step.get('workoutSteps', []):
+            parsed = _parse_workout_step(inner_step)
+            if parsed:
+                inner_steps.append(parsed)
+
+        return {
+            "type": "repeat",
+            "iterations": iterations,
+            "steps": inner_steps
+        }
+
+    elif step_type == 'ExecutableStepDTO':
+        # Handle regular steps
+        step_data = {
+            "type": step.get('stepType', {}).get('stepTypeKey'),
+            "order": step.get('stepOrder'),
+        }
+
+        # Add duration/distance
+        end_condition = step.get('endCondition', {}).get('conditionTypeKey')
+        end_value = step.get('endConditionValue')
+
+        if end_condition == 'time' and end_value:
+            step_data['duration_seconds'] = end_value
+        elif end_condition == 'distance' and end_value:
+            step_data['distance_meters'] = end_value
+
+        # Add target zones
+        target_type = step.get('targetType', {}).get('workoutTargetTypeKey')
+        if target_type == 'pace.zone':
+            # Pace zones in m/s
+            step_data['pace_min_mps'] = step.get('targetValueTwo')
+            step_data['pace_max_mps'] = step.get('targetValueOne')
+        elif target_type == 'heart.rate.zone':
+            step_data['hr_min_bpm'] = step.get('targetValueTwo')
+            step_data['hr_max_bpm'] = step.get('targetValueOne')
+
+        # Remove None values
+        step_data = {k: v for k, v in step_data.items() if v is not None}
+        return step_data
+
+    return None
