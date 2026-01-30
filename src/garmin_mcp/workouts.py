@@ -507,7 +507,7 @@ def register_tools(app):
                     continue
 
                 try:
-                    cal_date = datetime.strptime(cal_date_str, '%Y-%m-%d').date()
+                    cal_date = datetime.datetime.strptime(cal_date_str, '%Y-%m-%d').date()
                     if cal_date >= today:
                         curated['upcoming_workouts'].append({
                             "date": cal_date_str,
