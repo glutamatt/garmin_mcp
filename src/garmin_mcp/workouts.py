@@ -15,6 +15,164 @@ def configure(client):
     garmin_client = client
 
 
+def _normalize_workout_structure(workout_data: dict) -> dict:
+    """Normalize workout structure to match Garmin API requirements.
+
+    Transforms simplified workout structures (like those from AI coaches) into
+    the complete structure expected by Garmin Connect API.
+
+    Args:
+        workout_data: Simplified workout structure
+
+    Returns:
+        Normalized workout structure ready for API upload
+    """
+    # Deep copy to avoid modifying the original
+    import copy
+    normalized = copy.deepcopy(workout_data)
+
+    # Add required top-level fields with defaults
+    normalized.setdefault('avgTrainingSpeed', 2.5)  # default ~4:00/km pace
+    normalized.setdefault('estimatedDurationInSecs', 0)
+    normalized.setdefault('estimatedDistanceInMeters', 0.0)
+    normalized.setdefault('estimateType', None)
+
+    # Add isWheelchair for running workouts
+    sport_type = normalized.get('sportType', {})
+    if sport_type.get('sportTypeKey') == 'running':
+        normalized.setdefault('isWheelchair', False)
+
+    # Ensure sportType has displayOrder
+    if 'sportType' in normalized:
+        normalized['sportType'].setdefault('displayOrder', 1)
+
+    # Normalize workout segments and steps
+    if 'workoutSegments' in normalized:
+        for segment in normalized['workoutSegments']:
+            # Ensure segment sportType has displayOrder
+            if 'sportType' in segment:
+                segment['sportType'].setdefault('displayOrder', 1)
+
+            # Normalize all steps in the segment
+            if 'workoutSteps' in segment:
+                segment['workoutSteps'] = _normalize_steps(segment['workoutSteps'])
+
+    return normalized
+
+
+def _normalize_steps(steps: list) -> list:
+    """Recursively normalize workout steps.
+
+    Args:
+        steps: List of workout steps
+
+    Returns:
+        Normalized steps with correct types and required fields
+    """
+    normalized_steps = []
+
+    for step in steps:
+        step_type_key = step.get('stepType', {}).get('stepTypeKey', '')
+
+        # Determine correct type field
+        if step_type_key == 'repeat' or step.get('numberOfIterations'):
+            # This is a repeat group
+            normalized_step = _normalize_repeat_group(step)
+        else:
+            # This is an executable step
+            normalized_step = _normalize_executable_step(step)
+
+        normalized_steps.append(normalized_step)
+
+    return normalized_steps
+
+
+def _normalize_repeat_group(step: dict) -> dict:
+    """Normalize a repeat group step."""
+    normalized = step.copy()
+
+    # Set correct type
+    normalized['type'] = 'RepeatGroupDTO'
+
+    # Ensure stepType has displayOrder
+    if 'stepType' in normalized:
+        normalized['stepType'].setdefault('displayOrder', 6)
+
+    # Add required endCondition for iterations
+    normalized.setdefault('endCondition', {
+        'conditionTypeId': 7,
+        'conditionTypeKey': 'iterations',
+        'displayOrder': 7,
+        'displayable': False
+    })
+
+    # Set endConditionValue to number of iterations
+    if 'numberOfIterations' in normalized:
+        normalized['endConditionValue'] = float(normalized['numberOfIterations'])
+
+    # Add skipLastRestStep if missing
+    normalized.setdefault('skipLastRestStep', True)
+    normalized.setdefault('smartRepeat', False)
+
+    # Recursively normalize child steps
+    if 'workoutSteps' in normalized:
+        normalized['workoutSteps'] = _normalize_steps(normalized['workoutSteps'])
+
+    return normalized
+
+
+def _normalize_executable_step(step: dict) -> dict:
+    """Normalize an executable workout step."""
+    normalized = step.copy()
+
+    # Set correct type
+    normalized['type'] = 'ExecutableStepDTO'
+
+    # Ensure stepType has displayOrder
+    if 'stepType' in normalized:
+        step_type_key = normalized['stepType'].get('stepTypeKey', '')
+        display_order_map = {
+            'warmup': 1,
+            'cooldown': 2,
+            'interval': 3,
+            'recovery': 4,
+            'rest': 5,
+            'repeat': 6
+        }
+        normalized['stepType'].setdefault('displayOrder', display_order_map.get(step_type_key, 1))
+
+    # Ensure endCondition has displayOrder and displayable
+    if 'endCondition' in normalized:
+        condition_key = normalized['endCondition'].get('conditionTypeKey', '')
+        condition_display_map = {
+            'lap.button': 1,
+            'time': 2,
+            'distance': 3,
+            'calories': 4,
+            'heart.rate': 5
+        }
+        normalized['endCondition'].setdefault('displayOrder', condition_display_map.get(condition_key, 1))
+        normalized['endCondition'].setdefault('displayable', True)
+
+    # Ensure targetType has displayOrder
+    if 'targetType' in normalized:
+        normalized['targetType'].setdefault('displayOrder', 1)
+
+    # Add required strokeType and equipmentType for running
+    normalized.setdefault('strokeType', {
+        'strokeTypeId': 0,
+        'strokeTypeKey': None,
+        'displayOrder': 0
+    })
+    normalized.setdefault('equipmentType', {
+        'strokeTypeId': 0,  # Yes, it's strokeTypeId in the API response
+        'strokeTypeKey': None,
+        'displayOrder': 0
+    })
+
+    return normalized
+
+
 def _curate_workout_summary(workout: dict) -> dict:
     """Extract essential workout metadata for list views"""
     sport_type = workout.get('sportType', {})
@@ -212,12 +370,17 @@ def register_tools(app):
         """Upload a workout from JSON data
 
         Creates a new workout in Garmin Connect from structured workout data.
+        Automatically normalizes the workout structure to match Garmin API requirements.
 
         Args:
             workout_data: Dictionary containing workout structure (name, sport type, segments, etc.)
         """
         try:
-            workout_json = json.dumps(workout_data)
+            # Normalize the workout structure to match Garmin API requirements
+            normalized_data = _normalize_workout_structure(workout_data)
+
+            # Upload the normalized workout
+            workout_json = json.dumps(normalized_data)
             result = garmin_client.upload_workout(workout_json)
 
             # Curate the response
@@ -225,7 +388,9 @@ def register_tools(app):
                 curated = {
                     "workout_id": result.get('workoutId'),
                     "name": result.get('workoutName'),
+                    "created_date": result.get('createdDate'),
                     "status": "uploaded",
+                    "message": "Workout created successfully. Use schedule_workout to add it to your calendar."
                 }
                 # Remove None values
                 curated = {k: v for k, v in curated.items() if v is not None}
@@ -234,6 +399,38 @@ def register_tools(app):
             return json.dumps(result, indent=2)
         except Exception as e:
             return f"Error uploading workout: {str(e)}"
+
+    @app.tool()
+    async def schedule_workout(workout_id: int, date: str) -> str:
+        """Schedule a workout for a specific date
+
+        Adds an existing workout to your training calendar for a specific date.
+        The workout must already exist (created via upload_workout or available in your library).
+
+        Args:
+            workout_id: The ID of the workout to schedule (from upload_workout or get_workouts)
+            date: Date to schedule the workout in YYYY-MM-DD format
+        """
+        try:
+            result = garmin_client.schedule_workout(workout_id, date)
+
+            # Curate the response
+            if isinstance(result, dict):
+                curated = {
+                    "workout_schedule_id": result.get('workoutScheduleId'),
+                    "workout_id": result.get('workout', {}).get('workoutId'),
+                    "workout_name": result.get('workout', {}).get('workoutName'),
+                    "calendar_date": result.get('calendarDate'),
+                    "created_date": result.get('createdDate'),
+                    "status": "scheduled"
+                }
+                # Remove None values
+                curated = {k: v for k, v in curated.items() if v is not None}
+                return json.dumps(curated, indent=2)
+
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            return f"Error scheduling workout: {str(e)}"
 
     @app.tool()
     async def upload_activity(file_path: str) -> str:
