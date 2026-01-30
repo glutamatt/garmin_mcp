@@ -131,6 +131,138 @@ def register_tools(app):
             return f"Error retrieving race predictions: {str(e)}"
 
     @app.tool()
+    async def get_upcoming_calendar_events(num_days_forward: int = 365, limit: int = 10) -> str:
+        """Get upcoming calendar events including scheduled races
+
+        Returns scheduled events from your Garmin Connect calendar, including
+        race events, workouts, and other calendar items.
+
+        Args:
+            num_days_forward: Number of days forward to look for events (default: 365)
+            limit: Maximum number of events to return (default: 10)
+        """
+        try:
+            events = garmin_client.get_upcoming_calendar_events(
+                num_days_forward=num_days_forward,
+                limit=limit
+            )
+            if not events:
+                return "No upcoming calendar events found."
+
+            # Curate the events to essential fields
+            curated_events = []
+            for event in events if isinstance(events, list) else []:
+                curated = {
+                    "id": event.get("id"),
+                    "event_name": event.get("eventName"),
+                    "date": event.get("date"),
+                    "event_type": event.get("eventType"),
+                    "location": event.get("location"),
+                    "is_race": event.get("race", False),
+                }
+
+                # Add completion target if available
+                target = event.get("completionTarget", {})
+                if target:
+                    curated["target_distance_meters"] = target.get("value")
+
+                # Add event time if available
+                event_time = event.get("eventTimeLocal", {})
+                if event_time and event_time.get("startTimeHhMm"):
+                    curated["start_time"] = event_time.get("startTimeHhMm")
+                    curated["timezone"] = event_time.get("timeZoneId")
+
+                # Add customization details
+                customization = event.get("eventCustomization", {})
+                if customization:
+                    if customization.get("isPrimaryEvent"):
+                        curated["is_primary_event"] = True
+                    custom_goal = customization.get("customGoal", {})
+                    if custom_goal and custom_goal.get("value"):
+                        curated["custom_goal_seconds"] = custom_goal.get("value")
+
+                # Add URL if available
+                if event.get("url"):
+                    curated["url"] = event.get("url")
+
+                # Remove None values
+                curated = {k: v for k, v in curated.items() if v is not None}
+                curated_events.append(curated)
+
+            return json.dumps(curated_events, indent=2)
+        except Exception as e:
+            return f"Error retrieving upcoming calendar events: {str(e)}"
+
+    @app.tool()
+    async def get_calendar_events(
+        start_date: str,
+        limit: int = 20,
+        page_index: int = 1
+    ) -> str:
+        """Get calendar events starting from a specific date
+
+        Returns scheduled events from your Garmin Connect calendar, including
+        race events, workouts, and other calendar items.
+
+        Args:
+            start_date: Start date in YYYY-MM-DD format
+            limit: Maximum number of events to return per page (default: 20)
+            page_index: Page number for pagination (default: 1)
+        """
+        try:
+            events = garmin_client.get_calendar_events(
+                start_date=start_date,
+                limit=limit,
+                page_index=page_index
+            )
+            if not events:
+                return f"No calendar events found from {start_date}."
+
+            # Curate the events to essential fields
+            curated_events = []
+            for event in events if isinstance(events, list) else []:
+                curated = {
+                    "id": event.get("id"),
+                    "event_name": event.get("eventName"),
+                    "date": event.get("date"),
+                    "event_type": event.get("eventType"),
+                    "location": event.get("location"),
+                    "is_race": event.get("race", False),
+                }
+
+                # Add completion target if available
+                target = event.get("completionTarget", {})
+                if target:
+                    curated["target_distance_meters"] = target.get("value")
+
+                # Add event time if available
+                event_time = event.get("eventTimeLocal", {})
+                if event_time and event_time.get("startTimeHhMm"):
+                    curated["start_time"] = event_time.get("startTimeHhMm")
+                    curated["timezone"] = event_time.get("timeZoneId")
+
+                # Add customization details
+                customization = event.get("eventCustomization", {})
+                if customization:
+                    if customization.get("isPrimaryEvent"):
+                        curated["is_primary_event"] = True
+                    custom_goal = customization.get("customGoal", {})
+                    if custom_goal and custom_goal.get("value"):
+                        curated["custom_goal_seconds"] = custom_goal.get("value")
+
+                # Add URL if available
+                if event.get("url"):
+                    curated["url"] = event.get("url")
+
+                # Remove None values
+                curated = {k: v for k, v in curated.items() if v is not None}
+                curated_events.append(curated)
+
+            return json.dumps(curated_events, indent=2)
+        except Exception as e:
+            return f"Error retrieving calendar events: {str(e)}"
+
+    @app.tool()
     async def get_inprogress_virtual_challenges(start_date: str, end_date: str) -> str:
         """Get in-progress virtual challenges/expeditions between dates
 
