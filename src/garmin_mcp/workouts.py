@@ -493,7 +493,7 @@ def register_tools(app):
                 })
 
             # Add upcoming workouts (next 7 days)
-            today = datetime.now().date()
+            today = datetime.datetime.now().date()
             task_list = plan.get('taskList', [])
             curated['upcoming_workouts'] = []
 
