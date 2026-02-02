@@ -41,17 +41,36 @@ class EndCondition(BaseModel):
 
 
 class TargetType(BaseModel):
-    """Target type for intensity."""
+    """Target type for intensity.
+
+    Examples by type:
+    - no.target: No intensity guidance
+    - heart.rate.zone: Use zoneNumber 1-5 (Zone 1=easy, Zone 5=max)
+    - power.zone: Use zoneNumber 1-7 for cycling power zones
+    - pace.zone: Use targetValueOne/Two in m/s (INVERTED: One > Two)
+    - heart.rate.bpm: Use targetValueOne/Two in BPM (unofficial, may not work)
+    """
     workoutTargetTypeId: int = Field(
-        description="1=no.target, 4=heart.rate.zone, 5=power.zone, 6=pace.zone"
+        description="1=no.target, 4=heart.rate.zone, 5=power.zone, 6=pace.zone, 7=heart.rate.bpm (unofficial)"
     )
-    workoutTargetTypeKey: Literal["no.target", "heart.rate.zone", "power.zone", "pace.zone"] = Field(
-        description="Target type key"
+    workoutTargetTypeKey: Literal[
+        "no.target", "heart.rate.zone", "power.zone", "pace.zone", "heart.rate.bpm"
+    ] = Field(
+        description="Target type key. heart.rate.bpm is unofficial and may not work on all devices"
     )
 
 
 class WorkoutStep(BaseModel):
-    """A single workout step (warmup, interval, cooldown, etc.)."""
+    """A single workout step (warmup, interval, cooldown, etc.).
+
+    TARGET TYPE EXAMPLES:
+    - no.target: {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"}
+    - heart.rate.zone: Use zoneNumber (1-5), e.g. zoneNumber=3 for Zone 3
+    - power.zone: Use zoneNumber (1-7), e.g. zoneNumber=4 for Zone 4
+    - pace.zone: INVERTED values - targetValueOne=faster (e.g. 3.33 m/s = 5:00/km),
+                 targetValueTwo=slower (e.g. 2.78 m/s = 6:00/km)
+    - heart.rate.bpm: targetValueOne=max BPM, targetValueTwo=min BPM (unofficial)
+    """
     stepOrder: int = Field(description="Order of this step (1, 2, 3...)")
     stepType: StepType = Field(description="Type of step")
     endCondition: EndCondition = Field(description="How the step ends")
@@ -61,19 +80,19 @@ class WorkoutStep(BaseModel):
     )
     targetType: Optional[TargetType] = Field(
         default=None,
-        description="Intensity target type"
+        description="Intensity target type. See class docstring for examples per type."
     )
     zoneNumber: Optional[int] = Field(
         default=None,
-        description="Zone number for HR zones (1-5) or power zones (1-7)"
+        description="Zone number: HR zones 1-5 (1=easy, 5=max), power zones 1-7"
     )
     targetValueOne: Optional[float] = Field(
         default=None,
-        description="For pace.zone: max pace in m/s"
+        description="For pace.zone: FASTER pace in m/s (e.g. 3.33 = 5:00/km). For heart.rate.bpm: max BPM"
     )
     targetValueTwo: Optional[float] = Field(
         default=None,
-        description="For pace.zone: min pace in m/s"
+        description="For pace.zone: SLOWER pace in m/s (e.g. 2.78 = 6:00/km). For heart.rate.bpm: min BPM"
     )
 
 
