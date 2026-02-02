@@ -1516,30 +1516,4 @@ def register_tools(app):
         except Exception as e:
             return f"Error getting weekly summary: {str(e)}"
 
-    # =========================================================================
-    # DEPRECATED ALIASES - Remove in v2.0
-    # These maintain backward compatibility with old tool names
-    # =========================================================================
-
-    # Workout library aliases
-    app.tool(name="get_workout_by_id")(get_workout)
-    app.tool(name="upload_workout")(create_workout)
-    app.tool(name="delete_workout_from_library")(delete_workout)
-    app.tool(name="update_workout_in_library")(update_workout)
-
-    # Scheduling aliases
-    app.tool(name="cancel_scheduled_workout")(unschedule_workout)
-    app.tool(name="get_training_calendar")(get_calendar)
-
-    # Training plan aliases
-    app.tool(name="get_adaptive_training_plan_full")(get_adaptive_plan)
-    app.tool(name="get_fbt_adaptive_workout_details")(get_adaptive_workout)
-    app.tool(name="get_adaptive_coaching_preferences")(get_coaching_preferences)
-    app.tool(name="get_training_plan_workouts")(get_training_plan)
-
-    # Analytics aliases
-    app.tool(name="get_workout_compliance")(get_compliance)
-    app.tool(name="get_athlete_readiness")(get_readiness)
-    app.tool(name="get_weekly_training_summary")(get_weekly_summary)
-
     return app

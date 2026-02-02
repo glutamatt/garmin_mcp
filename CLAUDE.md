@@ -154,19 +154,3 @@ The `workouts.py` module provides 17 tools organized into 4 groups:
 | `get_readiness` | Training readiness/recovery (CHECK BEFORE PLANNING) |
 | `get_compliance` | Workout completion tracking |
 | `get_weekly_summary` | Weekly training review |
-
-### Deprecated Aliases (Backward Compatibility)
-The following old tool names still work but will be removed in v2.0:
-- `get_workout_by_id` → `get_workout`
-- `upload_workout` → `create_workout`
-- `delete_workout_from_library` → `delete_workout`
-- `update_workout_in_library` → `update_workout`
-- `cancel_scheduled_workout` → `unschedule_workout`
-- `get_training_calendar` → `get_calendar`
-- `get_adaptive_training_plan_full` → `get_adaptive_plan`
-- `get_fbt_adaptive_workout_details` → `get_adaptive_workout`
-- `get_adaptive_coaching_preferences` → `get_coaching_preferences`
-- `get_training_plan_workouts` → `get_training_plan`
-- `get_workout_compliance` → `get_compliance`
-- `get_athlete_readiness` → `get_readiness`
-- `get_weekly_training_summary` → `get_weekly_summary`
