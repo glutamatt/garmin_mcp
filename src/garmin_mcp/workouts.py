@@ -556,13 +556,13 @@ def register_tools(app):
 
     @app.tool()
     async def schedule_workout_directly(workout_data: dict, date: str) -> str:
-        """Schedule a workout directly to calendar without saving to workout library
+        """Create and schedule a workout in one step
 
-        Creates a workout on the calendar for a specific date without persisting it
-        to your workout list. Similar to how third-party apps push workouts to Garmin.
+        Creates a workout and immediately schedules it to the calendar for a specific date.
+        The workout will be saved in both the workout library and on the calendar.
 
-        This is useful when you want to plan a workout for a specific date without
-        cluttering your workout library with one-time workouts.
+        Note: This is functionally equivalent to plan_workout. Garmin's API requires
+        workouts to exist in the library before they can be scheduled.
 
         Args:
             workout_data: Dictionary containing workout structure (name, sport type, segments, etc.)
@@ -572,7 +572,7 @@ def register_tools(app):
             # Normalize the workout structure to match Garmin API requirements
             normalized_data = _normalize_workout_structure(workout_data)
 
-            # Schedule directly without saving to library
+            # Create and schedule the workout
             result = garmin_client.schedule_workout_directly(normalized_data, date)
 
             # Curate the response
@@ -580,11 +580,12 @@ def register_tools(app):
                 workout = result.get('workout', {})
                 curated = {
                     "workout_schedule_id": result.get('workoutScheduleId'),
+                    "workout_id": result.get('workoutId'),
                     "workout_name": workout.get('workoutName') or normalized_data.get('workoutName'),
                     "calendar_date": result.get('calendarDate') or date,
                     "created_date": result.get('createdDate'),
-                    "status": "scheduled_directly",
-                    "message": "Workout scheduled to calendar without saving to workout library"
+                    "status": "scheduled",
+                    "message": "Workout created and scheduled to calendar"
                 }
                 # Remove None values
                 curated = {k: v for k, v in curated.items() if v is not None}
@@ -592,7 +593,7 @@ def register_tools(app):
 
             return json.dumps(result, indent=2)
         except Exception as e:
-            return f"Error scheduling workout directly: {str(e)}"
+            return f"Error scheduling workout: {str(e)}"
 
     @app.tool()
     async def upload_activity(file_path: str) -> str:

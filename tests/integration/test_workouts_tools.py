@@ -166,7 +166,7 @@ async def test_schedule_workout_directly_tool(app_with_workouts, mock_garmin_cli
     # Verify response
     import json
     response = json.loads(result[0].text)
-    assert response["status"] == "scheduled_directly"
+    assert response["status"] == "scheduled"
     assert response["workout_schedule_id"] == 98765
 
 
