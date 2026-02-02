@@ -814,18 +814,33 @@ def register_tools(app):
             # Step 4: Ensure workoutId is in the body (required by API)
             merged['workoutId'] = workout_id
 
-            # Step 5: Update the workout
-            result = garmin_client.update_workout(workout_id, merged)
+            # Step 5: Update via gc-api endpoint (web UI endpoint, not connectapi)
+            # The library's update_workout uses connectapi which doesn't work reliably
+            # Web UI uses: https://connect.garmin.com/gc-api/workout-service/workout/{id}
+            url = f"/gc-api/workout-service/workout/{workout_id}"
+            response = garmin_client.garth.put("connect", url, json=merged, api=True)
 
-            curated = {
-                "status": "updated",
-                "workout_id": result.get('workoutId'),
-                "workout_name": result.get('workoutName'),
-                "updated_date": result.get('updatedDate'),
-                "message": f"Workout '{result.get('workoutName')}' updated"
-            }
-            curated = {k: v for k, v in curated.items() if v is not None}
-            return json.dumps(curated, indent=2)
+            # Handle response - might be empty on success
+            if response.status_code in (200, 204):
+                try:
+                    result = response.json() if response.text else merged
+                except Exception:
+                    result = merged
+
+                curated = {
+                    "status": "updated",
+                    "workout_id": result.get('workoutId', workout_id),
+                    "workout_name": result.get('workoutName', merged.get('workoutName')),
+                    "updated_date": result.get('updatedDate'),
+                    "message": f"Workout '{merged.get('workoutName')}' updated"
+                }
+                curated = {k: v for k, v in curated.items() if v is not None}
+                return json.dumps(curated, indent=2)
+            else:
+                return json.dumps({
+                    "status": "error",
+                    "message": f"Update failed with status {response.status_code}: {response.text}"
+                }, indent=2)
 
         except Exception as e:
             return f"Error updating workout: {str(e)}"
