@@ -60,3 +60,34 @@ Each module in `src/garmin_mcp/` follows the same pattern:
 - `GARMIN_EMAIL` / `GARMIN_PASSWORD` - Garmin Connect credentials
 - `GARMIN_EMAIL_FILE` / `GARMIN_PASSWORD_FILE` - File-based alternatives
 - `GARMINTOKENS` - Token storage directory (default: `~/.garminconnect`)
+
+## Garmin Workout API Requirements
+
+The `workouts.py` module includes normalization functions that transform workout data to match Garmin's API requirements. Key requirements:
+
+### Step Structure
+- **`stepId`**: Must be an integer (1, 2, 3...), NOT `null`. API rejects null values.
+- **`type`**: Must be `"ExecutableStepDTO"` for regular steps, `"RepeatGroupDTO"` for repeats. NOT `"WorkoutStep"`.
+
+### Step Type IDs (stepTypeId)
+The `stepTypeKey` must match the correct `stepTypeId`:
+| stepTypeKey | stepTypeId | displayOrder |
+|-------------|------------|--------------|
+| warmup      | 1          | 1            |
+| cooldown    | 2          | 2            |
+| interval    | 3          | 3            |
+| recovery    | 4          | 4            |
+| rest        | 5          | 5            |
+| repeat      | 6          | 6            |
+| other       | 7          | 7            |
+
+### Common Issues Fixed by Normalization
+1. Coach sends `stepId: null` → Normalized to sequential integers
+2. Coach sends `type: "WorkoutStep"` → Normalized to `"ExecutableStepDTO"`
+3. Incorrect `stepTypeId` values → Normalized based on `stepTypeKey`
+
+### Workout Creation Endpoints
+- **Web UI endpoint**: `https://connect.garmin.com/gc-api/workout-service/workout`
+- **API endpoint**: `https://connectapi.garmin.com/workout-service/workout`
+
+The `_normalize_workout_structure()` function handles these transformations automatically.

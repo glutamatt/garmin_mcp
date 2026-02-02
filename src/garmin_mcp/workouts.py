@@ -126,15 +126,20 @@ def _restructure_flat_repeats(steps: list) -> list:
     return restructured
 
 
-def _normalize_steps(steps: list) -> list:
+def _normalize_steps(steps: list, step_id_counter: list = None) -> list:
     """Recursively normalize workout steps.
 
     Args:
         steps: List of workout steps
+        step_id_counter: Mutable list with single int for tracking stepId across recursion
 
     Returns:
         Normalized steps with correct types and required fields
     """
+    # Initialize step ID counter if not provided
+    if step_id_counter is None:
+        step_id_counter = [1]
+
     # First, restructure any flat repeat groups
     steps = _restructure_flat_repeats(steps)
 
@@ -146,19 +151,27 @@ def _normalize_steps(steps: list) -> list:
         # Determine correct type field
         if step_type_key == 'repeat' or step.get('numberOfIterations'):
             # This is a repeat group
-            normalized_step = _normalize_repeat_group(step)
+            normalized_step = _normalize_repeat_group(step, step_id_counter)
         else:
             # This is an executable step
-            normalized_step = _normalize_executable_step(step)
+            normalized_step = _normalize_executable_step(step, step_id_counter)
 
         normalized_steps.append(normalized_step)
 
     return normalized_steps
 
 
-def _normalize_repeat_group(step: dict) -> dict:
+def _normalize_repeat_group(step: dict, step_id_counter: list = None) -> dict:
     """Normalize a repeat group step."""
+    if step_id_counter is None:
+        step_id_counter = [1]
+
     normalized = step.copy()
+
+    # Assign sequential stepId (API rejects null)
+    if normalized.get('stepId') is None or not isinstance(normalized.get('stepId'), int):
+        normalized['stepId'] = step_id_counter[0]
+        step_id_counter[0] += 1
 
     # Set correct type if not already set or incorrect
     if normalized.get('type') != 'RepeatGroupDTO':
@@ -187,33 +200,51 @@ def _normalize_repeat_group(step: dict) -> dict:
 
     # Recursively normalize child steps
     if 'workoutSteps' in normalized:
-        normalized['workoutSteps'] = _normalize_steps(normalized['workoutSteps'])
+        normalized['workoutSteps'] = _normalize_steps(normalized['workoutSteps'], step_id_counter)
 
     return normalized
 
 
-def _normalize_executable_step(step: dict) -> dict:
+def _normalize_executable_step(step: dict, step_id_counter: list = None) -> dict:
     """Normalize an executable workout step."""
+    if step_id_counter is None:
+        step_id_counter = [1]
+
     normalized = step.copy()
 
-    # Set correct type if not already set or incorrect
-    if normalized.get('type') != 'ExecutableStepDTO':
-        normalized['type'] = 'ExecutableStepDTO'
+    # Assign sequential stepId (API rejects null)
+    if normalized.get('stepId') is None or not isinstance(normalized.get('stepId'), int):
+        normalized['stepId'] = step_id_counter[0]
+        step_id_counter[0] += 1
 
-    # Ensure stepType has displayOrder (all 6 basic step types + repeat)
-    if 'stepType' in normalized and 'displayOrder' not in normalized['stepType']:
+    # Set correct type - MUST be ExecutableStepDTO (not "WorkoutStep")
+    normalized['type'] = 'ExecutableStepDTO'
+
+    # Correct stepTypeId mapping - API requires specific IDs for each step type
+    # This fixes issues where coaches send incorrect stepTypeId values
+    step_type_id_map = {
+        'warmup': 1,
+        'cooldown': 2,
+        'interval': 3,
+        'recovery': 4,
+        'rest': 5,
+        'repeat': 6,
+        'other': 7
+    }
+
+    if 'stepType' in normalized:
         step_type_key = normalized['stepType'].get('stepTypeKey', '')
-        display_order_map = {
-            'warmup': 1,
-            'cooldown': 2,
-            'interval': 3,
-            'recovery': 4,
-            'rest': 5,
-            'repeat': 6,
-            'other': 7
-        }
-        if step_type_key in display_order_map:
-            normalized['stepType']['displayOrder'] = display_order_map[step_type_key]
+
+        # Fix stepTypeId if it doesn't match the key
+        if step_type_key in step_type_id_map:
+            correct_id = step_type_id_map[step_type_key]
+            if normalized['stepType'].get('stepTypeId') != correct_id:
+                normalized['stepType']['stepTypeId'] = correct_id
+
+        # Ensure displayOrder matches stepTypeId for executable steps
+        if 'displayOrder' not in normalized['stepType']:
+            if step_type_key in step_type_id_map:
+                normalized['stepType']['displayOrder'] = step_type_id_map[step_type_key]
 
     # Ensure endCondition has displayOrder and displayable (only if missing)
     if 'endCondition' in normalized:
