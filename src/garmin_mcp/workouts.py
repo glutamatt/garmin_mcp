@@ -3,7 +3,140 @@ Workout-related functions for Garmin Connect MCP Server
 """
 import json
 import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
+
+from pydantic import BaseModel, Field
+
+
+# =============================================================================
+# PYDANTIC MODELS - JSON Schema for AI agents
+# =============================================================================
+
+class SportType(BaseModel):
+    """Sport type definition."""
+    sportTypeId: int = Field(description="1=running, 2=cycling, 5=swimming")
+    sportTypeKey: Literal["running", "cycling", "swimming", "other"] = Field(
+        description="Sport type key"
+    )
+
+
+class StepType(BaseModel):
+    """Workout step type definition."""
+    stepTypeId: int = Field(
+        description="1=warmup, 2=cooldown, 3=interval, 4=recovery, 5=rest, 6=repeat, 7=other"
+    )
+    stepTypeKey: Literal["warmup", "cooldown", "interval", "recovery", "rest", "repeat", "other"] = Field(
+        description="Step type key"
+    )
+
+
+class EndCondition(BaseModel):
+    """Step end condition (duration or distance)."""
+    conditionTypeId: int = Field(
+        description="1=lap.button, 2=time, 3=distance"
+    )
+    conditionTypeKey: Literal["lap.button", "time", "distance"] = Field(
+        description="Condition type key"
+    )
+
+
+class TargetType(BaseModel):
+    """Target type for intensity."""
+    workoutTargetTypeId: int = Field(
+        description="1=no.target, 4=heart.rate.zone, 5=power.zone, 6=pace.zone"
+    )
+    workoutTargetTypeKey: Literal["no.target", "heart.rate.zone", "power.zone", "pace.zone"] = Field(
+        description="Target type key"
+    )
+
+
+class WorkoutStep(BaseModel):
+    """A single workout step (warmup, interval, cooldown, etc.)."""
+    stepOrder: int = Field(description="Order of this step (1, 2, 3...)")
+    stepType: StepType = Field(description="Type of step")
+    endCondition: EndCondition = Field(description="How the step ends")
+    endConditionValue: Optional[float] = Field(
+        default=None,
+        description="Duration in seconds (for time) or distance in meters (for distance)"
+    )
+    targetType: Optional[TargetType] = Field(
+        default=None,
+        description="Intensity target type"
+    )
+    zoneNumber: Optional[int] = Field(
+        default=None,
+        description="Zone number for HR zones (1-5) or power zones (1-7)"
+    )
+    targetValueOne: Optional[float] = Field(
+        default=None,
+        description="For pace.zone: max pace in m/s"
+    )
+    targetValueTwo: Optional[float] = Field(
+        default=None,
+        description="For pace.zone: min pace in m/s"
+    )
+
+
+class RepeatGroup(BaseModel):
+    """A repeat group containing multiple steps to repeat."""
+    stepOrder: int = Field(description="Order of this repeat group")
+    stepType: StepType = Field(
+        default=StepType(stepTypeId=6, stepTypeKey="repeat"),
+        description="Must be repeat type"
+    )
+    numberOfIterations: int = Field(description="Number of times to repeat")
+    workoutSteps: List[WorkoutStep] = Field(description="Steps to repeat")
+
+
+class WorkoutSegment(BaseModel):
+    """A workout segment containing steps."""
+    segmentOrder: int = Field(default=1, description="Segment order (usually 1)")
+    sportType: SportType = Field(description="Sport type for this segment")
+    workoutSteps: List[Union[WorkoutStep, RepeatGroup]] = Field(
+        description="List of steps or repeat groups"
+    )
+
+
+class WorkoutData(BaseModel):
+    """Complete workout structure for Garmin Connect.
+
+    Example running workout with intervals:
+    ```json
+    {
+        "workoutName": "5x400m Intervals",
+        "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+        "workoutSegments": [{
+            "segmentOrder": 1,
+            "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+            "workoutSteps": [
+                {"stepOrder": 1, "stepType": {"stepTypeId": 1, "stepTypeKey": "warmup"},
+                 "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+                 "endConditionValue": 600},
+                {"stepOrder": 2, "stepType": {"stepTypeId": 6, "stepTypeKey": "repeat"},
+                 "numberOfIterations": 5,
+                 "workoutSteps": [
+                     {"stepOrder": 1, "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+                      "endCondition": {"conditionTypeId": 3, "conditionTypeKey": "distance"},
+                      "endConditionValue": 400,
+                      "targetType": {"workoutTargetTypeId": 4, "workoutTargetTypeKey": "heart.rate.zone"},
+                      "zoneNumber": 4},
+                     {"stepOrder": 2, "stepType": {"stepTypeId": 4, "stepTypeKey": "recovery"},
+                      "endCondition": {"conditionTypeId": 3, "conditionTypeKey": "distance"},
+                      "endConditionValue": 200}
+                 ]},
+                {"stepOrder": 3, "stepType": {"stepTypeId": 2, "stepTypeKey": "cooldown"},
+                 "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+                 "endConditionValue": 300}
+            ]
+        }]
+    }
+    ```
+    """
+    workoutName: str = Field(description="Name of the workout")
+    description: Optional[str] = Field(default=None, description="Optional description")
+    sportType: SportType = Field(description="Primary sport type")
+    workoutSegments: List[WorkoutSegment] = Field(description="Workout segments containing steps")
+
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -550,7 +683,7 @@ def register_tools(app):
             return f"Error retrieving workout: {str(e)}"
 
     @app.tool()
-    async def create_workout(workout_data: dict) -> str:
+    async def create_workout(workout_data: WorkoutData) -> str:
         """Create a new workout in the Garmin Connect library.
 
         WHEN TO USE: To add a workout to the library without scheduling it.
@@ -559,15 +692,15 @@ def register_tools(app):
         RETURNS: workout_id, name, created_date, status message.
 
         Args:
-            workout_data: Workout structure (see plan_workout for format reference).
-                         Auto-normalized for API compatibility.
+            workout_data: Workout structure with JSON schema validation.
 
         SEE ALSO: plan_workout (create + schedule), schedule_workout (schedule existing),
                   update_workout (modify), delete_workout (remove).
         """
         try:
-            # Normalize the workout structure to match Garmin API requirements
-            normalized_data = _normalize_workout_structure(workout_data)
+            # Convert Pydantic model to dict and normalize
+            data_dict = workout_data.model_dump(exclude_none=True)
+            normalized_data = _normalize_workout_structure(data_dict)
 
             # Upload the normalized workout
             workout_json = json.dumps(normalized_data)
@@ -591,7 +724,7 @@ def register_tools(app):
             return f"Error creating workout: {str(e)}"
 
     @app.tool()
-    async def update_workout(workout_id: int, workout_data: dict) -> str:
+    async def update_workout(workout_id: int, workout_data: WorkoutData) -> str:
         """Update an existing workout in the library.
 
         WHEN TO USE: To modify a workout's structure, name, or details.
@@ -601,13 +734,14 @@ def register_tools(app):
 
         Args:
             workout_id: ID of the workout to update (from get_workouts).
-            workout_data: Updated workout structure. Auto-normalized for API compatibility.
+            workout_data: Updated workout structure with JSON schema validation.
 
         SEE ALSO: get_workout to see current structure, create_workout for new workouts.
         """
         try:
-            # Normalize the workout structure
-            normalized_data = _normalize_workout_structure(workout_data)
+            # Convert Pydantic model to dict and normalize
+            data_dict = workout_data.model_dump(exclude_none=True)
+            normalized_data = _normalize_workout_structure(data_dict)
 
             # Update the workout
             result = garmin_client.update_workout(workout_id, normalized_data)
@@ -693,7 +827,7 @@ def register_tools(app):
     # =========================================================================
 
     @app.tool()
-    async def plan_workout(workout_data: dict, date: str) -> str:
+    async def plan_workout(workout_data: WorkoutData, date: str) -> str:
         """Create and schedule a workout in one step (RECOMMENDED).
 
         WHEN TO USE: Primary tool for coaching. Creates a workout in the library
@@ -703,58 +837,16 @@ def register_tools(app):
         RETURNS: workout_id, schedule_id, calendar_date, status message.
 
         Args:
-            workout_data: Workout structure (see format below). Auto-normalized.
+            workout_data: Workout structure with JSON schema validation. See WorkoutData model.
             date: Schedule date in YYYY-MM-DD format.
-
-        WORKOUT STRUCTURE:
-        {
-            "workoutName": "My Workout",
-            "description": "Optional description",
-            "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},  # or 2/cycling
-            "workoutSegments": [{
-                "segmentOrder": 1,
-                "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
-                "workoutSteps": [<steps>]
-            }]
-        }
-
-        STEP TYPES (stepTypeKey -> stepTypeId):
-        - warmup: 1, cooldown: 2, interval: 3, recovery: 4, rest: 5, repeat: 6, other: 7
-
-        STEP STRUCTURE:
-        {
-            "stepOrder": 1,
-            "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
-            "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
-            "endConditionValue": 600,  # seconds for time, meters for distance
-            "targetType": {"workoutTargetTypeId": 4, "workoutTargetTypeKey": "heart.rate.zone"},
-            "zoneNumber": 2  # For zone-based targets (HR zones 1-5, power zones 1-7)
-        }
-
-        TARGET TYPES:
-        - no.target (id=1): No intensity target
-        - heart.rate.zone (id=4): Use "zoneNumber": 1-5 for HR zones
-        - power.zone (id=5): Use "zoneNumber": 1-7 for power zones
-        - pace.zone (id=6): Use targetValueOne/Two for pace in m/s
-
-        END CONDITIONS:
-        - lap.button (id=1): Press lap button to end step
-        - time (id=2): Duration in seconds (endConditionValue)
-        - distance (id=3): Distance in meters (endConditionValue)
-
-        REPEAT GROUPS (for intervals):
-        {
-            "stepType": {"stepTypeId": 6, "stepTypeKey": "repeat"},
-            "numberOfIterations": 5,
-            "workoutSteps": [<interval step>, <recovery step>]
-        }
 
         SEE ALSO: get_readiness (check before planning), get_calendar (view schedule),
                   reschedule_workout (move date), unschedule_workout (cancel).
         """
         try:
-            # Normalize the workout structure
-            normalized_data = _normalize_workout_structure(workout_data)
+            # Convert Pydantic model to dict and normalize
+            data_dict = workout_data.model_dump(exclude_none=True)
+            normalized_data = _normalize_workout_structure(data_dict)
 
             # Step 1: Create the workout
             workout_json = json.dumps(normalized_data)

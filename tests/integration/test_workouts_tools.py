@@ -14,6 +14,23 @@ from tests.fixtures.garmin_responses import (
 )
 
 
+# Valid workout data matching WorkoutData schema
+VALID_WORKOUT_DATA = {
+    "workoutName": "Test Workout",
+    "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+    "workoutSegments": [{
+        "segmentOrder": 1,
+        "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+        "workoutSteps": [{
+            "stepOrder": 1,
+            "stepType": {"stepTypeId": 1, "stepTypeKey": "warmup"},
+            "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+            "endConditionValue": 600
+        }]
+    }]
+}
+
+
 @pytest.fixture
 def app_with_workouts(mock_garmin_client):
     """Create FastMCP app with workouts tools registered"""
@@ -92,11 +109,10 @@ async def test_create_workout_tool(app_with_workouts, mock_garmin_client):
     }
     mock_garmin_client.upload_workout.return_value = upload_response
 
-    # Call tool - pass dict which will be converted to JSON
-    workout_data = {"workoutName": "New Workout", "sportType": {"sportTypeId": 1}}
+    # Call tool with valid workout data matching schema
     result = await app_with_workouts.call_tool(
         "create_workout",
-        {"workout_data": workout_data}
+        {"workout_data": VALID_WORKOUT_DATA}
     )
 
     # Verify - the function normalizes and converts dict to JSON string before calling API
@@ -107,7 +123,7 @@ async def test_create_workout_tool(app_with_workouts, mock_garmin_client):
     # Verify the normalized payload contains the original data plus defaults
     call_args = mock_garmin_client.upload_workout.call_args[0][0]
     normalized_data = json.loads(call_args)
-    assert normalized_data["workoutName"] == "New Workout"
+    assert normalized_data["workoutName"] == "Test Workout"
     assert normalized_data["sportType"]["sportTypeId"] == 1
     # Check normalization added required defaults
     assert "avgTrainingSpeed" in normalized_data
@@ -200,7 +216,7 @@ async def test_create_workout_exception(app_with_workouts, mock_garmin_client):
     # Call tool with valid workout data
     result = await app_with_workouts.call_tool(
         "create_workout",
-        {"workout_data": {}}
+        {"workout_data": VALID_WORKOUT_DATA}
     )
 
     # Verify error is handled gracefully
