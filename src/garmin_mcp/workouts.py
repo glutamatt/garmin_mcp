@@ -280,6 +280,30 @@ def _normalize_executable_step(step: dict, step_id_counter: list = None) -> dict
         else:
             normalized['targetType']['displayOrder'] = 1
 
+    # Fix heart rate zone targeting: convert targetValueOne/Two to zoneNumber
+    # Coaches often send targetValueOne=1, targetValueTwo=1 meaning "Zone 1"
+    # but Garmin expects zoneNumber=1 with null targetValues
+    if 'targetType' in normalized:
+        target_key = normalized['targetType'].get('workoutTargetTypeKey', '')
+        if target_key == 'heart.rate.zone':
+            target_one = normalized.get('targetValueOne')
+            target_two = normalized.get('targetValueTwo')
+            # If both values are the same and between 1-5, it's a zone number
+            if (target_one is not None and target_two is not None and
+                target_one == target_two and 1 <= target_one <= 5):
+                normalized['zoneNumber'] = int(target_one)
+                normalized['targetValueOne'] = None
+                normalized['targetValueTwo'] = None
+        # Same fix for power zones
+        elif target_key == 'power.zone':
+            target_one = normalized.get('targetValueOne')
+            target_two = normalized.get('targetValueTwo')
+            if (target_one is not None and target_two is not None and
+                target_one == target_two and 1 <= target_one <= 7):
+                normalized['zoneNumber'] = int(target_one)
+                normalized['targetValueOne'] = None
+                normalized['targetValueTwo'] = None
+
     # Only add strokeType if completely missing (can be empty object {})
     if 'strokeType' not in normalized:
         normalized['strokeType'] = {}

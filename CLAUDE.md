@@ -85,6 +85,25 @@ The `stepTypeKey` must match the correct `stepTypeId`:
 1. Coach sends `stepId: null` → Normalized to sequential integers
 2. Coach sends `type: "WorkoutStep"` → Normalized to `"ExecutableStepDTO"`
 3. Incorrect `stepTypeId` values → Normalized based on `stepTypeKey`
+4. Zone-based targets: Coach sends `targetValueOne: 1, targetValueTwo: 1` → Normalized to `zoneNumber: 1`
+
+### Zone-Based Target Types
+For heart rate and power zone targets, Garmin expects `zoneNumber` field (1-5 for HR, 1-7 for power), NOT `targetValueOne`/`targetValueTwo`:
+
+```json
+// WRONG (what coaches often send)
+"targetType": {"workoutTargetTypeKey": "heart.rate.zone"},
+"targetValueOne": 1,
+"targetValueTwo": 1
+
+// CORRECT (what Garmin expects)
+"targetType": {"workoutTargetTypeKey": "heart.rate.zone"},
+"zoneNumber": 1,
+"targetValueOne": null,
+"targetValueTwo": null
+```
+
+The normalization auto-detects when `targetValueOne == targetValueTwo` (1-5) and converts to `zoneNumber`.
 
 ### Workout Creation Endpoints
 - **Web UI endpoint**: `https://connect.garmin.com/gc-api/workout-service/workout`
