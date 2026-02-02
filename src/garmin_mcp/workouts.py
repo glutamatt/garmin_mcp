@@ -513,13 +513,57 @@ def register_tools(app):
 
     @app.tool()
     async def upload_workout(workout_data: dict) -> str:
-        """Upload a workout from JSON data
+        """Upload a workout to the Garmin Connect library
 
         Creates a new workout in Garmin Connect from structured workout data.
         Automatically normalizes the workout structure to match Garmin API requirements.
+        Use schedule_workout to add the created workout to your calendar.
+
+        WORKOUT STRUCTURE:
+        {
+            "workoutName": "My Workout",
+            "description": "Optional description",
+            "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},  # or 2/cycling
+            "workoutSegments": [{
+                "segmentOrder": 1,
+                "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+                "workoutSteps": [<steps>]
+            }]
+        }
+
+        STEP TYPES (stepTypeKey -> stepTypeId):
+        - warmup: 1, cooldown: 2, interval: 3, recovery: 4, rest: 5, repeat: 6, other: 7
+
+        STEP STRUCTURE:
+        {
+            "stepOrder": 1,
+            "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+            "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+            "endConditionValue": 600,  # seconds for time, meters for distance
+            "targetType": {"workoutTargetTypeId": 4, "workoutTargetTypeKey": "heart.rate.zone"},
+            "zoneNumber": 2  # For zone-based targets (HR zones 1-5, power zones 1-7)
+        }
+
+        TARGET TYPES:
+        - no.target (id=1): No target
+        - heart.rate.zone (id=4): Use "zoneNumber": 1-5 for HR zones
+        - power.zone (id=5): Use "zoneNumber": 1-7 for power zones
+        - pace.zone (id=6): Use targetValueOne/Two for pace in m/s
+
+        END CONDITIONS:
+        - lap.button (id=1): Press lap button to end step
+        - time (id=2): Duration in seconds (endConditionValue)
+        - distance (id=3): Distance in meters (endConditionValue)
+
+        REPEAT GROUPS (for intervals):
+        {
+            "stepType": {"stepTypeId": 6, "stepTypeKey": "repeat"},
+            "numberOfIterations": 5,
+            "workoutSteps": [<interval step>, <recovery step>]
+        }
 
         Args:
-            workout_data: Dictionary containing workout structure (name, sport type, segments, etc.)
+            workout_data: Workout structure (see above). Auto-normalized for API compatibility.
         """
         try:
             # Normalize the workout structure to match Garmin API requirements
@@ -588,8 +632,11 @@ def register_tools(app):
         Note: This is functionally equivalent to plan_workout. Garmin's API requires
         workouts to exist in the library before they can be scheduled.
 
+        See upload_workout or plan_workout docstrings for complete workout structure reference.
+
         Args:
-            workout_data: Dictionary containing workout structure (name, sport type, segments, etc.)
+            workout_data: Workout structure (see upload_workout for format details).
+                         Auto-normalized for API compatibility.
             date: Date to schedule the workout in YYYY-MM-DD format
         """
         try:
@@ -965,16 +1012,44 @@ def register_tools(app):
         Creates a workout and schedules it to the calendar. The workout will
         appear in both the workout library and on the calendar for the specified date.
 
-        This is the recommended way to plan workouts as an AI coach, as it:
-        - Creates a reusable workout template in the library
-        - Schedules it to the athlete's calendar
-        - Returns IDs for both the workout and schedule entry
+        WORKOUT STRUCTURE:
+        {
+            "workoutName": "My Workout",
+            "description": "Optional description",
+            "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},  # or 2/cycling
+            "workoutSegments": [{
+                "segmentOrder": 1,
+                "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+                "workoutSteps": [<steps>]
+            }]
+        }
+
+        STEP TYPES (stepTypeKey -> stepTypeId):
+        - warmup: 1, cooldown: 2, interval: 3, recovery: 4, rest: 5, repeat: 6, other: 7
+
+        STEP STRUCTURE:
+        {
+            "stepOrder": 1,
+            "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+            "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+            "endConditionValue": 600,  # seconds for time, meters for distance
+            "targetType": {"workoutTargetTypeId": 4, "workoutTargetTypeKey": "heart.rate.zone"},
+            "zoneNumber": 2  # For zone-based targets (HR zones 1-5, power zones 1-7)
+        }
+
+        TARGET TYPES:
+        - no.target (id=1): No target
+        - heart.rate.zone (id=4): Use "zoneNumber": 1-5 for HR zones
+        - power.zone (id=5): Use "zoneNumber": 1-7 for power zones
+        - pace.zone (id=6): Use targetValueOne/Two for pace in m/s
+
+        END CONDITIONS:
+        - lap.button (id=1): Press lap button
+        - time (id=2): Duration in seconds
+        - distance (id=3): Distance in meters
 
         Args:
-            workout_data: Dictionary containing workout structure with:
-                - workoutName: Name of the workout (required)
-                - sportType: {sportTypeId, sportTypeKey} (required)
-                - workoutSegments: List of segments with workoutSteps
+            workout_data: Workout structure (see above). Auto-normalized for API compatibility.
             date: Date to schedule in YYYY-MM-DD format
         """
         try:
