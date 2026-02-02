@@ -643,6 +643,42 @@ def _parse_workout_step(step: dict) -> dict:
     return None
 
 
+def _deep_merge_workout(existing: dict, updates: dict) -> dict:
+    """Deep merge user updates into existing workout, preserving Garmin metadata.
+
+    This is needed because Garmin's update API requires the COMPLETE workout object
+    including workoutId, ownerId, stepId values, author info, etc.
+
+    Args:
+        existing: Complete workout object from Garmin API
+        updates: User's partial updates (may only have changed fields)
+
+    Returns:
+        Merged workout with user changes applied over existing data
+    """
+    import copy
+    result = copy.deepcopy(existing)
+
+    # Simple top-level fields to update
+    for key in ['workoutName', 'description']:
+        if key in updates:
+            result[key] = updates[key]
+
+    # Update sportType if provided
+    if 'sportType' in updates:
+        if 'sportType' not in result:
+            result['sportType'] = {}
+        result['sportType'].update(updates['sportType'])
+
+    # Update workoutSegments if provided (complete replacement)
+    if 'workoutSegments' in updates and updates['workoutSegments']:
+        # User provided new segments - need to normalize them
+        normalized_updates = _normalize_workout_structure(updates)
+        result['workoutSegments'] = normalized_updates['workoutSegments']
+
+    return result
+
+
 def register_tools(app):
     """Register all workout-related tools with the MCP server app"""
 
@@ -749,6 +785,9 @@ def register_tools(app):
         WHEN TO USE: To modify a workout's structure, name, or details.
         All scheduled instances will reflect the updated workout.
 
+        NOTE: This fetches the existing workout first, merges your changes,
+        and sends the complete object (required by Garmin API).
+
         RETURNS: workout_id, name, updated_date, status message.
 
         Args:
@@ -758,12 +797,25 @@ def register_tools(app):
         SEE ALSO: get_workout to see current structure, create_workout for new workouts.
         """
         try:
-            # Convert Pydantic model to dict and normalize
-            data_dict = workout_data.model_dump(exclude_none=True)
-            normalized_data = _normalize_workout_structure(data_dict)
+            # Step 1: Fetch existing workout (Garmin API requires complete object)
+            existing = garmin_client.get_workout_by_id(workout_id)
+            if not existing:
+                return json.dumps({
+                    "status": "error",
+                    "message": f"Workout {workout_id} not found"
+                }, indent=2)
 
-            # Update the workout
-            result = garmin_client.update_workout(workout_id, normalized_data)
+            # Step 2: Convert user's changes to dict
+            data_dict = workout_data.model_dump(exclude_none=True)
+
+            # Step 3: Deep merge user changes into existing workout
+            merged = _deep_merge_workout(existing, data_dict)
+
+            # Step 4: Ensure workoutId is in the body (required by API)
+            merged['workoutId'] = workout_id
+
+            # Step 5: Update the workout
+            result = garmin_client.update_workout(workout_id, merged)
 
             curated = {
                 "status": "updated",
