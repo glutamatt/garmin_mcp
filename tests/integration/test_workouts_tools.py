@@ -1,7 +1,7 @@
 """
 Integration tests for workouts module MCP tools
 
-Tests all 7 workout tools using FastMCP integration with mocked Garmin API responses.
+Tests all workout tools using FastMCP integration with mocked Garmin API responses.
 """
 import pytest
 from unittest.mock import Mock
@@ -41,15 +41,15 @@ async def test_get_workouts_tool(app_with_workouts, mock_garmin_client):
 
 
 @pytest.mark.asyncio
-async def test_get_workout_by_id_tool(app_with_workouts, mock_garmin_client):
-    """Test get_workout_by_id tool returns specific workout"""
+async def test_get_workout_tool(app_with_workouts, mock_garmin_client):
+    """Test get_workout tool returns specific workout"""
     # Setup mock
     mock_garmin_client.get_workout_by_id.return_value = MOCK_WORKOUT_DETAILS
 
     # Call tool
     workout_id = 123456
     result = await app_with_workouts.call_tool(
-        "get_workout_by_id",
+        "get_workout",
         {"workout_id": workout_id}
     )
 
@@ -82,8 +82,8 @@ async def test_download_workout_tool(app_with_workouts, mock_garmin_client):
 
 
 @pytest.mark.asyncio
-async def test_upload_workout_tool(app_with_workouts, mock_garmin_client):
-    """Test upload_workout tool uploads new workout"""
+async def test_create_workout_tool(app_with_workouts, mock_garmin_client):
+    """Test create_workout tool creates new workout"""
     # Setup mock
     upload_response = {
         "status": "success",
@@ -95,7 +95,7 @@ async def test_upload_workout_tool(app_with_workouts, mock_garmin_client):
     # Call tool - pass dict which will be converted to JSON
     workout_data = {"workoutName": "New Workout", "sportType": {"sportTypeId": 1}}
     result = await app_with_workouts.call_tool(
-        "upload_workout",
+        "create_workout",
         {"workout_data": workout_data}
     )
 
@@ -112,62 +112,6 @@ async def test_upload_workout_tool(app_with_workouts, mock_garmin_client):
     # Check normalization added required defaults
     assert "avgTrainingSpeed" in normalized_data
     assert "estimatedDurationInSecs" in normalized_data
-
-
-@pytest.mark.asyncio
-async def test_upload_activity_tool(app_with_workouts, mock_garmin_client):
-    """Test upload_activity tool - returns placeholder message"""
-    # Call tool - this is a placeholder implementation that doesn't call the client
-    file_path = "/path/to/activity.fit"
-    result = await app_with_workouts.call_tool(
-        "upload_activity",
-        {"file_path": file_path}
-    )
-
-    # Verify - should return placeholder message
-    assert result is not None
-    assert "not supported" in str(result).lower()
-
-
-@pytest.mark.asyncio
-async def test_schedule_workout_directly_tool(app_with_workouts, mock_garmin_client):
-    """Test schedule_workout_directly tool - schedules workout without saving to library"""
-    # Setup mock
-    mock_garmin_client.schedule_workout_directly.return_value = {
-        "workoutScheduleId": 98765,
-        "workout": {"workoutName": "Quick Run"},
-        "calendarDate": "2024-01-20",
-        "createdDate": "2024-01-15T10:00:00.000"
-    }
-
-    # Call tool
-    workout_data = {
-        "workoutName": "Quick Run",
-        "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
-        "workoutSegments": []
-    }
-    result = await app_with_workouts.call_tool(
-        "schedule_workout_directly",
-        {"workout_data": workout_data, "date": "2024-01-20"}
-    )
-
-    # Verify
-    assert result is not None
-    mock_garmin_client.schedule_workout_directly.assert_called_once()
-
-    # Verify the call included the normalized workout and date
-    call_args = mock_garmin_client.schedule_workout_directly.call_args
-    normalized_workout = call_args[0][0]
-    date = call_args[0][1]
-    assert normalized_workout["workoutName"] == "Quick Run"
-    assert "avgTrainingSpeed" in normalized_workout  # Normalization applied
-    assert date == "2024-01-20"
-
-    # Verify response
-    import json
-    response = json.loads(result[0].text)
-    assert response["status"] == "scheduled"
-    assert response["workout_schedule_id"] == 98765
 
 
 @pytest.mark.asyncio
@@ -200,8 +144,8 @@ async def test_get_scheduled_workouts_tool(app_with_workouts, mock_garmin_client
 
 
 @pytest.mark.asyncio
-async def test_get_training_plan_workouts_tool(app_with_workouts, mock_garmin_client):
-    """Test get_training_plan_workouts tool - uses GraphQL query"""
+async def test_get_training_plan_tool(app_with_workouts, mock_garmin_client):
+    """Test get_training_plan tool - uses GraphQL query"""
     # Setup mock for GraphQL query
     graphql_response = {
         "data": {
@@ -221,7 +165,7 @@ async def test_get_training_plan_workouts_tool(app_with_workouts, mock_garmin_cl
 
     # Call tool
     result = await app_with_workouts.call_tool(
-        "get_training_plan_workouts",
+        "get_training_plan",
         {"calendar_date": "2024-01-15"}
     )
 
@@ -248,16 +192,89 @@ async def test_get_workouts_no_data(app_with_workouts, mock_garmin_client):
 
 
 @pytest.mark.asyncio
-async def test_upload_workout_exception(app_with_workouts, mock_garmin_client):
-    """Test upload_workout tool when upload fails"""
+async def test_create_workout_exception(app_with_workouts, mock_garmin_client):
+    """Test create_workout tool when creation fails"""
     # Setup mock to raise exception
     mock_garmin_client.upload_workout.side_effect = Exception("Upload failed")
 
     # Call tool with valid workout data
     result = await app_with_workouts.call_tool(
-        "upload_workout",
+        "create_workout",
         {"workout_data": {}}
     )
 
     # Verify error is handled gracefully
     assert result is not None
+
+
+# Tests for deprecated aliases (backward compatibility)
+@pytest.mark.asyncio
+async def test_deprecated_get_workout_by_id_alias(app_with_workouts, mock_garmin_client):
+    """Test that deprecated get_workout_by_id alias still works"""
+    # Setup mock
+    mock_garmin_client.get_workout_by_id.return_value = MOCK_WORKOUT_DETAILS
+
+    # Call tool using deprecated name
+    workout_id = 123456
+    result = await app_with_workouts.call_tool(
+        "get_workout_by_id",
+        {"workout_id": workout_id}
+    )
+
+    # Verify
+    assert result is not None
+    mock_garmin_client.get_workout_by_id.assert_called_once_with(workout_id)
+
+
+@pytest.mark.asyncio
+async def test_deprecated_upload_workout_alias(app_with_workouts, mock_garmin_client):
+    """Test that deprecated upload_workout alias still works"""
+    # Setup mock
+    upload_response = {
+        "status": "success",
+        "workoutId": 123457,
+        "message": "Workout uploaded successfully"
+    }
+    mock_garmin_client.upload_workout.return_value = upload_response
+
+    # Call tool using deprecated name
+    workout_data = {"workoutName": "New Workout", "sportType": {"sportTypeId": 1}}
+    result = await app_with_workouts.call_tool(
+        "upload_workout",
+        {"workout_data": workout_data}
+    )
+
+    # Verify
+    assert result is not None
+    mock_garmin_client.upload_workout.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_deprecated_get_training_plan_workouts_alias(app_with_workouts, mock_garmin_client):
+    """Test that deprecated get_training_plan_workouts alias still works"""
+    # Setup mock for GraphQL query
+    graphql_response = {
+        "data": {
+            "trainingPlanScalar": {
+                "trainingPlanWorkoutScheduleDTOS": [
+                    {
+                        "workoutId": 123456,
+                        "workoutName": "Week 1 - Day 1",
+                        "planName": "5K Training Plan",
+                        "calendarDate": "2024-01-15"
+                    }
+                ]
+            }
+        }
+    }
+    mock_garmin_client.query_garmin_graphql.return_value = graphql_response
+
+    # Call tool using deprecated name
+    result = await app_with_workouts.call_tool(
+        "get_training_plan_workouts",
+        {"calendar_date": "2024-01-15"}
+    )
+
+    # Verify
+    assert result is not None
+    mock_garmin_client.query_garmin_graphql.assert_called_once()

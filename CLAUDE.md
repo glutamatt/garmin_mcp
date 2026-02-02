@@ -112,6 +112,61 @@ The normalization auto-detects when `targetValueOne == targetValueTwo` (1-5) and
 ### Workout Scheduling Constraint
 Garmin's API requires workouts to exist in the library before they can be scheduled to the calendar. There is NO way to schedule a workout without it being in the library first. Deleting a workout from the library also cascade-deletes any scheduled calendar entries.
 
-This means `plan_workout` and `schedule_workout_directly` both create workouts in the library AND on the calendar.
+This means `plan_workout` creates workouts in the library AND on the calendar.
 
 The `_normalize_workout_structure()` function handles these transformations automatically.
+
+## Workouts Module Tool Reference
+
+The `workouts.py` module provides 17 tools organized into 4 groups:
+
+### Workout Library (CRUD)
+| Tool | Description |
+|------|-------------|
+| `get_workouts` | List all workouts in library |
+| `get_workout` | Get workout details by ID |
+| `create_workout` | Create workout without scheduling |
+| `update_workout` | Modify existing workout |
+| `delete_workout` | Remove workout (cascade deletes calendar entries) |
+| `download_workout` | Export workout as FIT file |
+
+### Scheduling
+| Tool | Description |
+|------|-------------|
+| `plan_workout` | Create AND schedule in one step (RECOMMENDED) |
+| `schedule_workout` | Schedule existing workout to calendar |
+| `reschedule_workout` | Move scheduled workout to new date |
+| `unschedule_workout` | Remove from calendar (keeps in library) |
+| `get_scheduled_workouts` | List scheduled workouts in date range |
+| `get_calendar` | Full calendar view (RECOMMENDED for overview) |
+
+### Training Plans
+| Tool | Description |
+|------|-------------|
+| `get_training_plan` | Get plan workouts for a date |
+| `get_adaptive_plan` | Full adaptive plan with phases |
+| `get_adaptive_workout` | Detailed adaptive workout structure |
+| `get_coaching_preferences` | User's training day preferences |
+
+### Analytics
+| Tool | Description |
+|------|-------------|
+| `get_readiness` | Training readiness/recovery (CHECK BEFORE PLANNING) |
+| `get_compliance` | Workout completion tracking |
+| `get_weekly_summary` | Weekly training review |
+
+### Deprecated Aliases (Backward Compatibility)
+The following old tool names still work but will be removed in v2.0:
+- `get_workout_by_id` → `get_workout`
+- `upload_workout` → `create_workout`
+- `delete_workout_from_library` → `delete_workout`
+- `update_workout_in_library` → `update_workout`
+- `cancel_scheduled_workout` → `unschedule_workout`
+- `get_training_calendar` → `get_calendar`
+- `get_adaptive_training_plan_full` → `get_adaptive_plan`
+- `get_fbt_adaptive_workout_details` → `get_adaptive_workout`
+- `get_adaptive_coaching_preferences` → `get_coaching_preferences`
+- `get_training_plan_workouts` → `get_training_plan`
+- `get_workout_compliance` → `get_compliance`
+- `get_athlete_readiness` → `get_readiness`
+- `get_weekly_training_summary` → `get_weekly_summary`
