@@ -90,4 +90,9 @@ The `stepTypeKey` must match the correct `stepTypeId`:
 - **Web UI endpoint**: `https://connect.garmin.com/gc-api/workout-service/workout`
 - **API endpoint**: `https://connectapi.garmin.com/workout-service/workout`
 
+### Workout Scheduling Constraint
+Garmin's API requires workouts to exist in the library before they can be scheduled to the calendar. There is NO way to schedule a workout without it being in the library first. Deleting a workout from the library also cascade-deletes any scheduled calendar entries.
+
+This means `plan_workout` and `schedule_workout_directly` both create workouts in the library AND on the calendar.
+
 The `_normalize_workout_structure()` function handles these transformations automatically.
