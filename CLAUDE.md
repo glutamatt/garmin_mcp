@@ -6,23 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Garmin MCP Server - A Model Context Protocol (MCP) server that connects to Garmin Connect and exposes fitness/health data to Claude and other MCP-compatible clients. Uses the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library.
 
+**Session-based multi-user architecture**: Each MCP connection has isolated session state. No credentials needed at startup.
+
 ## Development Commands
 
 ```bash
 # Install dependencies
 uv sync
 
-# Run the MCP server
-GARMIN_EMAIL=your@email.com GARMIN_PASSWORD=yourpass uv run garmin-mcp
+# Run the MCP server (no credentials needed - session-based auth)
+uv run garmin-mcp
 
-# Run integration tests (mocked Garmin API, no credentials needed)
+# Run integration tests (mocked Garmin API)
 uv run pytest tests/integration/
-
-# Run specific test module
-uv run pytest tests/integration/test_health_wellness_tools.py -v
-
-# Run e2e tests (requires real Garmin credentials)
-uv run pytest tests/e2e/ -m e2e -v
 
 # Test with MCP Inspector
 npx @modelcontextprotocol/inspector uv run garmin-mcp
@@ -30,16 +26,51 @@ npx @modelcontextprotocol/inspector uv run garmin-mcp
 
 ## Architecture
 
+### Session-Based Authentication
+
+The server uses FastMCP Context for per-connection session state:
+
+```
+1. Client calls garmin_login_tool(email, password)
+   → Authenticates with Garmin Connect
+   → Stores tokens in session: ctx.set_state("garmin_tokens", tokens)
+   → Returns tokens to client (for cookie persistence)
+
+2. Client calls set_garmin_session(tokens) on reconnect
+   → Restores session from stored tokens
+
+3. Client calls any data tool (e.g., get_stats(date))
+   → Tool uses get_client(ctx) to get authenticated client
+   → Returns data
+```
+
+### Core Files
+
+- **`client_factory.py`** - Session management
+  - `get_client(ctx)` - Get Garmin client from session (raises if not logged in)
+  - `set_session_tokens(ctx, tokens)` - Store tokens in session
+  - `clear_session_tokens(ctx)` - Clear session on logout
+
+- **`auth_tool.py`** - Authentication tools
+  - `garmin_login_tool(email, password)` - Login and store session
+  - `set_garmin_session(tokens)` - Restore session from tokens
+  - `garmin_logout()` - Clear session
+  - `get_user_name()` - Get display name
+  - `get_available_features()` - List available data domains
+
+- **`garmin_platform.py`** - Stateless login function
+
 ### Module Pattern
-Each module in `src/garmin_mcp/` follows the same pattern:
-- `configure(client)` - Sets the global Garmin client instance
+
+Each data module in `src/garmin_mcp/` follows the same pattern:
 - `register_tools(app)` - Registers MCP tools using `@app.tool()` decorators
+- All tools take `ctx: Context` as last parameter
+- Tools use `client = await get_client(ctx)` to get authenticated client
 - All tools are async and return JSON strings via `json.dumps()`
 
 ### Entry Point (`src/garmin_mcp/__init__.py`)
-- `main()` initializes Garmin client and MCP server
-- `init_api()` handles OAuth authentication with token persistence
-- Supports MFA (multi-factor authentication)
+- `main()` creates MCP server and registers all tool modules
+- Server starts without credentials - authentication happens per-session
 
 ### Modules by Domain
 - `activity_management.py` - Activity listing, details, splits
@@ -57,9 +88,7 @@ Each module in `src/garmin_mcp/` follows the same pattern:
 
 ## Environment Variables
 
-- `GARMIN_EMAIL` / `GARMIN_PASSWORD` - Garmin Connect credentials
-- `GARMIN_EMAIL_FILE` / `GARMIN_PASSWORD_FILE` - File-based alternatives
-- `GARMINTOKENS` - Token storage directory (default: `~/.garminconnect`)
+No environment variables required. Authentication is session-based via MCP tools.
 
 ## Garmin Workout API Requirements
 
