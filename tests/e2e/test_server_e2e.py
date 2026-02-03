@@ -27,6 +27,7 @@ from mcp.client.stdio import stdio_client
 load_dotenv()
 
 
+@pytest.mark.skip("Requires real credentials")
 @pytest.mark.e2e
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)  # Pytest timeout
@@ -72,6 +73,7 @@ async def test_mcp_server_connection():
         )
 
 
+@pytest.mark.skip("Requires real credentials")
 @pytest.mark.e2e
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)
@@ -106,6 +108,7 @@ async def test_list_activities_tool():
         pytest.fail("Tool execution timed out - check your Garmin credentials and network")
 
 
+@pytest.mark.skip("Requires real credentials")
 @pytest.mark.e2e
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)
@@ -142,6 +145,7 @@ async def test_get_steps_data_tool():
         pytest.fail("Tool execution timed out - check your Garmin credentials and network")
 
 
+@pytest.mark.skip("Requires real credentials")
 @pytest.mark.e2e
 @pytest.mark.asyncio
 @pytest.mark.timeout(45)

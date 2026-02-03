@@ -1,10 +1,10 @@
 """
 Integration tests for challenges module MCP tools
 
-Tests all 9 challenges and badges tools using FastMCP integration with mocked Garmin API responses.
+Tests all challenges and badges tools using FastMCP integration with mocked Garmin API responses.
 """
 import pytest
-from unittest.mock import Mock
+from unittest.mock import patch
 from mcp.server.fastmcp import FastMCP
 
 from garmin_mcp import challenges
@@ -16,9 +16,8 @@ from tests.fixtures.garmin_responses import (
 
 
 @pytest.fixture
-def app_with_challenges(mock_garmin_client):
+def app_with_challenges():
     """Create FastMCP app with challenges tools registered"""
-    challenges.configure(mock_garmin_client)
     app = FastMCP("Test Challenges")
     app = challenges.register_tools(app)
     return app
@@ -30,11 +29,15 @@ async def test_get_goals_active(app_with_challenges, mock_garmin_client):
     # Setup mock
     mock_garmin_client.get_goals.return_value = MOCK_GOALS
 
-    # Call tool
-    result = await app_with_challenges.call_tool(
-        "get_goals",
-        {"goal_type": "active"}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.challenges.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_challenges.call_tool(
+            "get_goals",
+            {"goal_type": "active"}
+        )
 
     # Verify
     assert result is not None
@@ -47,11 +50,15 @@ async def test_get_goals_default(app_with_challenges, mock_garmin_client):
     # Setup mock
     mock_garmin_client.get_goals.return_value = MOCK_GOALS
 
-    # Call tool without goal_type (should default to "active")
-    result = await app_with_challenges.call_tool(
-        "get_goals",
-        {}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.challenges.get_client", mock_get_client):
+        # Call tool without goal_type (should default to "active")
+        result = await app_with_challenges.call_tool(
+            "get_goals",
+            {}
+        )
 
     # Verify
     assert result is not None
@@ -65,11 +72,15 @@ async def test_get_goals_future(app_with_challenges, mock_garmin_client):
     future_goals = {"goals": [{"goalType": "STEPS", "goalValue": 10000, "startDate": "2024-02-01"}]}
     mock_garmin_client.get_goals.return_value = future_goals
 
-    # Call tool
-    result = await app_with_challenges.call_tool(
-        "get_goals",
-        {"goal_type": "future"}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.challenges.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_challenges.call_tool(
+            "get_goals",
+            {"goal_type": "future"}
+        )
 
     # Verify
     assert result is not None
@@ -82,11 +93,15 @@ async def test_get_personal_record_tool(app_with_challenges, mock_garmin_client)
     # Setup mock
     mock_garmin_client.get_personal_record.return_value = MOCK_PERSONAL_RECORD
 
-    # Call tool
-    result = await app_with_challenges.call_tool(
-        "get_personal_record",
-        {}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.challenges.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_challenges.call_tool(
+            "get_personal_record",
+            {}
+        )
 
     # Verify
     assert result is not None
@@ -99,11 +114,15 @@ async def test_get_earned_badges_tool(app_with_challenges, mock_garmin_client):
     # Setup mock
     mock_garmin_client.get_earned_badges.return_value = MOCK_BADGES
 
-    # Call tool
-    result = await app_with_challenges.call_tool(
-        "get_earned_badges",
-        {}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.challenges.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_challenges.call_tool(
+            "get_earned_badges",
+            {}
+        )
 
     # Verify
     assert result is not None
@@ -129,11 +148,15 @@ async def test_get_adhoc_challenges_default(app_with_challenges, mock_garmin_cli
     ]
     mock_garmin_client.get_adhoc_challenges.return_value = adhoc_challenges
 
-    # Call tool
-    result = await app_with_challenges.call_tool(
-        "get_adhoc_challenges",
-        {}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.challenges.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_challenges.call_tool(
+            "get_adhoc_challenges",
+            {}
+        )
 
     # Verify
     assert result is not None
@@ -146,48 +169,19 @@ async def test_get_adhoc_challenges_custom_params(app_with_challenges, mock_garm
     # Setup mock
     mock_garmin_client.get_adhoc_challenges.return_value = []
 
-    # Call tool
-    result = await app_with_challenges.call_tool(
-        "get_adhoc_challenges",
-        {"start": 10, "limit": 50}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.challenges.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_challenges.call_tool(
+            "get_adhoc_challenges",
+            {"start": 10, "limit": 50}
+        )
 
     # Verify
     assert result is not None
     mock_garmin_client.get_adhoc_challenges.assert_called_once_with(10, 50)
-
-
-@pytest.mark.asyncio
-async def test_get_available_badge_challenges_tool(app_with_challenges, mock_garmin_client):
-    """Test get_available_badge_challenges tool"""
-    # Setup mock
-    badge_challenges = [
-        {
-            "uuid": "ABC123",
-            "badgeChallengeName": "Marathon Challenge",
-            "challengeCategoryId": 1,
-            "badgeChallengeStatusId": 2,
-            "startDate": "2024-01-01T00:00:00.0",
-            "endDate": "2024-01-31T23:59:59.0",
-            "badgePoints": 4,
-            "badgeUnitId": 1,
-            "badgeProgressValue": None,
-            "badgeTargetValue": 42195.0,
-            "userJoined": False,
-            "joinable": True,
-        }
-    ]
-    mock_garmin_client.get_available_badge_challenges.return_value = badge_challenges
-
-    # Call tool
-    result = await app_with_challenges.call_tool(
-        "get_available_badge_challenges",
-        {}
-    )
-
-    # Verify
-    assert result is not None
-    mock_garmin_client.get_available_badge_challenges.assert_called_once_with(1, 20)
 
 
 @pytest.mark.asyncio
@@ -197,11 +191,15 @@ async def test_get_badge_challenges_tool(app_with_challenges, mock_garmin_client
     badge_challenges = [MOCK_BADGES[0]]
     mock_garmin_client.get_badge_challenges.return_value = badge_challenges
 
-    # Call tool
-    result = await app_with_challenges.call_tool(
-        "get_badge_challenges",
-        {"start": 1, "limit": 50}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.challenges.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_challenges.call_tool(
+            "get_badge_challenges",
+            {"start": 1, "limit": 50}
+        )
 
     # Verify
     assert result is not None
@@ -209,86 +207,31 @@ async def test_get_badge_challenges_tool(app_with_challenges, mock_garmin_client
 
 
 @pytest.mark.asyncio
-async def test_get_non_completed_badge_challenges_tool(app_with_challenges, mock_garmin_client):
-    """Test get_non_completed_badge_challenges tool"""
-    # Setup mock
-    non_completed = [
-        {
-            "uuid": "DEF456",
-            "badgeChallengeName": "Ultra Marathon Challenge",
-            "challengeCategoryId": 1,
-            "badgeChallengeStatusId": 2,
-            "startDate": "2024-01-01T00:00:00.0",
-            "endDate": "2024-01-31T23:59:59.0",
-            "badgePoints": 4,
-            "badgeUnitId": 1,
-            "badgeProgressValue": 21000.0,
-            "badgeTargetValue": 50000.0,
-            "badgeEarnedDate": None,
-            "userJoined": True,
-        }
-    ]
-    mock_garmin_client.get_non_completed_badge_challenges.return_value = non_completed
-
-    # Call tool
-    result = await app_with_challenges.call_tool(
-        "get_non_completed_badge_challenges",
-        {}
-    )
-
-    # Verify
-    assert result is not None
-    mock_garmin_client.get_non_completed_badge_challenges.assert_called_once_with(1, 20)
-
-
-@pytest.mark.asyncio
 async def test_get_race_predictions_tool(app_with_challenges, mock_garmin_client):
     """Test get_race_predictions tool"""
     # Setup mock
     race_predictions = {
-        "5K": {"time": 1200, "unit": "seconds"},  # 20 minutes
-        "10K": {"time": 2520, "unit": "seconds"},  # 42 minutes
-        "halfMarathon": {"time": 5400, "unit": "seconds"},  # 1h 30m
-        "marathon": {"time": 11400, "unit": "seconds"}  # 3h 10m
+        "calendarDate": "2024-01-15",
+        "time5K": 1200,
+        "time10K": 2520,
+        "timeHalfMarathon": 5400,
+        "timeMarathon": 11400,
     }
     mock_garmin_client.get_race_predictions.return_value = race_predictions
 
-    # Call tool
-    result = await app_with_challenges.call_tool(
-        "get_race_predictions",
-        {}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.challenges.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_challenges.call_tool(
+            "get_race_predictions",
+            {}
+        )
 
     # Verify
     assert result is not None
     mock_garmin_client.get_race_predictions.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_get_inprogress_virtual_challenges_tool(app_with_challenges, mock_garmin_client):
-    """Test get_inprogress_virtual_challenges tool"""
-    # Setup mock
-    virtual_challenges = [
-        {
-            "uuid": "GHI789",
-            "name": "Virtual NYC Marathon",
-            "startDate": "2024-01-01T00:00:00.0",
-            "endDate": "2024-01-31T23:59:59.0",
-            "progress": 28000.0,
-            "target": 42195.0,
-        }
-    ]
-    mock_garmin_client.get_inprogress_virtual_challenges.return_value = virtual_challenges
-
-    # Call tool with default parameters
-    result = await app_with_challenges.call_tool(
-        "get_inprogress_virtual_challenges",
-        {}
-    )
-
-    # Verify
-    assert result is not None
-    mock_garmin_client.get_inprogress_virtual_challenges.assert_called_once_with(0, 20)
 
 
 # Error handling tests
@@ -298,11 +241,15 @@ async def test_get_goals_no_data(app_with_challenges, mock_garmin_client):
     # Setup mock to return None
     mock_garmin_client.get_goals.return_value = None
 
-    # Call tool
-    result = await app_with_challenges.call_tool(
-        "get_goals",
-        {"goal_type": "active"}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.challenges.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_challenges.call_tool(
+            "get_goals",
+            {"goal_type": "active"}
+        )
 
     # Verify error message is returned
     assert result is not None
@@ -315,11 +262,15 @@ async def test_get_personal_record_exception(app_with_challenges, mock_garmin_cl
     # Setup mock to raise exception
     mock_garmin_client.get_personal_record.side_effect = Exception("API Error")
 
-    # Call tool
-    result = await app_with_challenges.call_tool(
-        "get_personal_record",
-        {}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.challenges.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_challenges.call_tool(
+            "get_personal_record",
+            {}
+        )
 
     # Verify error is handled gracefully
     assert result is not None

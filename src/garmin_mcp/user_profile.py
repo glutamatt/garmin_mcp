@@ -1,61 +1,58 @@
 """
 User Profile functions for Garmin Connect MCP Server
+
+Uses FastMCP Context for session state.
 """
 import json
-import datetime
-from typing import Any, Dict, List, Optional, Union
 
-# The garmin_client will be set by the main file
-garmin_client = None
+from mcp.server.fastmcp import Context
 
-
-def configure(client):
-    """Configure the module with the Garmin client instance"""
-    global garmin_client
-    garmin_client = client
+from garmin_mcp.client_factory import get_client
 
 
 def register_tools(app):
     """Register all user profile tools with the MCP server app"""
-    
-    @app.tool()
-    async def get_full_name() -> str:
-        """Get user's full name from profile"""
-        try:
-            full_name = garmin_client.get_full_name()
-            return json.dumps({"full_name": full_name}, indent=2)
-        except Exception as e:
-            return f"Error retrieving user's full name: {str(e)}"
 
     @app.tool()
-    async def get_unit_system() -> str:
-        """Get user's preferred unit system from profile"""
+    async def get_full_name(ctx: Context) -> str:
+        """Get user's full name"""
         try:
-            unit_system = garmin_client.get_unit_system()
-            return json.dumps({"unit_system": unit_system}, indent=2)
+            client = await get_client(ctx)
+            return json.dumps({"full_name": client.get_full_name()}, indent=2)
         except Exception as e:
-            return f"Error retrieving unit system: {str(e)}"
-    
+            return f"Error: {str(e)}"
+
     @app.tool()
-    async def get_user_profile() -> str:
+    async def get_unit_system(ctx: Context) -> str:
+        """Get user's preferred unit system"""
+        try:
+            client = await get_client(ctx)
+            return json.dumps({"unit_system": client.get_unit_system()}, indent=2)
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    @app.tool()
+    async def get_user_profile(ctx: Context) -> str:
         """Get user profile information"""
         try:
-            profile = garmin_client.get_user_profile()
+            client = await get_client(ctx)
+            profile = client.get_user_profile()
             if not profile:
-                return "No user profile information found."
+                return "No user profile found"
             return json.dumps(profile, indent=2)
         except Exception as e:
-            return f"Error retrieving user profile: {str(e)}"
+            return f"Error: {str(e)}"
 
     @app.tool()
-    async def get_userprofile_settings() -> str:
+    async def get_userprofile_settings(ctx: Context) -> str:
         """Get user profile settings"""
         try:
-            settings = garmin_client.get_userprofile_settings()
+            client = await get_client(ctx)
+            settings = client.get_userprofile_settings()
             if not settings:
-                return "No user profile settings found."
+                return "No settings found"
             return json.dumps(settings, indent=2)
         except Exception as e:
-            return f"Error retrieving user profile settings: {str(e)}"
+            return f"Error: {str(e)}"
 
     return app

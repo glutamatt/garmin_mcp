@@ -1,8 +1,10 @@
 """
 Shared pytest fixtures for Garmin MCP testing
+
+Uses mock Context and patches get_client to return mock Garmin client.
 """
 import pytest
-from unittest.mock import Mock
+from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime, timedelta
 from mcp.server.fastmcp import FastMCP
 
@@ -13,8 +15,21 @@ def mock_garmin_client():
     client = Mock()
 
     # Configure mock to have all the methods we need
-    # By default, methods return None (can be overridden in tests)
+    client.display_name = "TestUser"
+    client.get_full_name = Mock(return_value="Test User")
     client.get_activities = Mock(return_value=[])
+    client.get_activities_by_date = Mock(return_value=[])
+    client.get_activities_fordate = Mock(return_value={})
+    client.get_activity = Mock(return_value={})
+    client.get_activity_splits = Mock(return_value={})
+    client.get_activity_typed_splits = Mock(return_value={})
+    client.get_activity_split_summaries = Mock(return_value={})
+    client.get_activity_weather = Mock(return_value={})
+    client.get_activity_hr_in_timezones = Mock(return_value={})
+    client.get_activity_gear = Mock(return_value={})
+    client.get_activity_exercise_sets = Mock(return_value={})
+    client.count_activities = Mock(return_value=0)
+    client.get_activity_types = Mock(return_value=[])
     client.get_stats = Mock(return_value={})
     client.get_user_summary = Mock(return_value={})
     client.get_body_composition = Mock(return_value={})
@@ -34,10 +49,69 @@ def mock_garmin_client():
     client.get_stress_data = Mock(return_value={})
     client.get_respiration_data = Mock(return_value={})
     client.get_spo2_data = Mock(return_value={})
+    client.get_hrv_data = Mock(return_value={})
     client.get_all_day_stress = Mock(return_value={})
     client.get_all_day_events = Mock(return_value={})
+    client.get_goals = Mock(return_value=[])
+    client.get_personal_record = Mock(return_value=[])
+    client.get_earned_badges = Mock(return_value=[])
+    client.get_badge_challenges = Mock(return_value=[])
+    client.get_adhoc_challenges = Mock(return_value=[])
+    client.get_race_predictions = Mock(return_value={})
+    client.get_devices = Mock(return_value=[])
+    client.get_device_last_used = Mock(return_value={})
+    client.get_device_settings = Mock(return_value={})
+    client.get_device_alarms = Mock(return_value=[])
+    client.get_gear = Mock(return_value=[])
+    client.get_gear_stats = Mock(return_value={})
+    client.add_gear_to_activity = Mock()
+    client.remove_gear_from_activity = Mock()
+    client.get_weigh_ins = Mock(return_value={})
+    client.add_weigh_in = Mock()
+    client.delete_weigh_ins = Mock(return_value=0)
+    client.get_user_profile = Mock(return_value={})
+    client.get_userprofile_settings = Mock(return_value={})
+    client.get_unit_system = Mock(return_value="metric")
+    client.get_workouts = Mock(return_value=[])
+    client.get_workout_by_id = Mock(return_value={})
+    client.query_garmin_graphql = Mock(return_value={})
+    client.upload_workout = Mock(return_value={})
+    client.get_endurance_score = Mock(return_value={})
+    client.get_hill_score = Mock(return_value={})
+    client.get_fitnessage_data = Mock(return_value={})
+    client.get_lactate_threshold = Mock(return_value={})
+    client.get_progress_summary_between_dates = Mock(return_value={})
+    client.get_pregnancy_summary = Mock(return_value={})
+    client.get_menstrual_data_for_date = Mock(return_value={})
+    client.get_menstrual_calendar_data = Mock(return_value={})
+    client.add_body_composition = Mock(return_value={})
+    client.set_blood_pressure = Mock(return_value={})
+    client.add_hydration_data = Mock(return_value={})
+    client.garth = Mock()
+    client.garth.post = Mock()
+    client.garth.get = Mock()
 
     return client
+
+
+@pytest.fixture
+def mock_context():
+    """Create a mock FastMCP Context"""
+    ctx = Mock()
+    ctx.get_state = AsyncMock(return_value="mock_tokens")
+    ctx.set_state = AsyncMock()
+    ctx.delete_state = AsyncMock()
+    return ctx
+
+
+@pytest.fixture
+def patched_get_client(mock_garmin_client):
+    """Patch get_client to return mock Garmin client"""
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.client_factory.get_client", mock_get_client):
+        yield mock_garmin_client
 
 
 @pytest.fixture
@@ -160,29 +234,23 @@ def sample_training_status():
     }
 
 
-def create_test_app(module, mock_client):
+def create_test_app(module):
     """
     Helper function to create a FastMCP app with a specific module registered
 
     Args:
         module: The module to register (e.g., health_wellness)
-        mock_client: Mock Garmin client to configure the module with
 
     Returns:
         FastMCP app instance with tools registered
     """
-    # Configure the module with mock client
-    module.configure(mock_client)
-
-    # Create app and register tools
     app = FastMCP("Test Garmin MCP")
     app = module.register_tools(app)
-
     return app
 
 
 @pytest.fixture
-def app_factory(mock_garmin_client):
+def app_factory():
     """
     Factory fixture to create FastMCP apps with different modules
 
@@ -190,6 +258,6 @@ def app_factory(mock_garmin_client):
         app = app_factory(health_wellness)
     """
     def _create_app(module):
-        return create_test_app(module, mock_garmin_client)
+        return create_test_app(module)
 
     return _create_app

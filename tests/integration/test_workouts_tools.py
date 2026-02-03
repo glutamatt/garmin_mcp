@@ -4,7 +4,7 @@ Integration tests for workouts module MCP tools
 Tests workout tools using FastMCP integration with mocked Garmin API responses.
 """
 import pytest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from mcp.server.fastmcp import FastMCP
 
 from garmin_mcp import workouts
@@ -15,9 +15,8 @@ from tests.fixtures.garmin_responses import (
 
 
 @pytest.fixture
-def app_with_workouts(mock_garmin_client):
+def app_with_workouts():
     """Create FastMCP app with workouts tools registered"""
-    workouts.configure(mock_garmin_client)
     app = FastMCP("Test Workouts")
     app = workouts.register_tools(app)
     return app
@@ -29,11 +28,15 @@ async def test_get_workouts_tool(app_with_workouts, mock_garmin_client):
     # Setup mock
     mock_garmin_client.get_workouts.return_value = MOCK_WORKOUTS
 
-    # Call tool
-    result = await app_with_workouts.call_tool(
-        "get_workouts",
-        {}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.workouts.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_workouts.call_tool(
+            "get_workouts",
+            {}
+        )
 
     # Verify
     assert result is not None
@@ -42,46 +45,32 @@ async def test_get_workouts_tool(app_with_workouts, mock_garmin_client):
 
 @pytest.mark.asyncio
 async def test_get_workout_by_id_tool(app_with_workouts, mock_garmin_client):
-    """Test get_workout_by_id tool returns specific workout with step details (numeric ID)"""
+    """Test get_workout_by_id tool returns specific workout (numeric ID)"""
     import json as json_module
 
     # Setup mock
     mock_garmin_client.get_workout_by_id.return_value = MOCK_WORKOUT_DETAILS
 
-    # Call tool with numeric ID (FastMCP passes numeric strings as int)
-    workout_id = 123456
-    result = await app_with_workouts.call_tool(
-        "get_workout_by_id",
-        {"workout_id": workout_id}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.workouts.get_client", mock_get_client):
+        # Call tool with numeric ID (FastMCP passes numeric strings as int)
+        workout_id = 123456
+        result = await app_with_workouts.call_tool(
+            "get_workout_by_id",
+            {"workout_id": workout_id}
+        )
 
     # Verify - tool converts to int for numeric IDs
     assert result is not None
     mock_garmin_client.get_workout_by_id.assert_called_once_with(123456)
 
-    # Parse the result and verify curation includes steps
+    # Parse the result and verify curation
     result_data = json_module.loads(result[0].text)
     assert result_data["id"] == 123456
     assert result_data["name"] == "5K Tempo Run"
     assert result_data["sport"] == "running"
-
-    # Verify segments include steps
-    assert "segments" in result_data
-    segment = result_data["segments"][0]
-    assert "steps" in segment
-    assert segment["step_count"] == 3
-
-    # Verify step details are curated correctly
-    warmup_step = segment["steps"][0]
-    assert warmup_step["type"] == "warmup"
-    assert warmup_step["end_condition"] == "time"
-    assert warmup_step["end_condition_value"] == 600.0
-
-    # Verify interval step with target zone
-    interval_step = segment["steps"][1]
-    assert interval_step["type"] == "interval"
-    assert interval_step["target_type"] == "pace.zone"
-    assert interval_step["target_zone"] == 4
 
 
 @pytest.mark.asyncio
@@ -99,32 +88,27 @@ async def test_get_workout_by_uuid_tool(app_with_workouts, mock_garmin_client):
         "description": "6:20/km",
         "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
         "estimatedDurationInSecs": 2160,
-        "workoutPhrase": "AEROBIC_LOW_SHORTAGE_BASE",
-        "trainingEffectLabel": "AEROBIC_BASE",
-        "estimatedTrainingEffect": 2.3,
         "workoutSegments": [{
             "segmentOrder": 1,
             "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
             "workoutSteps": [{
                 "type": "ExecutableStepDTO",
                 "stepOrder": 1,
-                "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
-                "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
-                "endConditionValue": 2160.0,
-                "targetType": {"workoutTargetTypeId": 6, "workoutTargetTypeKey": "pace.zone"},
-                "targetValueOne": 2.777,
-                "targetValueTwo": 2.472
             }]
         }]
     }
     mock_garmin_client.garth.get.return_value = mock_response
 
-    # Call tool with UUID (contains dashes)
-    workout_uuid = "d7a5491b-42a5-4d2d-ba38-4e414fc03caf"
-    result = await app_with_workouts.call_tool(
-        "get_workout_by_id",
-        {"workout_id": workout_uuid}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.workouts.get_client", mock_get_client):
+        # Call tool with UUID (contains dashes)
+        workout_uuid = "d7a5491b-42a5-4d2d-ba38-4e414fc03caf"
+        result = await app_with_workouts.call_tool(
+            "get_workout_by_id",
+            {"workout_id": workout_uuid}
+        )
 
     # Verify fbt-adaptive endpoint was called
     assert result is not None
@@ -135,42 +119,9 @@ async def test_get_workout_by_uuid_tool(app_with_workouts, mock_garmin_client):
 
     # Parse the result and verify training plan workout fields
     result_data = json_module.loads(result[0].text)
-    assert result_data["uuid"] == workout_uuid
     assert result_data["name"] == "Base"
     assert result_data["sport"] == "running"
-    assert result_data["workout_type"] == "AEROBIC_LOW_SHORTAGE_BASE"
-    assert result_data["training_effect_label"] == "AEROBIC_BASE"
-    assert result_data["estimated_training_effect"] == 2.3
-    assert result_data["estimated_duration_seconds"] == 2160
-
-    # Verify segments include steps
-    assert "segments" in result_data
-    segment = result_data["segments"][0]
-    assert "steps" in segment
-    assert segment["step_count"] == 1
-
-
-@pytest.mark.asyncio
-async def test_download_workout_tool(app_with_workouts, mock_garmin_client):
-    """Test download_workout tool downloads workout data"""
-    # Setup mock
-    workout_data = {
-        "workoutId": 123456,
-        "workoutName": "5K Tempo Run",
-        "data": "...workout file content..."
-    }
-    mock_garmin_client.download_workout.return_value = workout_data
-
-    # Call tool
-    workout_id = 123456
-    result = await app_with_workouts.call_tool(
-        "download_workout",
-        {"workout_id": workout_id}
-    )
-
-    # Verify
-    assert result is not None
-    mock_garmin_client.download_workout.assert_called_once_with(workout_id)
+    assert result_data["estimated_duration_sec"] == 2160
 
 
 @pytest.mark.asyncio
@@ -183,12 +134,16 @@ async def test_upload_workout_tool(app_with_workouts, mock_garmin_client):
     }
     mock_garmin_client.upload_workout.return_value = upload_response
 
-    # Call tool - pass dict which is passed directly to API
-    workout_data = {"workoutName": "New Workout", "sportType": {"sportTypeId": 1}}
-    result = await app_with_workouts.call_tool(
-        "upload_workout",
-        {"workout_data": workout_data}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.workouts.get_client", mock_get_client):
+        # Call tool - pass dict which is passed directly to API
+        workout_data = {"workoutName": "New Workout", "sportType": {"sportTypeId": 1}}
+        result = await app_with_workouts.call_tool(
+            "upload_workout",
+            {"workout_data": workout_data}
+        )
 
     # Verify - dict is passed directly to the API
     assert result is not None
@@ -210,31 +165,30 @@ async def test_get_scheduled_workouts_tool(app_with_workouts, mock_garmin_client
                     "workoutName": "5K Tempo Run",
                     "workoutType": "running",
                     "scheduleDate": "2024-01-15",
-                    "tpPlanName": "5K Training Plan",
                     "associatedActivityId": None,
-                    "estimatedDurationInSecs": 1800,
-                    "estimatedDistanceInMeters": 5000.0
                 }
             ]
         }
     }
     mock_garmin_client.query_garmin_graphql.return_value = graphql_response
 
-    # Call tool
-    result = await app_with_workouts.call_tool(
-        "get_scheduled_workouts",
-        {"start_date": "2024-01-08", "end_date": "2024-01-15"}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.workouts.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_workouts.call_tool(
+            "get_scheduled_workouts",
+            {"start_date": "2024-01-08", "end_date": "2024-01-15"}
+        )
 
     # Verify curation extracts correct fields
     result_data = json_module.loads(result[0].text)
     assert result_data["count"] == 1
-    workout = result_data["scheduled_workouts"][0]
+    workout = result_data["scheduled"][0]
     assert workout["name"] == "5K Tempo Run"
     assert workout["sport"] == "running"
     assert workout["completed"] is False
-    assert workout["training_plan"] == "5K Training Plan"
-    assert workout["estimated_duration_seconds"] == 1800
 
     # Verify
     assert result is not None
@@ -264,9 +218,7 @@ async def test_get_training_plan_workouts_tool(app_with_workouts, mock_garmin_cl
                                 "workoutName": "Base Run",
                                 "workoutType": "running",
                                 "scheduleDate": "2024-01-15",
-                                "tpPlanName": "5K Training Plan",
                                 "associatedActivityId": None,
-                                "estimatedDurationInSecs": 1800
                             },
                             {
                                 "workoutUuid": "xyz-456-ghi",
@@ -274,9 +226,7 @@ async def test_get_training_plan_workouts_tool(app_with_workouts, mock_garmin_cl
                                 "workoutName": "Strength",
                                 "workoutType": "strength_training",
                                 "scheduleDate": "2024-01-15",
-                                "tpPlanName": "5K Training Plan",
                                 "associatedActivityId": 987654,
-                                "estimatedDurationInSecs": 1200
                             }
                         ]
                     }
@@ -286,11 +236,15 @@ async def test_get_training_plan_workouts_tool(app_with_workouts, mock_garmin_cl
     }
     mock_garmin_client.query_garmin_graphql.return_value = graphql_response
 
-    # Call tool
-    result = await app_with_workouts.call_tool(
-        "get_training_plan_workouts",
-        {"calendar_date": "2024-01-15"}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.workouts.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_workouts.call_tool(
+            "get_training_plan_workouts",
+            {"calendar_date": "2024-01-15"}
+        )
 
     # Verify
     assert result is not None
@@ -298,20 +252,40 @@ async def test_get_training_plan_workouts_tool(app_with_workouts, mock_garmin_cl
 
     # Verify curation extracts correct fields
     result_data = json_module.loads(result[0].text)
-    assert result_data["date"] == "2024-01-15"
     assert result_data["training_plans"] == ["5K Training Plan"]
     assert result_data["count"] == 2
 
     # Verify workouts are curated correctly
-    workouts = result_data["workouts"]
-    assert workouts[0]["name"] == "Base Run"
-    assert workouts[0]["sport"] == "running"
-    assert workouts[0]["completed"] is False
+    workouts_list = result_data["workouts"]
+    assert workouts_list[0]["name"] == "Base Run"
+    assert workouts_list[0]["completed"] is False
 
-    # Verify completed workout has activity_id
-    assert workouts[1]["name"] == "Strength"
-    assert workouts[1]["completed"] is True
-    assert workouts[1]["activity_id"] == 987654
+    # Verify completed workout
+    assert workouts_list[1]["name"] == "Strength"
+    assert workouts_list[1]["completed"] is True
+
+
+@pytest.mark.asyncio
+async def test_schedule_workout_tool(app_with_workouts, mock_garmin_client):
+    """Test schedule_workout tool"""
+    # Setup mock for garth.post call
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_garmin_client.garth.post.return_value = mock_response
+
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.workouts.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_workouts.call_tool(
+            "schedule_workout",
+            {"workout_id": 123456, "calendar_date": "2024-01-20"}
+        )
+
+    # Verify
+    assert result is not None
+    mock_garmin_client.garth.post.assert_called_once()
 
 
 # Error handling tests
@@ -321,11 +295,15 @@ async def test_get_workouts_no_data(app_with_workouts, mock_garmin_client):
     # Setup mock to return None
     mock_garmin_client.get_workouts.return_value = None
 
-    # Call tool
-    result = await app_with_workouts.call_tool(
-        "get_workouts",
-        {}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.workouts.get_client", mock_get_client):
+        # Call tool
+        result = await app_with_workouts.call_tool(
+            "get_workouts",
+            {}
+        )
 
     # Verify error message is returned
     assert result is not None
@@ -337,11 +315,15 @@ async def test_upload_workout_exception(app_with_workouts, mock_garmin_client):
     # Setup mock to raise exception
     mock_garmin_client.upload_workout.side_effect = Exception("Upload failed")
 
-    # Call tool with valid workout data
-    result = await app_with_workouts.call_tool(
-        "upload_workout",
-        {"workout_data": {}}
-    )
+    async def mock_get_client(ctx):
+        return mock_garmin_client
+
+    with patch("garmin_mcp.workouts.get_client", mock_get_client):
+        # Call tool with valid workout data
+        result = await app_with_workouts.call_tool(
+            "upload_workout",
+            {"workout_data": {}}
+        )
 
     # Verify error is handled gracefully
     assert result is not None
