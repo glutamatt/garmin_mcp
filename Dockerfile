@@ -21,24 +21,17 @@ COPY pyproject.toml README.md ./
 # Copy the application source code (needed for editable install)
 COPY src/ ./src/
 
-# Install dependencies using uv
-RUN uv pip install -e .
+# Remove local source references from pyproject.toml (not available in Docker)
+# and install dependencies using uv
+RUN sed -i '/\[tool.uv.sources\]/,$d' pyproject.toml && \
+    uv pip install -e .
 
-# Copy test files (optional, for testing in container)
-COPY tests/ ./tests/
-COPY pytest.ini ./
+# Default to HTTP transport
+ENV MCP_TRANSPORT=streamable-http
+ENV MCP_HOST=0.0.0.0
+ENV MCP_PORT=8080
 
-# Create directory for Garmin tokens
-RUN mkdir -p /root/.garminconnect && \
-    chmod 700 /root/.garminconnect
+EXPOSE 8080
 
-# Expose the application (if needed for network communication)
-# Note: MCP servers typically communicate via stdio, so no port exposure is usually needed
-# EXPOSE 8000
-
-# Set the entrypoint to run the MCP server
-ENTRYPOINT ["garmin-mcp"]
-
-# Health check (optional - adjust based on your needs)
-# HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-#   CMD python -c "import sys; sys.exit(0)"
+# Run the MCP server with HTTP transport
+CMD ["python", "-m", "garmin_mcp", "--http"]

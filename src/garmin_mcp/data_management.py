@@ -5,6 +5,7 @@ import json
 import datetime
 from typing import Any, Dict, List, Optional, Union
 
+from fastmcp import Context
 
 from garmin_mcp.client_factory import get_client
 
@@ -13,10 +14,10 @@ def register_tools(app):
     """Register all data management tools with the MCP server app"""
 
     @app.tool()
-    def add_body_composition(
+    async def add_body_composition(
         date: str,
         weight: float,
-        
+        ctx: Context,
         percent_fat: Optional[float] = None,
         percent_hydration: Optional[float] = None,
         visceral_fat_mass: Optional[float] = None,
@@ -47,7 +48,7 @@ def register_tools(app):
             bmi: Body Mass Index
         """
         try:
-            client = get_client()
+            client = await get_client(ctx)
             result = client.add_body_composition(
                 date,
                 weight=weight,
@@ -68,11 +69,11 @@ def register_tools(app):
             return f"Error adding body composition data: {str(e)}"
 
     @app.tool()
-    def set_blood_pressure(
+    async def set_blood_pressure(
         systolic: int,
         diastolic: int,
         pulse: int,
-        
+        ctx: Context,
         notes: Optional[str] = None
     ) -> str:
         """Set blood pressure values
@@ -84,7 +85,7 @@ def register_tools(app):
             notes: Optional notes
         """
         try:
-            client = get_client()
+            client = await get_client(ctx)
             result = client.set_blood_pressure(
                 systolic, diastolic, pulse, notes=notes
             )
@@ -93,11 +94,11 @@ def register_tools(app):
             return f"Error setting blood pressure values: {str(e)}"
 
     @app.tool()
-    def add_hydration_data(
+    async def add_hydration_data(
         value_in_ml: int,
         cdate: str,
         timestamp: str,
-        
+        ctx: Context,
     ) -> str:
         """Add hydration data
 
@@ -107,7 +108,7 @@ def register_tools(app):
             timestamp: Timestamp in YYYY-MM-DDThh:mm:ss.sss format
         """
         try:
-            client = get_client()
+            client = await get_client(ctx)
             result = client.add_hydration_data(
                 value_in_ml=value_in_ml,
                 cdate=cdate,

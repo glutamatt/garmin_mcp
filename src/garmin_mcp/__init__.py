@@ -1,13 +1,19 @@
 """
 Modular MCP Server for Garmin Connect Data
 
-Session-based authentication:
+Session-based authentication using FastMCP Context:
 - Use garmin_login_tool() or set_garmin_session() to authenticate
-- Tokens stored in MCP session context (isolated per connection)
+- Tokens stored in MCP session context (isolated per mcp-session-id header)
 - All data tools automatically use session tokens via Context
+
+Supports two transport modes:
+- stdio: For single-user local usage (default)
+- streamable-http: For multi-user HTTP server deployment
 """
 
-from mcp.server.fastmcp import FastMCP
+import os
+
+from fastmcp import FastMCP
 
 # Import all modules
 from garmin_mcp import auth_tool
@@ -25,9 +31,8 @@ from garmin_mcp import womens_health
 from garmin_mcp import training_load
 
 
-def main():
-    """Initialize the MCP server and register all tools"""
-
+def create_app() -> FastMCP:
+    """Create and configure the MCP app with all tools registered."""
     # Create the MCP app
     app = FastMCP("Garmin Connect v2.0")
 
@@ -48,8 +53,28 @@ def main():
     app = womens_health.register_tools(app)
     app = training_load.register_tools(app)
 
-    # Run the MCP server
-    app.run()
+    return app
+
+
+def main():
+    """Initialize the MCP server and run with configured transport.
+
+    Environment variables:
+    - MCP_TRANSPORT: 'stdio' (default) or 'streamable-http'
+    - MCP_HOST: Host to bind to (default: '0.0.0.0')
+    - MCP_PORT: Port for HTTP transport (default: 8080)
+    """
+    app = create_app()
+
+    transport = os.environ.get("MCP_TRANSPORT", "stdio")
+
+    if transport == "streamable-http":
+        host = os.environ.get("MCP_HOST", "0.0.0.0")
+        port = int(os.environ.get("MCP_PORT", "8080"))
+        app.run(transport="streamable-http", host=host, port=port)
+    else:
+        # Default to stdio for backward compatibility
+        app.run()
 
 
 if __name__ == "__main__":

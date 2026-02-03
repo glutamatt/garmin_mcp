@@ -5,6 +5,7 @@ import json
 import datetime
 from typing import Any, Dict, List, Optional, Union
 
+from fastmcp import Context
 
 from garmin_mcp.client_factory import get_client
 
@@ -20,10 +21,10 @@ def register_tools(app):
     """Register all device-related tools with the MCP server app"""
 
     @app.tool()
-    def get_devices() -> str:
+    async def get_devices(ctx: Context) -> str:
         """Get all Garmin devices associated with the user account"""
         try:
-            client = get_client()
+            client = await get_client(ctx)
             devices = client.get_devices()
             if not devices:
                 return "No devices found."
@@ -59,10 +60,10 @@ def register_tools(app):
             return f"Error retrieving devices: {str(e)}"
 
     @app.tool()
-    def get_device_last_used() -> str:
+    async def get_device_last_used(ctx: Context) -> str:
         """Get information about the last used Garmin device"""
         try:
-            client = get_client()
+            client = await get_client(ctx)
             device = client.get_device_last_used()
             if not device:
                 return "No last used device found."
@@ -89,14 +90,14 @@ def register_tools(app):
             return f"Error retrieving last used device: {str(e)}"
 
     @app.tool()
-    def get_device_settings(device_id: Union[int, str]) -> str:
+    async def get_device_settings(device_id: Union[int, str], ctx: Context) -> str:
         """Get settings for a specific Garmin device
 
         Args:
             device_id: Device ID
         """
         try:
-            client = get_client()
+            client = await get_client(ctx)
             device_id = str(device_id)
             settings = client.get_device_settings(device_id)
             if not settings:
@@ -148,10 +149,10 @@ def register_tools(app):
             return f"Error retrieving device settings: {str(e)}"
 
     @app.tool()
-    def get_primary_training_device() -> str:
+    async def get_primary_training_device(ctx: Context) -> str:
         """Get information about the primary training device"""
         try:
-            client = get_client()
+            client = await get_client(ctx)
             device = client.get_primary_training_device()
             if not device:
                 return "No primary training device found."
@@ -177,7 +178,7 @@ def register_tools(app):
             return f"Error retrieving primary training device: {str(e)}"
 
     @app.tool()
-    def get_device_solar_data(device_id: str, date: str) -> str:
+    async def get_device_solar_data(device_id: str, date: str, ctx: Context) -> str:
         """Get solar data for a specific device
 
         Args:
@@ -185,7 +186,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = get_client()
+            client = await get_client(ctx)
             solar_data = client.get_device_solar_data(device_id, date)
             if not solar_data:
                 return f"No solar data found for device ID {device_id} on {date}."
@@ -215,10 +216,10 @@ def register_tools(app):
             return f"Error retrieving solar data: {str(e)}"
 
     @app.tool()
-    def get_device_alarms() -> str:
+    async def get_device_alarms(ctx: Context) -> str:
         """Get alarms from all Garmin devices"""
         try:
-            client = get_client()
+            client = await get_client(ctx)
             alarms = client.get_device_alarms()
             if not alarms:
                 return "No device alarms found."

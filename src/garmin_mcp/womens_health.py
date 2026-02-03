@@ -5,6 +5,7 @@ import json
 import datetime
 from typing import Any, Dict, List, Optional, Union
 
+from fastmcp import Context
 
 from garmin_mcp.client_factory import get_client
 
@@ -13,10 +14,10 @@ def register_tools(app):
     """Register all women's health tools with the MCP server app"""
 
     @app.tool()
-    def get_pregnancy_summary() -> str:
+    async def get_pregnancy_summary(ctx: Context) -> str:
         """Get pregnancy summary data"""
         try:
-            client = get_client()
+            client = await get_client(ctx)
             summary = client.get_pregnancy_summary()
             if not summary:
                 return "No pregnancy summary data found."
@@ -25,14 +26,14 @@ def register_tools(app):
             return f"Error retrieving pregnancy summary: {str(e)}"
 
     @app.tool()
-    def get_menstrual_data_for_date(date: str) -> str:
+    async def get_menstrual_data_for_date(date: str, ctx: Context) -> str:
         """Get menstrual data for a specific date
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = get_client()
+            client = await get_client(ctx)
             data = client.get_menstrual_data_for_date(date)
             if not data:
                 return f"No menstrual data found for {date}."
@@ -41,7 +42,7 @@ def register_tools(app):
             return f"Error retrieving menstrual data: {str(e)}"
 
     @app.tool()
-    def get_menstrual_calendar_data(start_date: str, end_date: str) -> str:
+    async def get_menstrual_calendar_data(start_date: str, end_date: str, ctx: Context) -> str:
         """Get menstrual calendar data between specified dates
 
         Args:
@@ -49,7 +50,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            client = get_client()
+            client = await get_client(ctx)
             data = client.get_menstrual_calendar_data(start_date, end_date)
             if not data:
                 return f"No menstrual calendar data found between {start_date} and {end_date}."

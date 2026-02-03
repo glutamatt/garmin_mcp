@@ -5,6 +5,7 @@ import json
 import datetime
 from typing import Any, Dict, List, Optional, Union
 
+from fastmcp import Context
 
 from garmin_mcp.client_factory import get_client
 
@@ -13,7 +14,7 @@ def register_tools(app):
     """Register all weight management tools with the MCP server app"""
 
     @app.tool()
-    def get_weigh_ins(start_date: str, end_date: str) -> str:
+    async def get_weigh_ins(start_date: str, end_date: str, ctx: Context) -> str:
         """Get weight measurements between specified dates
 
         Args:
@@ -21,7 +22,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            client = get_client()
+            client = await get_client(ctx)
             weigh_ins = client.get_weigh_ins(start_date, end_date)
             if not weigh_ins:
                 return f"No weight measurements found between {start_date} and {end_date}."
@@ -54,14 +55,14 @@ def register_tools(app):
             return f"Error retrieving weight measurements: {str(e)}"
 
     @app.tool()
-    def get_daily_weigh_ins(date: str) -> str:
+    async def get_daily_weigh_ins(date: str, ctx: Context) -> str:
         """Get weight measurements for a specific date
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = get_client()
+            client = await get_client(ctx)
             weigh_ins = client.get_daily_weigh_ins(date)
             if not weigh_ins:
                 return f"No weight measurements found for {date}."
@@ -93,7 +94,7 @@ def register_tools(app):
             return f"Error retrieving daily weight measurements: {str(e)}"
 
     @app.tool()
-    def delete_weigh_ins(date: str, delete_all: bool = True) -> str:
+    async def delete_weigh_ins(date: str, ctx: Context, delete_all: bool = True) -> str:
         """Delete weight measurements for a specific date
 
         Args:
@@ -101,7 +102,7 @@ def register_tools(app):
             delete_all: Whether to delete all measurements for the day
         """
         try:
-            client = get_client()
+            client = await get_client(ctx)
             result = client.delete_weigh_ins(date, delete_all=delete_all)
             # Return structured response
             return json.dumps({
@@ -113,7 +114,7 @@ def register_tools(app):
             return f"Error deleting weight measurements: {str(e)}"
 
     @app.tool()
-    def add_weigh_in(weight: float, unit_key: str = "kg") -> str:
+    async def add_weigh_in(weight: float, ctx: Context, unit_key: str = "kg") -> str:
         """Add a new weight measurement
 
         Args:
@@ -121,7 +122,7 @@ def register_tools(app):
             unit_key: Unit of weight ('kg' or 'lb')
         """
         try:
-            client = get_client()
+            client = await get_client(ctx)
             result = client.add_weigh_in(weight=weight, unitKey=unit_key)
             # Return structured response
             return json.dumps({
@@ -134,9 +135,9 @@ def register_tools(app):
             return f"Error adding weight measurement: {str(e)}"
 
     @app.tool()
-    def add_weigh_in_with_timestamps(
+    async def add_weigh_in_with_timestamps(
         weight: float,
-        
+        ctx: Context,
         unit_key: str = "kg",
         date_timestamp: str = None,
         gmt_timestamp: str = None
@@ -150,7 +151,7 @@ def register_tools(app):
             gmt_timestamp: GMT timestamp in format YYYY-MM-DDThh:mm:ss
         """
         try:
-            client = get_client()
+            client = await get_client(ctx)
             if date_timestamp is None or gmt_timestamp is None:
                 # Generate timestamps if not provided
                 now = datetime.datetime.now()
