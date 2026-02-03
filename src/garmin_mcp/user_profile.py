@@ -17,7 +17,7 @@ def register_tools(app):
     async def get_full_name(ctx: Context) -> str:
         """Get user's full name from profile"""
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             full_name = client.get_full_name()
             if isinstance(full_name, (dict, list)):
                 return json.dumps(full_name, indent=2)
@@ -29,7 +29,7 @@ def register_tools(app):
     async def get_unit_system(ctx: Context) -> str:
         """Get user's preferred unit system from profile"""
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             unit_system = client.get_unit_system()
             if isinstance(unit_system, (dict, list)):
                 return json.dumps(unit_system, indent=2)
@@ -41,7 +41,7 @@ def register_tools(app):
     async def get_user_profile(ctx: Context) -> str:
         """Get user profile information"""
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             profile = client.get_user_profile()
             if not profile:
                 return "No user profile information found."
@@ -53,7 +53,7 @@ def register_tools(app):
     async def get_userprofile_settings(ctx: Context) -> str:
         """Get user profile settings"""
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             settings = client.get_userprofile_settings()
             if not settings:
                 return "No user profile settings found."

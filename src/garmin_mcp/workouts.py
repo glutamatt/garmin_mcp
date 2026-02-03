@@ -434,7 +434,7 @@ def register_tools(app):
     async def get_workouts(ctx: Context) -> str:
         """List all workouts in your library."""
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             workouts = client.get_workouts()
             if not workouts:
                 return "No workouts found."
@@ -451,7 +451,7 @@ def register_tools(app):
             workout_id: ID of the workout (from get_workouts or create_workout).
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             workout = client.get_workout_by_id(workout_id)
             if not workout:
                 return f"No workout found with ID {workout_id}."
@@ -468,7 +468,7 @@ def register_tools(app):
             workout_data: Workout structure with JSON schema validation.
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             data_dict = workout_data.model_dump(exclude_none=True)
             normalized_data = _normalize_workout_structure(data_dict)
             workout_json = json.dumps(normalized_data)
@@ -496,7 +496,7 @@ def register_tools(app):
             workout_data: Updated workout structure with JSON schema validation.
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             existing = client.get_workout_by_id(workout_id)
             if not existing:
                 return json.dumps({"status": "error", "message": f"Workout {workout_id} not found"}, indent=2)
@@ -529,7 +529,7 @@ def register_tools(app):
             workout_id: ID of the workout to delete (from get_workouts).
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             success = client.delete_workout(workout_id)
             if success:
                 return json.dumps({"status": "deleted", "workout_id": workout_id, "message": f"Workout {workout_id} deleted from library"}, indent=2)
@@ -546,7 +546,7 @@ def register_tools(app):
             workout_id: ID of the workout to download (from get_workouts).
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             workout_data = client.download_workout(workout_id)
             if not workout_data:
                 return f"No workout data found for workout with ID {workout_id}."
@@ -564,7 +564,7 @@ def register_tools(app):
             date: Schedule date in YYYY-MM-DD format.
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             data_dict = workout_data.model_dump(exclude_none=True)
             normalized_data = _normalize_workout_structure(data_dict)
             workout_json = json.dumps(normalized_data)
@@ -596,7 +596,7 @@ def register_tools(app):
             date: Schedule date in YYYY-MM-DD format.
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             result = client.schedule_workout(workout_id, date)
             if isinstance(result, dict):
                 curated = {
@@ -622,7 +622,7 @@ def register_tools(app):
             new_date: New date in YYYY-MM-DD format.
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             result = client.reschedule_workout(schedule_id, new_date)
             curated = {
                 "status": "rescheduled",
@@ -644,7 +644,7 @@ def register_tools(app):
             schedule_id: The schedule ID (from get_calendar or plan_workout).
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             success = client.unschedule_workout(schedule_id)
             if success:
                 return json.dumps({"status": "unscheduled", "schedule_id": schedule_id, "message": f"Workout schedule {schedule_id} removed from calendar"}, indent=2)
@@ -662,7 +662,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format.
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             query = {"query": f'query{{workoutScheduleSummariesScalar(startDate:"{start_date}", endDate:"{end_date}")}}'}
             result = client.query_garmin_graphql(query)
             if not result or "data" not in result:
@@ -688,7 +688,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format.
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             scheduled = client.get_scheduled_workouts_for_range(start_date, end_date)
             calendar_items = client.get_calendar_items_for_range(start_date, end_date)
             by_date = {}
@@ -731,7 +731,7 @@ def register_tools(app):
             calendar_date: Date in YYYY-MM-DD format.
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             query = {"query": f'query{{trainingPlanScalar(calendarDate:"{calendar_date}", lang:"en-US", firstDayOfWeek:"monday")}}'}
             result = client.query_garmin_graphql(query)
             if not result or "data" not in result:
@@ -770,7 +770,7 @@ def register_tools(app):
             plan_id: ID of the training plan.
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             plan = client.get_adaptive_training_plan_by_id(plan_id)
             if not plan:
                 return f"No training plan found with ID {plan_id}"
@@ -833,7 +833,7 @@ def register_tools(app):
             workout_uuid: UUID of the workout (from get_adaptive_plan or get_training_plan).
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             workout = client.get_fbt_adaptive_workout(workout_uuid)
             if not workout:
                 return f"No workout found with UUID {workout_uuid}"
@@ -867,7 +867,7 @@ def register_tools(app):
     async def get_coaching_preferences(ctx: Context) -> str:
         """Get user's adaptive coaching preferences and settings."""
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             settings = client.get_adaptive_coaching_settings()
             if not settings:
                 return "No coaching settings found"
@@ -886,7 +886,7 @@ def register_tools(app):
     async def get_readiness(ctx: Context) -> str:
         """Get current training readiness and recovery status."""
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             today = datetime.datetime.now().strftime('%Y-%m-%d')
             try:
                 readiness = client.get_training_readiness(today)
@@ -937,7 +937,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format.
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             activities = client.get_activities_with_compliance(start_date, end_date)
             if not activities:
                 return f"No activities found between {start_date} and {end_date}"
@@ -973,7 +973,7 @@ def register_tools(app):
             week_end_date: End date of the week in YYYY-MM-DD format (default: today).
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             if week_end_date:
                 end_dt = datetime.datetime.strptime(week_end_date, '%Y-%m-%d')
             else:

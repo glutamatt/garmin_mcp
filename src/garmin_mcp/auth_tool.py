@@ -40,7 +40,7 @@ def register_tools(app):
         """
         result = garmin_login(email, password)
         if result.success and result.tokens:
-            await set_session_tokens(ctx, result.tokens)
+            set_session_tokens(ctx, result.tokens)
         return result.to_dict()
 
     @app.tool()
@@ -58,7 +58,7 @@ def register_tools(app):
             {success: true} or {success: false, error: "..."}
         """
         try:
-            await set_session_tokens(ctx, garmin_tokens)
+            set_session_tokens(ctx, garmin_tokens)
             return {"success": True, "message": "Garmin session restored"}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -74,7 +74,7 @@ def register_tools(app):
         Returns:
             {success: true}
         """
-        await clear_session_tokens(ctx)
+        clear_session_tokens(ctx)
         return {"success": True, "message": "Garmin session cleared"}
 
     # Common tools (shared interface with future coros_mcp)
@@ -90,7 +90,7 @@ def register_tools(app):
             {name: "...", full_name: "..."}
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             return {
                 "name": client.display_name,
                 "full_name": client.get_full_name(),

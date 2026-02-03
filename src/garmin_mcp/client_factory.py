@@ -44,14 +44,14 @@ def serialize_tokens(client: Garmin) -> str:
     return client.garth.dumps()
 
 
-async def get_client(ctx: Context) -> Garmin:
+def get_client(ctx: Context) -> Garmin:
     """
     Get Garmin client from session Context.
 
     Usage in tools:
         @app.tool()
         async def get_stats(date: str, ctx: Context) -> str:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             return json.dumps(client.get_stats(date))
 
     Args:
@@ -63,7 +63,7 @@ async def get_client(ctx: Context) -> Garmin:
     Raises:
         ValueError: If no Garmin session is active
     """
-    tokens = await ctx.get_state(GARMIN_TOKENS_KEY)
+    tokens = ctx.get_state(GARMIN_TOKENS_KEY)
     if not tokens:
         raise ValueError(
             "No Garmin session active. Call garmin_login_tool() or set_garmin_session() first."
@@ -71,17 +71,17 @@ async def get_client(ctx: Context) -> Garmin:
     return create_client_from_tokens(tokens)
 
 
-async def set_session_tokens(ctx: Context, tokens: str) -> None:
+def set_session_tokens(ctx: Context, tokens: str) -> None:
     """Store Garmin tokens in session Context."""
-    await ctx.set_state(GARMIN_TOKENS_KEY, tokens)
+    ctx.set_state(GARMIN_TOKENS_KEY, tokens)
 
 
-async def clear_session_tokens(ctx: Context) -> None:
+def clear_session_tokens(ctx: Context) -> None:
     """Clear Garmin tokens from session Context."""
-    await ctx.delete_state(GARMIN_TOKENS_KEY)
+    ctx.set_state(GARMIN_TOKENS_KEY, None)
 
 
-async def has_session(ctx: Context) -> bool:
+def has_session(ctx: Context) -> bool:
     """Check if a session is active."""
-    tokens = await ctx.get_state(GARMIN_TOKENS_KEY)
+    tokens = ctx.get_state(GARMIN_TOKENS_KEY)
     return tokens is not None

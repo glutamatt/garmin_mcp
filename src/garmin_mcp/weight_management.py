@@ -22,7 +22,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             weigh_ins = client.get_weigh_ins(start_date, end_date)
             if not weigh_ins:
                 return f"No weight measurements found between {start_date} and {end_date}."
@@ -62,7 +62,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             weigh_ins = client.get_daily_weigh_ins(date)
             if not weigh_ins:
                 return f"No weight measurements found for {date}."
@@ -102,7 +102,7 @@ def register_tools(app):
             delete_all: Whether to delete all measurements for the day
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             result = client.delete_weigh_ins(date, delete_all=delete_all)
             # Return structured response
             return json.dumps({
@@ -122,7 +122,7 @@ def register_tools(app):
             unit_key: Unit of weight ('kg' or 'lb')
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             result = client.add_weigh_in(weight=weight, unitKey=unit_key)
             # Return structured response
             return json.dumps({
@@ -151,7 +151,7 @@ def register_tools(app):
             gmt_timestamp: GMT timestamp in format YYYY-MM-DDThh:mm:ss
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             if date_timestamp is None or gmt_timestamp is None:
                 # Generate timestamps if not provided
                 now = datetime.datetime.now()

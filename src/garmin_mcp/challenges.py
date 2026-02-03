@@ -21,7 +21,7 @@ def register_tools(app):
             goal_type: Type of goals to retrieve. Options: "active", "future", or "past"
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             goals = client.get_goals(goal_type)
             if not goals:
                 return f"No {goal_type} goals found."
@@ -33,7 +33,7 @@ def register_tools(app):
     async def get_personal_record(ctx: Context) -> str:
         """Get personal records for user"""
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             records = client.get_personal_record()
             if not records:
                 return "No personal records found."
@@ -45,7 +45,7 @@ def register_tools(app):
     async def get_earned_badges(ctx: Context) -> str:
         """Get earned badges for user"""
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             badges = client.get_earned_badges()
             if not badges:
                 return "No earned badges found."
@@ -62,7 +62,7 @@ def register_tools(app):
             limit: Maximum number of challenges to retrieve
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             challenges = client.get_adhoc_challenges(start, limit)
             if not challenges:
                 return "No adhoc challenges found."
@@ -79,7 +79,7 @@ def register_tools(app):
             limit: Maximum number of challenges to retrieve
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             challenges = client.get_available_badge_challenges(start, limit)
             if not challenges:
                 return "No available badge challenges found."
@@ -96,7 +96,7 @@ def register_tools(app):
             limit: Maximum number of challenges to retrieve
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             challenges = client.get_badge_challenges(start, limit)
             if not challenges:
                 return "No badge challenges found."
@@ -113,7 +113,7 @@ def register_tools(app):
             limit: Maximum number of challenges to retrieve
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             challenges = client.get_non_completed_badge_challenges(start, limit)
             if not challenges:
                 return "No non-completed badge challenges found."
@@ -125,7 +125,7 @@ def register_tools(app):
     async def get_race_predictions(ctx: Context) -> str:
         """Get race predictions for user"""
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             predictions = client.get_race_predictions()
             if not predictions:
                 return "No race predictions found."
@@ -145,7 +145,7 @@ def register_tools(app):
             limit: Maximum number of events to return (default: 10)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             events = client.get_upcoming_calendar_events(
                 num_days_forward=num_days_forward,
                 limit=limit
@@ -215,7 +215,7 @@ def register_tools(app):
             page_index: Page number for pagination (default: 1)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             events = client.get_calendar_events(
                 start_date=start_date,
                 limit=limit,
@@ -277,7 +277,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             challenges = client.get_inprogress_virtual_challenges(
                 start_date, end_date
             )

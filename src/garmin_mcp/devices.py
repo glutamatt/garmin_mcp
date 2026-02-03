@@ -24,7 +24,7 @@ def register_tools(app):
     async def get_devices(ctx: Context) -> str:
         """Get all Garmin devices associated with the user account"""
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             devices = client.get_devices()
             if not devices:
                 return "No devices found."
@@ -63,7 +63,7 @@ def register_tools(app):
     async def get_device_last_used(ctx: Context) -> str:
         """Get information about the last used Garmin device"""
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             device = client.get_device_last_used()
             if not device:
                 return "No last used device found."
@@ -97,7 +97,7 @@ def register_tools(app):
             device_id: Device ID
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             device_id = str(device_id)
             settings = client.get_device_settings(device_id)
             if not settings:
@@ -152,7 +152,7 @@ def register_tools(app):
     async def get_primary_training_device(ctx: Context) -> str:
         """Get information about the primary training device"""
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             device = client.get_primary_training_device()
             if not device:
                 return "No primary training device found."
@@ -186,7 +186,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             solar_data = client.get_device_solar_data(device_id, date)
             if not solar_data:
                 return f"No solar data found for device ID {device_id} on {date}."
@@ -219,7 +219,7 @@ def register_tools(app):
     async def get_device_alarms(ctx: Context) -> str:
         """Get alarms from all Garmin devices"""
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             alarms = client.get_device_alarms()
             if not alarms:
                 return "No device alarms found."

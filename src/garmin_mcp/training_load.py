@@ -453,7 +453,7 @@ def register_tools(app):
             activity_types: Comma-separated activity types to include (e.g., 'running,cycling')
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             # Fetch activities
             activities = client.get_activities(0, days_of_activities * 3)  # Buffer for rest days
 
@@ -511,7 +511,7 @@ def register_tools(app):
             activity_types: Comma-separated activity types to include
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             # Fetch activities (need 28 + trend_days of data)
             total_days = 28 + trend_days + 7
             activities = client.get_activities(0, total_days * 3)
@@ -582,7 +582,7 @@ def register_tools(app):
             days_of_activities: Days of history to scan (default 90)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             # Fetch activities
             activities = client.get_activities(0, days_of_activities * 2)
 

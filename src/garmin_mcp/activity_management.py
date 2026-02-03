@@ -23,7 +23,7 @@ def register_tools(app):
             activity_type: Optional activity type filter (e.g., cycling, running, swimming)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             activities = client.get_activities_by_date(start_date, end_date, activity_type)
             if not activities:
                 return f"No activities found between {start_date} and {end_date}" + \
@@ -65,7 +65,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             data = client.get_activities_fordate(date)
             if not data:
                 return f"No activities found for {date}"
@@ -114,7 +114,7 @@ def register_tools(app):
             activity_id: ID of the activity to retrieve
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             activity = client.get_activity(activity_id)
             if not activity:
                 return f"No activity found with ID {activity_id}"
@@ -203,7 +203,7 @@ def register_tools(app):
             activity_id: ID of the activity to retrieve splits for
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             splits = client.get_activity_splits(activity_id)
             if not splits:
                 return f"No splits found for activity with ID {activity_id}"
@@ -248,7 +248,7 @@ def register_tools(app):
             activity_id: ID of the activity to retrieve typed splits for
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             typed_splits = client.get_activity_typed_splits(activity_id)
             if not typed_splits:
                 return f"No typed splits found for activity with ID {activity_id}"
@@ -265,7 +265,7 @@ def register_tools(app):
             activity_id: ID of the activity to retrieve split summaries for
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             split_summaries = client.get_activity_split_summaries(activity_id)
             if not split_summaries:
                 return f"No split summaries found for activity with ID {activity_id}"
@@ -282,7 +282,7 @@ def register_tools(app):
             activity_id: ID of the activity to retrieve weather data for
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             weather = client.get_activity_weather(activity_id)
             if not weather:
                 return f"No weather data found for activity with ID {activity_id}"
@@ -316,7 +316,7 @@ def register_tools(app):
             activity_id: ID of the activity to retrieve heart rate time zone data for
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             hr_zones = client.get_activity_hr_in_timezones(activity_id)
             if not hr_zones:
                 return f"No heart rate time zone data found for activity with ID {activity_id}"
@@ -333,7 +333,7 @@ def register_tools(app):
             activity_id: ID of the activity to retrieve gear data for
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             gear = client.get_activity_gear(activity_id)
             if not gear:
                 return f"No gear data found for activity with ID {activity_id}"
@@ -350,7 +350,7 @@ def register_tools(app):
             activity_id: ID of the activity to retrieve exercise sets for
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             exercise_sets = client.get_activity_exercise_sets(activity_id)
             if not exercise_sets:
                 return f"No exercise sets found for activity with ID {activity_id}"
@@ -366,7 +366,7 @@ def register_tools(app):
         Returns the total number of activities recorded.
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             count = client.count_activities()
             if count is None:
                 return "Unable to retrieve activity count"
@@ -390,7 +390,7 @@ def register_tools(app):
             limit: Maximum number of activities to return (default 20, max 100)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             # Cap limit at 100 for safety and performance
             limit = min(max(1, limit), 100)
 
@@ -439,7 +439,7 @@ def register_tools(app):
         useful for filtering activities by type.
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             activity_types = client.get_activity_types()
             if not activity_types:
                 return "No activity types found"

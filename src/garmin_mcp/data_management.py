@@ -48,7 +48,7 @@ def register_tools(app):
             bmi: Body Mass Index
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             result = client.add_body_composition(
                 date,
                 weight=weight,
@@ -85,7 +85,7 @@ def register_tools(app):
             notes: Optional notes
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             result = client.set_blood_pressure(
                 systolic, diastolic, pulse, notes=notes
             )
@@ -108,7 +108,7 @@ def register_tools(app):
             timestamp: Timestamp in YYYY-MM-DDThh:mm:ss.sss format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             result = client.add_hydration_data(
                 value_in_ml=value_in_ml,
                 cdate=cdate,

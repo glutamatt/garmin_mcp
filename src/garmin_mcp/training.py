@@ -25,7 +25,7 @@ def register_tools(app):
             metric: Metric to get progress for (e.g., "elevationGain", "duration", "distance", "movingDuration")
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             summary = client.get_progress_summary_between_dates(
                 start_date, end_date, metric
             )
@@ -75,7 +75,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             hill_score_data = client.get_hill_score(start_date, end_date)
             if not hill_score_data:
                 return f"No hill score data found between {start_date} and {end_date}."
@@ -117,7 +117,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             endurance_data = client.get_endurance_score(start_date, end_date)
             if not endurance_data:
                 return f"No endurance score data found between {start_date} and {end_date}."
@@ -158,7 +158,7 @@ def register_tools(app):
             activity_id: ID of the activity to retrieve training effect for
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             # Training effect data is available through get_activity
             # The garminconnect library doesn't have a separate get_training_effect method
             activity = client.get_activity(activity_id)
@@ -200,7 +200,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             metrics = client.get_max_metrics(date)
             if not metrics:
                 return f"No max metrics data found for {date}."
@@ -243,7 +243,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             hrv_data = client.get_hrv_data(date)
             if not hrv_data:
                 return f"No HRV data found for {date}."
@@ -286,7 +286,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             fitness_age = client.get_fitnessage_data(date)
             if not fitness_age:
                 return f"No fitness age data found for {date}."
@@ -327,7 +327,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             status = client.get_training_status(date)
             if not status:
                 return f"No training status data found for {date}."
@@ -404,7 +404,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             threshold = client.get_lactate_threshold(date)
             if not threshold:
                 return f"No lactate threshold data found for {date}"
@@ -438,7 +438,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             result = client.request_reload(date)
             return json.dumps(result, indent=2)
         except Exception as e:

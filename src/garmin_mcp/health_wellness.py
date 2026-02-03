@@ -24,7 +24,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             stats = client.get_stats(date)
             if not stats:
                 return f"No stats found for {date}"
@@ -99,7 +99,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             summary = client.get_user_summary(date)
             if not summary:
                 return f"No user summary found for {date}"
@@ -117,7 +117,7 @@ def register_tools(app):
             end_date: Optional end date in YYYY-MM-DD format for date range
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             if end_date:
                 composition = client.get_body_composition(start_date, end_date)
                 if not composition:
@@ -139,7 +139,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             data = client.get_stats_and_body(date)
             if not data:
                 return f"No stats and body composition data found for {date}"
@@ -159,7 +159,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             steps_data = client.get_steps_data(date)
             if not steps_data:
                 return f"No steps data found for {date}"
@@ -177,7 +177,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             steps_data = client.get_daily_steps(start_date, end_date)
             if not steps_data:
                 return f"No daily steps data found between {start_date} and {end_date}"
@@ -196,7 +196,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             readiness_list = client.get_training_readiness(date)
             if not readiness_list:
                 return f"No training readiness data found for {date}"
@@ -254,7 +254,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             battery_data = client.get_body_battery(start_date, end_date)
             if not battery_data:
                 return f"No body battery data found between {start_date} and {end_date}"
@@ -300,7 +300,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             events = client.get_body_battery_events(date)
             if not events:
                 return f"No body battery events found for {date}"
@@ -318,7 +318,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             bp_data = client.get_blood_pressure(start_date, end_date)
             if not bp_data:
                 return f"No blood pressure data found between {start_date} and {end_date}"
@@ -335,7 +335,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             floors_data = client.get_floors(date)
             if not floors_data:
                 return f"No floors data found for {date}"
@@ -352,7 +352,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             rhr_data = client.get_rhr_day(date)
             if not rhr_data:
                 return f"No resting heart rate data found for {date}"
@@ -372,7 +372,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             hr_data = client.get_heart_rates(date)
             if not hr_data:
                 return f"No heart rate data found for {date}"
@@ -392,7 +392,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             hr_data = client.get_heart_rates(date)
             if not hr_data:
                 return f"No heart rate data found for {date}"
@@ -428,7 +428,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             hydration_data = client.get_hydration_data(date)
             if not hydration_data:
                 return f"No hydration data found for {date}"
@@ -448,7 +448,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             sleep_data = client.get_sleep_data(date)
             if not sleep_data:
                 return f"No sleep data found for {date}"
@@ -469,7 +469,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             sleep_data = client.get_sleep_data(date)
             if not sleep_data:
                 return f"No sleep summary found for {date}"
@@ -543,7 +543,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             stress_data = client.get_stress_data(date)
             if not stress_data:
                 return f"No stress data found for {date}"
@@ -563,7 +563,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             stress_data = client.get_stress_data(date)
             if not stress_data:
                 return f"No stress data found for {date}"
@@ -609,7 +609,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             respiration_data = client.get_respiration_data(date)
             if not respiration_data:
                 return f"No respiration data found for {date}"
@@ -628,7 +628,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             resp_data = client.get_respiration_data(date)
             if not resp_data:
                 return f"No respiration data found for {date}"
@@ -656,7 +656,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             spo2_data = client.get_spo2_data(date)
             if not spo2_data:
                 return f"No SpO2 data found for {date}"
@@ -692,7 +692,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             stress_data = client.get_all_day_stress(date)
             if not stress_data:
                 return f"No all-day stress data found for {date}"
@@ -709,7 +709,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             events = client.get_all_day_events(date)
             if not events:
                 return f"No daily wellness events found for {date}"
@@ -729,7 +729,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format (any day in the week you want to query)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             weekly_data = client.get_weekly_steps(date)
             if not weekly_data:
                 return f"No weekly steps data found for week containing {date}"
@@ -773,7 +773,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format (any day in the week you want to query)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             weekly_data = client.get_weekly_stress(date)
             if not weekly_data:
                 return f"No weekly stress data found for week containing {date}"
@@ -827,7 +827,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format (any day in the week you want to query)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             weekly_data = client.get_weekly_intensity_minutes(date)
             if not weekly_data:
                 return f"No weekly intensity minutes data found for week containing {date}"
@@ -878,7 +878,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             readiness = client.get_morning_training_readiness(date)
             if not readiness:
                 return f"No morning training readiness data found for {date}"

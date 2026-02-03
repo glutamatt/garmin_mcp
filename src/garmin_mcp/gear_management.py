@@ -21,7 +21,7 @@ def register_tools(app):
             user_profile_id: User profile ID (can be obtained from get_device_last_used)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             gear_list = client.get_gear(user_profile_id)
             if not gear_list:
                 return "No gear found."
@@ -61,7 +61,7 @@ def register_tools(app):
             user_profile_id: User profile ID (can be obtained from get_device_last_used)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             defaults = client.get_gear_defaults(user_profile_id)
             if not defaults:
                 return "No gear defaults found."
@@ -84,7 +84,7 @@ def register_tools(app):
             gear_uuid: UUID of the gear item
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             stats = client.get_gear_stats(gear_uuid)
             if not stats:
                 return f"No stats found for gear with UUID {gear_uuid}."
@@ -118,7 +118,7 @@ def register_tools(app):
             gear_uuid: UUID of the gear to add (get from get_gear)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             result = client.add_gear_to_activity(activity_id, gear_uuid)
 
             return json.dumps({
@@ -141,7 +141,7 @@ def register_tools(app):
             gear_uuid: UUID of the gear to remove
         """
         try:
-            client = await get_client(ctx)
+            client = get_client(ctx)
             result = client.remove_gear_from_activity(activity_id, gear_uuid)
 
             return json.dumps({
