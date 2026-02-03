@@ -5,7 +5,7 @@ import json
 import datetime
 from typing import Any, Dict, List, Optional, Union
 
-from mcp.server.fastmcp import Context
+
 from garmin_mcp.client_factory import get_client
 
 
@@ -13,10 +13,10 @@ def register_tools(app):
     """Register all user profile tools with the MCP server app"""
 
     @app.tool()
-    async def get_full_name(ctx: Context) -> str:
+    def get_full_name() -> str:
         """Get user's full name from profile"""
         try:
-            client = await get_client(ctx)
+            client = get_client()
             full_name = client.get_full_name()
             if isinstance(full_name, (dict, list)):
                 return json.dumps(full_name, indent=2)
@@ -25,10 +25,10 @@ def register_tools(app):
             return f"Error retrieving user's full name: {str(e)}"
 
     @app.tool()
-    async def get_unit_system(ctx: Context) -> str:
+    def get_unit_system() -> str:
         """Get user's preferred unit system from profile"""
         try:
-            client = await get_client(ctx)
+            client = get_client()
             unit_system = client.get_unit_system()
             if isinstance(unit_system, (dict, list)):
                 return json.dumps(unit_system, indent=2)
@@ -37,10 +37,10 @@ def register_tools(app):
             return f"Error retrieving unit system: {str(e)}"
 
     @app.tool()
-    async def get_user_profile(ctx: Context) -> str:
+    def get_user_profile() -> str:
         """Get user profile information"""
         try:
-            client = await get_client(ctx)
+            client = get_client()
             profile = client.get_user_profile()
             if not profile:
                 return "No user profile information found."
@@ -49,10 +49,10 @@ def register_tools(app):
             return f"Error retrieving user profile: {str(e)}"
 
     @app.tool()
-    async def get_userprofile_settings(ctx: Context) -> str:
+    def get_userprofile_settings() -> str:
         """Get user profile settings"""
         try:
-            client = await get_client(ctx)
+            client = get_client()
             settings = client.get_userprofile_settings()
             if not settings:
                 return "No user profile settings found."

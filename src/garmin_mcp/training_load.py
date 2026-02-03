@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from mcp.server.fastmcp import Context
+
 from garmin_mcp.client_factory import get_client
 
 
@@ -423,8 +423,8 @@ def register_tools(app):
     """Register all training load tools with the MCP server app"""
 
     @app.tool()
-    async def get_acwr_analysis(
-        ctx: Context,
+    def get_acwr_analysis(
+        
         metric: str = "tss",
         days_of_activities: int = 42,
         ftp: float = 250,
@@ -452,7 +452,7 @@ def register_tools(app):
             activity_types: Comma-separated activity types to include (e.g., 'running,cycling')
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             # Fetch activities
             activities = client.get_activities(0, days_of_activities * 3)  # Buffer for rest days
 
@@ -485,8 +485,8 @@ def register_tools(app):
             return f"Error calculating ACWR: {str(e)}"
 
     @app.tool()
-    async def get_acwr_trend(
-        ctx: Context,
+    def get_acwr_trend(
+        
         metric: str = "tss",
         trend_days: int = 14,
         ftp: float = 250,
@@ -510,7 +510,7 @@ def register_tools(app):
             activity_types: Comma-separated activity types to include
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             # Fetch activities (need 28 + trend_days of data)
             total_days = 28 + trend_days + 7
             activities = client.get_activities(0, total_days * 3)
@@ -570,7 +570,7 @@ def register_tools(app):
             return f"Error calculating ACWR trend: {str(e)}"
 
     @app.tool()
-    async def get_available_activity_types(ctx: Context, days_of_activities: int = 90) -> str:
+    def get_available_activity_types(days_of_activities: int = 90) -> str:
         """Get list of distinct activity types from user's activities
 
         Use this to discover what activity types are available before filtering
@@ -581,7 +581,7 @@ def register_tools(app):
             days_of_activities: Days of history to scan (default 90)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             # Fetch activities
             activities = client.get_activities(0, days_of_activities * 2)
 
@@ -624,7 +624,7 @@ def register_tools(app):
             return f"Error getting activity types: {str(e)}"
 
     @app.tool()
-    async def explain_acwr() -> str:
+    def explain_acwr() -> str:
         """Get detailed explanation of ACWR and training load concepts
 
         Returns comprehensive information about:

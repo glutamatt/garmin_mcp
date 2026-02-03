@@ -5,7 +5,7 @@ import json
 import datetime
 from typing import Any, Dict, List, Optional, Union
 
-from mcp.server.fastmcp import Context
+
 from garmin_mcp.client_factory import get_client
 
 
@@ -13,8 +13,8 @@ def register_tools(app):
     """Register all training-related tools with the MCP server app"""
 
     @app.tool()
-    async def get_progress_summary_between_dates(
-        start_date: str, end_date: str, metric: str, ctx: Context
+    def get_progress_summary_between_dates(
+        start_date: str, end_date: str, metric: str
     ) -> str:
         """Get progress summary for a metric between dates
 
@@ -24,7 +24,7 @@ def register_tools(app):
             metric: Metric to get progress for (e.g., "elevationGain", "duration", "distance", "movingDuration")
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             summary = client.get_progress_summary_between_dates(
                 start_date, end_date, metric
             )
@@ -66,7 +66,7 @@ def register_tools(app):
             return f"Error retrieving progress summary: {str(e)}"
 
     @app.tool()
-    async def get_hill_score(start_date: str, end_date: str, ctx: Context) -> str:
+    def get_hill_score(start_date: str, end_date: str) -> str:
         """Get hill score data between dates
 
         Args:
@@ -74,7 +74,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             hill_score_data = client.get_hill_score(start_date, end_date)
             if not hill_score_data:
                 return f"No hill score data found between {start_date} and {end_date}."
@@ -108,7 +108,7 @@ def register_tools(app):
             return f"Error retrieving hill score data: {str(e)}"
 
     @app.tool()
-    async def get_endurance_score(start_date: str, end_date: str, ctx: Context) -> str:
+    def get_endurance_score(start_date: str, end_date: str) -> str:
         """Get endurance score data between dates
 
         Args:
@@ -116,7 +116,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             endurance_data = client.get_endurance_score(start_date, end_date)
             if not endurance_data:
                 return f"No endurance score data found between {start_date} and {end_date}."
@@ -150,14 +150,14 @@ def register_tools(app):
             return f"Error retrieving endurance score data: {str(e)}"
 
     @app.tool()
-    async def get_training_effect(activity_id: int, ctx: Context) -> str:
+    def get_training_effect(activity_id: int) -> str:
         """Get training effect data for a specific activity
 
         Args:
             activity_id: ID of the activity to retrieve training effect for
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             # Training effect data is available through get_activity
             # The garminconnect library doesn't have a separate get_training_effect method
             activity = client.get_activity(activity_id)
@@ -192,14 +192,14 @@ def register_tools(app):
             return f"Error retrieving training effect data: {str(e)}"
 
     @app.tool()
-    async def get_max_metrics(date: str, ctx: Context) -> str:
+    def get_max_metrics(date: str) -> str:
         """Get max metrics data (like VO2 Max and fitness age)
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             metrics = client.get_max_metrics(date)
             if not metrics:
                 return f"No max metrics data found for {date}."
@@ -235,14 +235,14 @@ def register_tools(app):
             return f"Error retrieving max metrics data: {str(e)}"
 
     @app.tool()
-    async def get_hrv_data(date: str, ctx: Context) -> str:
+    def get_hrv_data(date: str) -> str:
         """Get Heart Rate Variability (HRV) data
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             hrv_data = client.get_hrv_data(date)
             if not hrv_data:
                 return f"No HRV data found for {date}."
@@ -278,14 +278,14 @@ def register_tools(app):
             return f"Error retrieving HRV data: {str(e)}"
 
     @app.tool()
-    async def get_fitnessage_data(date: str, ctx: Context) -> str:
+    def get_fitnessage_data(date: str) -> str:
         """Get fitness age data
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             fitness_age = client.get_fitnessage_data(date)
             if not fitness_age:
                 return f"No fitness age data found for {date}."
@@ -316,7 +316,7 @@ def register_tools(app):
             return f"Error retrieving fitness age data: {str(e)}"
 
     @app.tool()
-    async def get_training_status(date: str, ctx: Context) -> str:
+    def get_training_status(date: str) -> str:
         """Get training status with curated metrics
 
         Returns comprehensive training status including load, VO2 max, recovery,
@@ -326,7 +326,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             status = client.get_training_status(date)
             if not status:
                 return f"No training status data found for {date}."
@@ -392,7 +392,7 @@ def register_tools(app):
             return f"Error retrieving training status data: {str(e)}"
 
     @app.tool()
-    async def get_lactate_threshold(date: str, ctx: Context) -> str:
+    def get_lactate_threshold(date: str) -> str:
         """Get lactate threshold data
 
         Returns lactate threshold information, which is the exercise intensity at
@@ -403,7 +403,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             threshold = client.get_lactate_threshold(date)
             if not threshold:
                 return f"No lactate threshold data found for {date}"
@@ -430,14 +430,14 @@ def register_tools(app):
             return f"Error retrieving lactate threshold data: {str(e)}"
 
     @app.tool()
-    async def request_reload(date: str, ctx: Context) -> str:
+    def request_reload(date: str) -> str:
         """Request reload of epoch data
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             result = client.request_reload(date)
             return json.dumps(result, indent=2)
         except Exception as e:

@@ -386,7 +386,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "garminconnect", editable = "../../cyberjunky/python-garminconnect" },
+    { name = "garminconnect", editable = "../../../../cyberjunky/python-garminconnect" },
     { name = "garth", specifier = ">=0.5.17,<0.6.0" },
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "mcp", specifier = "==1.3.0" },
@@ -405,7 +405,7 @@ dev = [
 [[package]]
 name = "garminconnect"
 version = "0.2.38"
-source = { editable = "../../cyberjunky/python-garminconnect" }
+source = { editable = "../../../../cyberjunky/python-garminconnect" }
 dependencies = [
     { name = "garth" },
 ]

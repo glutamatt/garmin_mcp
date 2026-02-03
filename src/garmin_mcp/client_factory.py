@@ -1,14 +1,22 @@
 """
 Client Factory for Garmin MCP Server
 
-Provides session-based client management using FastMCP Context.
-Each MCP connection has isolated session state.
+Provides session-based client management.
+Uses module-level state for token storage (single MCP process per server).
+
+For multi-user support in the future, consider:
+- Spawning one MCP process per user
+- Passing tokens with each tool call
+- Using a proper session store
 """
 
 from garminconnect import Garmin
-from mcp.server.fastmcp import Context
 
-GARMIN_TOKENS_KEY = "garmin_tokens"
+# Module-level token storage
+# Key: some session identifier (for now just "default" since single-user)
+_session_tokens: dict[str, str] = {}
+
+DEFAULT_SESSION = "default"
 
 
 def create_client_from_tokens(tokens: str) -> Garmin:
@@ -39,18 +47,15 @@ def serialize_tokens(client: Garmin) -> str:
     return client.garth.dumps()
 
 
-async def get_client(ctx: Context) -> Garmin:
+def get_client() -> Garmin:
     """
-    Get Garmin client from MCP Context session state.
+    Get Garmin client from stored session tokens.
 
     Usage in tools:
         @app.tool()
-        async def get_stats(date: str, ctx: Context) -> str:
-            client = await get_client(ctx)
+        def get_stats(date: str) -> str:
+            client = get_client()
             return json.dumps(client.get_stats(date))
-
-    Args:
-        ctx: FastMCP Context (automatically injected)
 
     Returns:
         Authenticated Garmin client
@@ -58,7 +63,7 @@ async def get_client(ctx: Context) -> Garmin:
     Raises:
         ValueError: If no Garmin session is active
     """
-    tokens = await ctx.get_state(GARMIN_TOKENS_KEY)
+    tokens = _session_tokens.get(DEFAULT_SESSION)
     if not tokens:
         raise ValueError(
             "No Garmin session active. Call garmin_login_tool() or set_garmin_session() first."
@@ -66,11 +71,16 @@ async def get_client(ctx: Context) -> Garmin:
     return create_client_from_tokens(tokens)
 
 
-async def set_session_tokens(ctx: Context, tokens: str) -> None:
+def set_session_tokens(tokens: str) -> None:
     """Store Garmin tokens in session state."""
-    await ctx.set_state(GARMIN_TOKENS_KEY, tokens)
+    _session_tokens[DEFAULT_SESSION] = tokens
 
 
-async def clear_session_tokens(ctx: Context) -> None:
+def clear_session_tokens() -> None:
     """Clear Garmin tokens from session state."""
-    await ctx.delete_state(GARMIN_TOKENS_KEY)
+    _session_tokens.pop(DEFAULT_SESSION, None)
+
+
+def has_session() -> bool:
+    """Check if a session is active."""
+    return DEFAULT_SESSION in _session_tokens

@@ -2,23 +2,21 @@
 Authentication tools for Garmin Connect MCP server.
 
 Session-based authentication:
-- Login stores tokens in MCP session AND returns them to caller
+- Login stores tokens in session AND returns them to caller
 - Caller can persist tokens (cookies, etc.) for session restoration
 - set_garmin_session() restores session from persisted tokens
-- All data tools use session tokens via Context
+- All data tools use session tokens via get_client()
 """
 
-from mcp.server.fastmcp import Context
-
 from garmin_mcp.garmin_platform import garmin_login
-from garmin_mcp.client_factory import set_session_tokens, clear_session_tokens
+from garmin_mcp.client_factory import set_session_tokens, clear_session_tokens, get_client
 
 
 def register_tools(app):
     """Register authentication tools with the MCP app."""
 
     @app.tool()
-    async def garmin_login_tool(email: str, password: str, ctx: Context) -> dict:
+    def garmin_login_tool(email: str, password: str) -> dict:
         """
         Login to Garmin Connect.
 
@@ -36,11 +34,11 @@ def register_tools(app):
         """
         result = garmin_login(email, password)
         if result.success and result.tokens:
-            await set_session_tokens(ctx, result.tokens)
+            set_session_tokens(result.tokens)
         return result.to_dict()
 
     @app.tool()
-    async def set_garmin_session(garmin_tokens: str, ctx: Context) -> dict:
+    def set_garmin_session(garmin_tokens: str) -> dict:
         """
         Restore Garmin session from stored tokens.
 
@@ -54,13 +52,13 @@ def register_tools(app):
             {success: true} or {success: false, error: "..."}
         """
         try:
-            await set_session_tokens(ctx, garmin_tokens)
+            set_session_tokens(garmin_tokens)
             return {"success": True, "message": "Garmin session restored"}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     @app.tool()
-    async def garmin_logout(ctx: Context) -> dict:
+    def garmin_logout() -> dict:
         """
         Clear Garmin session.
 
@@ -70,13 +68,13 @@ def register_tools(app):
         Returns:
             {success: true}
         """
-        await clear_session_tokens(ctx)
+        clear_session_tokens()
         return {"success": True, "message": "Garmin session cleared"}
 
     # Common tools (shared interface with future coros_mcp)
 
     @app.tool()
-    async def get_user_name(ctx: Context) -> dict:
+    def get_user_name() -> dict:
         """
         Get user's display name.
 
@@ -85,9 +83,8 @@ def register_tools(app):
         Returns:
             {name: "...", full_name: "..."}
         """
-        from garmin_mcp.client_factory import get_client
         try:
-            client = await get_client(ctx)
+            client = get_client()
             return {
                 "name": client.display_name,
                 "full_name": client.get_full_name(),
@@ -96,7 +93,7 @@ def register_tools(app):
             return {"error": str(e)}
 
     @app.tool()
-    async def get_available_features(ctx: Context) -> dict:
+    def get_available_features() -> dict:
         """
         Get list of available data domains.
 

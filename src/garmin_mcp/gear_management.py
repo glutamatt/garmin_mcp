@@ -5,7 +5,7 @@ import json
 import datetime
 from typing import Any, Dict, List, Optional, Union
 
-from mcp.server.fastmcp import Context
+
 from garmin_mcp.client_factory import get_client
 
 
@@ -13,14 +13,14 @@ def register_tools(app):
     """Register all gear management tools with the MCP server app"""
 
     @app.tool()
-    async def get_gear(user_profile_id: str, ctx: Context) -> str:
+    def get_gear(user_profile_id: str) -> str:
         """Get all gear registered with the user account
 
         Args:
             user_profile_id: User profile ID (can be obtained from get_device_last_used)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             gear_list = client.get_gear(user_profile_id)
             if not gear_list:
                 return "No gear found."
@@ -53,14 +53,14 @@ def register_tools(app):
             return f"Error retrieving gear: {str(e)}"
 
     @app.tool()
-    async def get_gear_defaults(user_profile_id: str, ctx: Context) -> str:
+    def get_gear_defaults(user_profile_id: str) -> str:
         """Get default gear settings
 
         Args:
             user_profile_id: User profile ID (can be obtained from get_device_last_used)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             defaults = client.get_gear_defaults(user_profile_id)
             if not defaults:
                 return "No gear defaults found."
@@ -76,14 +76,14 @@ def register_tools(app):
             return f"Error retrieving gear defaults: {str(e)}"
 
     @app.tool()
-    async def get_gear_stats(gear_uuid: str, ctx: Context) -> str:
+    def get_gear_stats(gear_uuid: str) -> str:
         """Get statistics for specific gear
 
         Args:
             gear_uuid: UUID of the gear item
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             stats = client.get_gear_stats(gear_uuid)
             if not stats:
                 return f"No stats found for gear with UUID {gear_uuid}."
@@ -107,7 +107,7 @@ def register_tools(app):
             return f"Error retrieving gear stats: {str(e)}"
 
     @app.tool()
-    async def add_gear_to_activity(activity_id: int, gear_uuid: str, ctx: Context) -> str:
+    def add_gear_to_activity(activity_id: int, gear_uuid: str) -> str:
         """Associate gear with an activity
 
         Links a specific piece of gear (like shoes, bike, etc.) to an activity.
@@ -117,7 +117,7 @@ def register_tools(app):
             gear_uuid: UUID of the gear to add (get from get_gear)
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             result = client.add_gear_to_activity(activity_id, gear_uuid)
 
             return json.dumps({
@@ -130,7 +130,7 @@ def register_tools(app):
             return f"Error adding gear to activity: {str(e)}"
 
     @app.tool()
-    async def remove_gear_from_activity(activity_id: int, gear_uuid: str, ctx: Context) -> str:
+    def remove_gear_from_activity(activity_id: int, gear_uuid: str) -> str:
         """Remove gear association from an activity
 
         Unlinks a specific piece of gear from an activity.
@@ -140,7 +140,7 @@ def register_tools(app):
             gear_uuid: UUID of the gear to remove
         """
         try:
-            client = await get_client(ctx)
+            client = get_client()
             result = client.remove_gear_from_activity(activity_id, gear_uuid)
 
             return json.dumps({
