@@ -10,14 +10,8 @@ import json
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-# The garmin_client will be set by the main file
-garmin_client = None
-
-
-def configure(client):
-    """Configure the module with the Garmin client instance"""
-    global garmin_client
-    garmin_client = client
+from mcp.server.fastmcp import Context
+from garmin_mcp.client_factory import get_client
 
 
 # =============================================================================
@@ -430,6 +424,7 @@ def register_tools(app):
 
     @app.tool()
     async def get_acwr_analysis(
+        ctx: Context,
         metric: str = "tss",
         days_of_activities: int = 42,
         ftp: float = 250,
@@ -457,8 +452,9 @@ def register_tools(app):
             activity_types: Comma-separated activity types to include (e.g., 'running,cycling')
         """
         try:
+            client = await get_client(ctx)
             # Fetch activities
-            activities = garmin_client.get_activities(0, days_of_activities * 3)  # Buffer for rest days
+            activities = client.get_activities(0, days_of_activities * 3)  # Buffer for rest days
 
             if not activities:
                 return json.dumps({
@@ -490,6 +486,7 @@ def register_tools(app):
 
     @app.tool()
     async def get_acwr_trend(
+        ctx: Context,
         metric: str = "tss",
         trend_days: int = 14,
         ftp: float = 250,
@@ -513,9 +510,10 @@ def register_tools(app):
             activity_types: Comma-separated activity types to include
         """
         try:
+            client = await get_client(ctx)
             # Fetch activities (need 28 + trend_days of data)
             total_days = 28 + trend_days + 7
-            activities = garmin_client.get_activities(0, total_days * 3)
+            activities = client.get_activities(0, total_days * 3)
 
             if not activities:
                 return json.dumps({"error": "No activities found"}, indent=2)
@@ -572,7 +570,7 @@ def register_tools(app):
             return f"Error calculating ACWR trend: {str(e)}"
 
     @app.tool()
-    async def get_available_activity_types(days_of_activities: int = 90) -> str:
+    async def get_available_activity_types(ctx: Context, days_of_activities: int = 90) -> str:
         """Get list of distinct activity types from user's activities
 
         Use this to discover what activity types are available before filtering
@@ -583,8 +581,9 @@ def register_tools(app):
             days_of_activities: Days of history to scan (default 90)
         """
         try:
+            client = await get_client(ctx)
             # Fetch activities
-            activities = garmin_client.get_activities(0, days_of_activities * 2)
+            activities = client.get_activities(0, days_of_activities * 2)
 
             if not activities:
                 return json.dumps({

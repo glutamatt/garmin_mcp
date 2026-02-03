@@ -5,23 +5,18 @@ import json
 import datetime
 from typing import Any, Dict, List, Optional, Union
 
-# The garmin_client will be set by the main file
-garmin_client = None
-
-
-def configure(client):
-    """Configure the module with the Garmin client instance"""
-    global garmin_client
-    garmin_client = client
+from mcp.server.fastmcp import Context
+from garmin_mcp.client_factory import get_client
 
 
 def register_tools(app):
     """Register all data management tools with the MCP server app"""
-    
+
     @app.tool()
     async def add_body_composition(
         date: str,
         weight: float,
+        ctx: Context,
         percent_fat: Optional[float] = None,
         percent_hydration: Optional[float] = None,
         visceral_fat_mass: Optional[float] = None,
@@ -35,7 +30,7 @@ def register_tools(app):
         bmi: Optional[float] = None
     ) -> str:
         """Add body composition data
-        
+
         Args:
             date: Date in YYYY-MM-DD format
             weight: Weight in kg
@@ -52,7 +47,8 @@ def register_tools(app):
             bmi: Body Mass Index
         """
         try:
-            result = garmin_client.add_body_composition(
+            client = await get_client(ctx)
+            result = client.add_body_composition(
                 date,
                 weight=weight,
                 percent_fat=percent_fat,
@@ -70,16 +66,17 @@ def register_tools(app):
             return json.dumps(result, indent=2)
         except Exception as e:
             return f"Error adding body composition data: {str(e)}"
-    
+
     @app.tool()
     async def set_blood_pressure(
         systolic: int,
         diastolic: int,
         pulse: int,
+        ctx: Context,
         notes: Optional[str] = None
     ) -> str:
         """Set blood pressure values
-        
+
         Args:
             systolic: Systolic pressure (top number)
             diastolic: Diastolic pressure (bottom number)
@@ -87,28 +84,31 @@ def register_tools(app):
             notes: Optional notes
         """
         try:
-            result = garmin_client.set_blood_pressure(
+            client = await get_client(ctx)
+            result = client.set_blood_pressure(
                 systolic, diastolic, pulse, notes=notes
             )
             return json.dumps(result, indent=2)
         except Exception as e:
             return f"Error setting blood pressure values: {str(e)}"
-    
+
     @app.tool()
     async def add_hydration_data(
         value_in_ml: int,
         cdate: str,
-        timestamp: str
+        timestamp: str,
+        ctx: Context
     ) -> str:
         """Add hydration data
-        
+
         Args:
             value_in_ml: Amount of liquid in milliliters
             cdate: Date in YYYY-MM-DD format
             timestamp: Timestamp in YYYY-MM-DDThh:mm:ss.sss format
         """
         try:
-            result = garmin_client.add_hydration_data(
+            client = await get_client(ctx)
+            result = client.add_hydration_data(
                 value_in_ml=value_in_ml,
                 cdate=cdate,
                 timestamp=timestamp
