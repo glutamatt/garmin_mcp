@@ -27,7 +27,7 @@ RUN sed -i '/\[tool.uv.sources\]/,$d' pyproject.toml && \
     uv pip install -e .
 
 # Default to HTTP transport
-ENV MCP_TRANSPORT=streamable-http
+ENV MCP_TRANSPORT=http
 ENV MCP_HOST=0.0.0.0
 ENV MCP_PORT=8080
 

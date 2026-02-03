@@ -20,7 +20,7 @@ def main():
     parser.add_argument(
         "--http",
         action="store_true",
-        help="Use streamable-http transport instead of stdio"
+        help="Use http transport instead of stdio"
     )
     parser.add_argument(
         "--host",
@@ -38,7 +38,7 @@ def main():
 
     # Set environment variables for the app
     if args.http:
-        os.environ["MCP_TRANSPORT"] = "streamable-http"
+        os.environ["MCP_TRANSPORT"] = "http"
         os.environ["MCP_HOST"] = args.host
         os.environ["MCP_PORT"] = str(args.port)
     else:
@@ -48,7 +48,7 @@ def main():
 
     if args.http:
         print(f"Starting Garmin MCP server on http://{args.host}:{args.port}/mcp")
-        app.run(transport="streamable-http", host=args.host, port=args.port)
+        app.run(transport="http", host=args.host, port=args.port)
     else:
         app.run()
 

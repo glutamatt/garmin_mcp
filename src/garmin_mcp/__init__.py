@@ -8,7 +8,7 @@ Session-based authentication using FastMCP Context:
 
 Supports two transport modes:
 - stdio: For single-user local usage (default)
-- streamable-http: For multi-user HTTP server deployment
+- http: For multi-user HTTP server deployment
 """
 
 import os
@@ -60,7 +60,7 @@ def main():
     """Initialize the MCP server and run with configured transport.
 
     Environment variables:
-    - MCP_TRANSPORT: 'stdio' (default) or 'streamable-http'
+    - MCP_TRANSPORT: 'stdio' (default) or 'http'
     - MCP_HOST: Host to bind to (default: '0.0.0.0')
     - MCP_PORT: Port for HTTP transport (default: 8080)
     """
@@ -68,10 +68,10 @@ def main():
 
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
 
-    if transport == "streamable-http":
+    if transport == "http":
         host = os.environ.get("MCP_HOST", "0.0.0.0")
         port = int(os.environ.get("MCP_PORT", "8080"))
-        app.run(transport="streamable-http", host=host, port=port)
+        app.run(transport="http", host=host, port=port)
     else:
         # Default to stdio for backward compatibility
         app.run()
