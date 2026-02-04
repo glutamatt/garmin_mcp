@@ -29,14 +29,35 @@ def create_client_from_tokens(tokens: str) -> Garmin:
     """
     Create a Garmin client from base64 tokens.
 
+    Populates display_name from garth profile after loading tokens.
+    This is required for API calls that use display_name in the URL.
+
     Args:
         tokens: Base64 encoded Garmin OAuth tokens
 
     Returns:
-        Authenticated Garmin client
+        Authenticated Garmin client with display_name populated
     """
     client = Garmin()
     client.garth.loads(tokens)
+
+    # Populate display_name from garth profile after loading tokens
+    # This mimics the behavior in the login flow
+    try:
+        profile = client.garth.profile
+        if profile and isinstance(profile, dict):
+            client.display_name = profile.get("displayName")
+            client.full_name = profile.get("fullName")
+        elif not client.display_name:
+            # Fallback: fetch profile via API if not available in garth.profile
+            prof = client.garth.connectapi("/userprofile-service/userprofile/profile")
+            if prof and isinstance(prof, dict):
+                client.display_name = prof.get("displayName")
+                client.full_name = prof.get("fullName")
+    except Exception as e:
+        # Log but don't fail - some operations might not need display_name
+        print(f"Warning: Failed to populate display_name: {e}")
+
     return client
 
 
