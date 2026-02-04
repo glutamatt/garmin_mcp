@@ -91,9 +91,39 @@ def register_tools(app):
         """
         try:
             client = get_client(ctx)
+
+            # First, try to use cached values from the client if available
+            if client.display_name and client.full_name:
+                return {
+                    "name": client.display_name,
+                    "full_name": client.full_name,
+                }
+
+            # If not cached, fetch from API and update client attributes
+            try:
+                profile = client.garth.connectapi(
+                    "/userprofile-service/userprofile/profile"
+                )
+                if profile and isinstance(profile, dict):
+                    client.display_name = profile.get("displayName")
+                    client.full_name = profile.get("fullName")
+                    return {
+                        "name": client.display_name,
+                        "full_name": client.full_name,
+                    }
+            except Exception as fetch_error:
+                # If API fetch fails, return error details
+                return {
+                    "name": None,
+                    "full_name": None,
+                    "error": f"Failed to fetch profile: {str(fetch_error)}"
+                }
+
+            # Fallback if profile fetch succeeded but data is missing
             return {
-                "name": client.display_name,
-                "full_name": client.get_full_name(),
+                "name": None,
+                "full_name": None,
+                "error": "Profile data not available"
             }
         except Exception as e:
             return {"error": str(e)}
