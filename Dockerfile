@@ -3,6 +3,9 @@ FROM python:3.12-slim
 
 # Note: .dockerignore is symlinked to .gitignore for unified exclusion rules
 
+# Install git for cloning dependencies
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
 # Set working directory
 WORKDIR /app
 
@@ -15,8 +18,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_SYSTEM_PYTHON=1
 
-# Copy local garminconnect library (with latest calendar/coaching features)
-COPY python-garminconnect /tmp/garminconnect
+# Clone python-garminconnect library (with latest calendar/coaching features)
+RUN git clone --depth 1 https://github.com/cyberjunky/python-garminconnect.git /tmp/garminconnect
 
 # Copy dependency files and README first for better layer caching
 COPY pyproject.toml README.md ./
