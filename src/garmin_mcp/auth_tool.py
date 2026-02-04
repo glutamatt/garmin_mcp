@@ -99,27 +99,30 @@ def register_tools(app):
                     "full_name": client.full_name,
                 }
 
-            # If not cached, fetch from API and update client attributes
-            try:
-                profile = client.garth.connectapi(
-                    "/userprofile-service/userprofile/profile"
-                )
-                if profile and isinstance(profile, dict):
-                    client.display_name = profile.get("displayName")
-                    client.full_name = profile.get("fullName")
+            # Try to get profile from garth.profile attribute (populated during login)
+            profile = getattr(client.garth, "profile", None)
+
+            # If not available, fetch from socialProfile API
+            if not profile or not isinstance(profile, dict):
+                try:
+                    profile = client.garth.connectapi("/userprofile-service/socialProfile")
+                except Exception as fetch_error:
                     return {
-                        "name": client.display_name,
-                        "full_name": client.full_name,
+                        "name": None,
+                        "full_name": None,
+                        "error": f"Failed to fetch profile: {str(fetch_error)}"
                     }
-            except Exception as fetch_error:
-                # If API fetch fails, return error details
+
+            # Extract and cache the name fields
+            if profile and isinstance(profile, dict):
+                client.display_name = profile.get("displayName")
+                client.full_name = profile.get("fullName")
                 return {
-                    "name": None,
-                    "full_name": None,
-                    "error": f"Failed to fetch profile: {str(fetch_error)}"
+                    "name": client.display_name,
+                    "full_name": client.full_name,
                 }
 
-            # Fallback if profile fetch succeeded but data is missing
+            # Fallback if profile data is missing
             return {
                 "name": None,
                 "full_name": None,
