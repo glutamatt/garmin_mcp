@@ -26,6 +26,9 @@ COPY src/ ./src/
 RUN sed -i '/\[tool.uv.sources\]/,$d' pyproject.toml && \
     uv pip install -e .
 
+# Create data directory for session storage
+RUN mkdir -p /data/garmin_sessions
+
 # Default to HTTP transport
 ENV MCP_TRANSPORT=http
 ENV MCP_HOST=0.0.0.0
