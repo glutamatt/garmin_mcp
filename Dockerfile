@@ -15,16 +15,23 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_SYSTEM_PYTHON=1
 
+# Copy local garminconnect library (with latest calendar/coaching features)
+COPY python-garminconnect /tmp/garminconnect
+
 # Copy dependency files and README first for better layer caching
 COPY pyproject.toml README.md ./
 
 # Copy the application source code (needed for editable install)
 COPY src/ ./src/
 
-# Remove local source references from pyproject.toml (not available in Docker)
-# and install dependencies using uv
-RUN sed -i '/\[tool.uv.sources\]/,$d' pyproject.toml && \
-    uv pip install -e .
+# Remove local source references from pyproject.toml and update to use /tmp/garminconnect
+RUN sed -i '/\[tool.uv.sources\]/,$d' pyproject.toml
+
+# Install garminconnect from local copy (includes calendar events and coaching endpoints)
+RUN uv pip install -e /tmp/garminconnect
+
+# Install garmin-mcp with remaining dependencies
+RUN uv pip install -e .
 
 # Create data directory for session storage
 RUN mkdir -p /data/garmin_sessions
