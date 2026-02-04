@@ -32,10 +32,12 @@ COPY src/ ./src/
 RUN sed -i '/\[tool.uv.sources\]/,$d' pyproject.toml
 
 # Install garminconnect from local copy (includes calendar events and coaching endpoints)
-RUN uv pip install -e /tmp/garminconnect
+# Use regular install (not editable) for HF Space compatibility
+RUN uv pip install /tmp/garminconnect
 
 # Install garmin-mcp with remaining dependencies
-RUN uv pip install -e .
+# Use regular install (not editable) for HF Space compatibility
+RUN uv pip install .
 
 # Create data directory for session storage
 RUN mkdir -p /data/garmin_sessions
