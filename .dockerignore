@@ -1,1 +1,15 @@
-.gitignore
+# Docker ignore (separate from .gitignore)
+# We need to include python-garminconnect/ for the build
+
+.git
+.github
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.pytest_cache
+.venv
+tests
+docs
+*.md
+!README.md
