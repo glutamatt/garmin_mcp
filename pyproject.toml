@@ -31,4 +31,4 @@ dev-dependencies = [
 
 [tool.uv.sources]
 garmin-mcp = { workspace = true }
-garminconnect = { path = "/home/matt/repositories/github.com/cyberjunky/python-garminconnect", editable = true }
+garminconnect = { git = "https://github.com/glutamatt/python-garminconnect.git", branch = "feature/add-coaching-endpoints" }

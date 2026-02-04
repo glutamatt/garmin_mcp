@@ -19,7 +19,8 @@ ENV PYTHONUNBUFFERED=1 \
     UV_SYSTEM_PYTHON=1
 
 # Clone python-garminconnect library (with latest calendar/coaching features)
-RUN git clone --depth 1 https://github.com/cyberjunky/python-garminconnect.git /tmp/garminconnect
+# Using forked branch with calendar management functions (get_scheduled_workouts_for_range, get_calendar_items_for_range)
+RUN git clone --depth 1 --branch feature/add-coaching-endpoints https://github.com/glutamatt/python-garminconnect.git /tmp/garminconnect
 
 # Copy dependency files and README first for better layer caching
 COPY pyproject.toml README.md ./
