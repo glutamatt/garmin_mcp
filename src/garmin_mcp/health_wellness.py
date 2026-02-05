@@ -734,6 +734,12 @@ def register_tools(app):
             if not weekly_data:
                 return f"No weekly steps data found for week containing {date}"
 
+            # Handle case where API returns a list instead of a dict
+            if isinstance(weekly_data, list):
+                if len(weekly_data) == 0:
+                    return f"No weekly steps data found for week containing {date}"
+                weekly_data = weekly_data[0]
+
             # Curate the weekly steps data
             curated = {
                 "date": date,
@@ -777,6 +783,12 @@ def register_tools(app):
             weekly_data = client.get_weekly_stress(date)
             if not weekly_data:
                 return f"No weekly stress data found for week containing {date}"
+
+            # Handle case where API returns a list instead of a dict
+            if isinstance(weekly_data, list):
+                if len(weekly_data) == 0:
+                    return f"No weekly stress data found for week containing {date}"
+                weekly_data = weekly_data[0]
 
             # Curate the weekly stress data
             curated = {
@@ -831,6 +843,12 @@ def register_tools(app):
             weekly_data = client.get_weekly_intensity_minutes(date)
             if not weekly_data:
                 return f"No weekly intensity minutes data found for week containing {date}"
+
+            # Handle case where API returns a list instead of a dict
+            if isinstance(weekly_data, list):
+                if len(weekly_data) == 0:
+                    return f"No weekly intensity minutes data found for week containing {date}"
+                weekly_data = weekly_data[0]
 
             # Curate the weekly intensity data
             curated = {
