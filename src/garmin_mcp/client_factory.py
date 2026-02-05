@@ -73,10 +73,21 @@ def serialize_tokens(client: Garmin) -> str:
 
 def _get_session_tokens(ctx: Context) -> str | None:
     """
-    Get Garmin tokens from request context (memory-only).
+    Get Garmin tokens from request context or request meta (stateless operation).
 
-    Tokens are passed from frontend on each request via setSession().
-    No file-based persistence - frontend manages token lifecycle via cookies.
+    Tokens can come from two sources (in order of priority):
+    1. Request meta (_meta.context.sport_platform_token) - stateless mode
+    2. Session state (ctx.get_state) - legacy mode for backwards compatibility
+
+    Stateless mode:
+    - Frontend sends tokens with each request via _meta.context
+    - MCP server extracts from ctx.request_context.meta.context
+    - No server-side session storage needed
+
+    Legacy mode:
+    - Tokens are set via set_garmin_session() tool
+    - Stored in FastMCP Context state (memory-only, per-request)
+    - Frontend must call set_garmin_session() on each new session
 
     Args:
         ctx: FastMCP Context (automatically injected by framework)
@@ -84,6 +95,19 @@ def _get_session_tokens(ctx: Context) -> str | None:
     Returns:
         Base64 encoded tokens or None if not set
     """
+    # Try stateless mode first: extract from request meta
+    try:
+        if ctx.request_context and ctx.request_context.meta:
+            meta_context = ctx.request_context.meta.context
+            if meta_context and isinstance(meta_context, dict):
+                sport_platform_token = meta_context.get('sport_platform_token')
+                if sport_platform_token:
+                    return sport_platform_token
+    except (AttributeError, TypeError):
+        # request_context not available or malformed - fall through to legacy mode
+        pass
+
+    # Fallback to legacy mode: read from session state
     return ctx.get_state(GARMIN_TOKENS_KEY)
 
 
