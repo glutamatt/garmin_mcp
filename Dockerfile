@@ -22,7 +22,7 @@ COPY pyproject.toml README.md ./
 COPY src/ ./src/
 
 # Install dependencies using uv
-RUN uv pip install -e .
+RUN uv pip install .
 
 # Copy test files (optional, for testing in container)
 COPY tests/ ./tests/
