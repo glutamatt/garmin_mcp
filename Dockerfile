@@ -32,13 +32,12 @@ COPY pytest.ini ./
 RUN mkdir -p /root/.garminconnect && \
     chmod 700 /root/.garminconnect
 
-# Expose the application (if needed for network communication)
-# Note: MCP servers typically communicate via stdio, so no port exposure is usually needed
-# EXPOSE 8000
+# Default to HTTP transport
+ENV MCP_TRANSPORT=http
+ENV MCP_HOST=0.0.0.0
+ENV MCP_PORT=8080
 
-# Set the entrypoint to run the MCP server
-ENTRYPOINT ["garmin-mcp"]
+EXPOSE 8080
 
-# Health check (optional - adjust based on your needs)
-# HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-#   CMD python -c "import sys; sys.exit(0)"
+# Run the MCP server with HTTP transport
+CMD ["python", "-m", "garmin_mcp", "--http"]
