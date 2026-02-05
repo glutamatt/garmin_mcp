@@ -104,12 +104,30 @@ def login(email: str, password: str, user_id: str = None) -> dict:
         if "MFA" in error_msg or "code" in error_msg.lower():
             return {
                 "success": False,
-                "error": "MFA required. Please use garmin-mcp-auth CLI first.",
+                "error": "MFA required",
+                "error_category": "mfa_required",
                 "mfa_required": True,
+                "details": {
+                    "message": "Your Garmin account has two-factor authentication (MFA) enabled",
+                    "context": "MFA requires interactive authentication which cannot be done through the API",
+                    "solution": "Use the local auth helper to authenticate:\n  1. Run: make auth-helper\n  2. Enter your credentials and MFA code\n  3. Upload tokens to HuggingFace Dataset\n  4. Tokens will be automatically loaded in the app",
+                    "documentation": "See tools/auth-helper/QUICKSTART.md for detailed instructions",
+                },
             }
         return {
             "success": False,
             "error": "Invalid email or password",
+            "error_category": "invalid_credentials",
+            "details": {
+                "message": "The email or password you entered is incorrect",
+                "context": "Garmin rejected the login credentials",
+                "solution": "Double-check your email and password:\n  • Verify you're using your Garmin Connect email\n  • Check for typos in your password\n  • Try logging in at garmin.com to verify credentials",
+                "common_issues": [
+                    "Using wrong email (must be Garmin Connect account email)",
+                    "Copy-paste adding extra spaces",
+                    "Password recently changed but using old password",
+                ],
+            },
         }
 
     except GarthHTTPError as e:
@@ -117,22 +135,62 @@ def login(email: str, password: str, user_id: str = None) -> dict:
         if "429" in error_msg:
             return {
                 "success": False,
-                "error": "Rate limited. Please wait and try again.",
+                "error": "Rate limited",
+                "error_category": "rate_limited",
+                "details": {
+                    "message": "Too many login attempts detected by Garmin",
+                    "context": "Garmin's security system has temporarily blocked login attempts from this location",
+                    "solution": "Wait 10-15 minutes before trying again. If this persists:\n  1. Use the local auth helper: make auth-helper\n  2. Authenticate from your home IP (not datacenter)\n  3. Upload tokens to bypass rate limiting",
+                    "prevention": "Avoid rapid repeated login attempts",
+                },
             }
         elif "401" in error_msg or "403" in error_msg:
+            # Check if this might be a location/datacenter IP block
+            is_likely_location_block = "403" in error_msg
+            if is_likely_location_block:
+                return {
+                    "success": False,
+                    "error": "Authentication blocked: Suspicious location detected",
+                    "error_category": "location_blocked",
+                    "details": {
+                        "message": "Garmin detected login from an unfamiliar or suspicious location and blocked it for security",
+                        "context": "HuggingFace Spaces and datacenter IPs are often flagged as suspicious by Garmin's security systems",
+                        "solution": "Use the local auth helper to authenticate from your home IP:\n  1. Run: make auth-helper\n  2. Enter your Garmin credentials\n  3. Tokens will be saved and uploaded to HuggingFace Dataset\n  4. The app will automatically use these pre-authenticated tokens",
+                        "documentation": "See tools/auth-helper/QUICKSTART.md",
+                        "why_this_happens": "Garmin blocks logins from datacenter IPs to prevent unauthorized access. This is expected when running on HuggingFace Spaces.",
+                    },
+                }
             return {
                 "success": False,
                 "error": "Invalid credentials",
+                "error_category": "invalid_credentials",
+                "details": {
+                    "message": "Authentication failed with HTTP 401/403 error",
+                    "context": f"Garmin server returned: {error_msg.split(':')[0]}",
+                    "solution": "Verify your credentials at garmin.com and try again",
+                },
             }
         return {
             "success": False,
             "error": f"Authentication error: {error_msg.split(':')[0]}",
+            "error_category": "connection_error",
+            "details": {
+                "message": "Network or API communication error",
+                "context": f"HTTP error from Garmin: {error_msg.split(':')[0]}",
+                "solution": "Check your internet connection and try again. If the problem persists:\n  • Verify Garmin Connect is online at garmin.com\n  • Try again in a few minutes\n  • Check if Garmin is experiencing outages",
+            },
         }
 
     except Exception as e:
         return {
             "success": False,
             "error": f"Unexpected error: {str(e)}",
+            "error_category": "unknown_error",
+            "details": {
+                "message": "An unexpected error occurred during authentication",
+                "context": str(e),
+                "solution": "Please try again. If the problem persists:\n  • Check the error message above for clues\n  • Try using the local auth helper: make auth-helper\n  • Report the issue if it continues",
+            },
         }
 
 
