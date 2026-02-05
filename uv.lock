@@ -722,7 +722,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastmcp", specifier = ">=2.3.0" },
-    { name = "garminconnect", editable = "../../../../cyberjunky/python-garminconnect" },
+    { name = "garminconnect", git = "https://github.com/glutamatt/python-garminconnect.git?branch=feature%2Fadd-coaching-endpoints" },
     { name = "garth", specifier = ">=0.5.17,<0.6.0" },
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "python-dotenv", specifier = ">=1.1.0" },
@@ -740,34 +740,10 @@ dev = [
 [[package]]
 name = "garminconnect"
 version = "0.2.38"
-source = { editable = "../../../../cyberjunky/python-garminconnect" }
+source = { git = "https://github.com/glutamatt/python-garminconnect.git?branch=feature%2Fadd-coaching-endpoints#cdde6b069025493b009d24959196e4f0e8356045" }
 dependencies = [
     { name = "garth" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "black", extras = ["jupyter"], marker = "extra == 'linting'" },
-    { name = "coverage", marker = "extra == 'testing'" },
-    { name = "garth", specifier = ">=0.5.17,<0.6.0" },
-    { name = "garth", marker = "extra == 'example'", specifier = ">=0.5.17,<0.6.0" },
-    { name = "ipdb", marker = "extra == 'dev'" },
-    { name = "ipykernel", marker = "extra == 'dev'" },
-    { name = "ipython", marker = "extra == 'dev'" },
-    { name = "isort", marker = "extra == 'linting'" },
-    { name = "matplotlib", marker = "extra == 'dev'" },
-    { name = "mypy", marker = "extra == 'linting'" },
-    { name = "pandas", marker = "extra == 'dev'" },
-    { name = "pydantic", marker = "extra == 'workout'", specifier = ">=2.0.0" },
-    { name = "pytest", marker = "extra == 'testing'" },
-    { name = "pytest-vcr", marker = "extra == 'testing'", specifier = ">=1.0.2" },
-    { name = "readchar", marker = "extra == 'example'" },
-    { name = "requests", marker = "extra == 'example'" },
-    { name = "ruff", marker = "extra == 'linting'" },
-    { name = "types-requests", marker = "extra == 'linting'" },
-    { name = "vcrpy", marker = "extra == 'testing'", specifier = ">=7.0.0" },
-]
-provides-extras = ["dev", "workout", "linting", "testing", "example"]
 
 [[package]]
 name = "garth"
