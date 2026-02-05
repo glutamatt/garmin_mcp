@@ -247,6 +247,12 @@ def register_tools(app):
             if not hrv_data:
                 return f"No HRV data found for {date}."
 
+            # Handle case where API returns a list instead of a dict
+            if isinstance(hrv_data, list):
+                if len(hrv_data) == 0:
+                    return f"No HRV data found for {date}."
+                hrv_data = hrv_data[0]
+
             # Curate to essential fields only
             curated = {
                 "date": hrv_data.get('calendarDate') or date,
