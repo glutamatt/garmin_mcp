@@ -80,6 +80,12 @@ def register_tools(app):
             if not hill_score_data:
                 return f"No hill score data found between {start_date} and {end_date}."
 
+            # Handle case where API returns a list instead of a dict
+            if isinstance(hill_score_data, list):
+                if len(hill_score_data) == 0:
+                    return f"No hill score data found between {start_date} and {end_date}."
+                hill_score_data = hill_score_data[0]
+
             # Curate to essential fields only
             curated = {
                 "start_date": start_date,
@@ -121,6 +127,12 @@ def register_tools(app):
             endurance_data = client.get_endurance_score(start_date, end_date)
             if not endurance_data:
                 return f"No endurance score data found between {start_date} and {end_date}."
+
+            # Handle case where API returns a list instead of a dict
+            if isinstance(endurance_data, list):
+                if len(endurance_data) == 0:
+                    return f"No endurance score data found between {start_date} and {end_date}."
+                endurance_data = endurance_data[0]
 
             # Curate to essential fields only
             curated = {
@@ -204,6 +216,12 @@ def register_tools(app):
             metrics = client.get_max_metrics(date)
             if not metrics:
                 return f"No max metrics data found for {date}."
+
+            # Handle case where API returns a list instead of a dict
+            if isinstance(metrics, list):
+                if len(metrics) == 0:
+                    return f"No max metrics data found for {date}."
+                metrics = metrics[0]
 
             # Curate to essential fields only
             curated = {
@@ -290,6 +308,12 @@ def register_tools(app):
             fitness_age = client.get_fitnessage_data(date)
             if not fitness_age:
                 return f"No fitness age data found for {date}."
+
+            # Handle case where API returns a list instead of a dict
+            if isinstance(fitness_age, list):
+                if len(fitness_age) == 0:
+                    return f"No fitness age data found for {date}."
+                fitness_age = fitness_age[0]
 
             # Curate to essential fields only
             curated = {
@@ -408,6 +432,12 @@ def register_tools(app):
             threshold = client.get_lactate_threshold(date)
             if not threshold:
                 return f"No lactate threshold data found for {date}"
+
+            # Handle case where API returns a list instead of a dict
+            if isinstance(threshold, list):
+                if len(threshold) == 0:
+                    return f"No lactate threshold data found for {date}"
+                threshold = threshold[0]
 
             # Curate the lactate threshold data
             curated = {

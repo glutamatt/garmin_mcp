@@ -890,20 +890,35 @@ def register_tools(app):
             today = datetime.datetime.now().strftime('%Y-%m-%d')
             try:
                 readiness = client.get_training_readiness(today)
+                # Handle case where API returns None instead of data
+                if readiness is None:
+                    readiness = {}
+                # Handle list response
+                if isinstance(readiness, list):
+                    if len(readiness) == 0:
+                        readiness = {}
+                    else:
+                        readiness = readiness[0]
             except Exception:
-                readiness = None
+                readiness = {}
             try:
                 status = client.get_training_status(today)
+                if status is None:
+                    status = {}
             except Exception:
-                status = None
+                status = {}
             try:
                 hrv = client.get_hrv_data(today)
+                if hrv is None:
+                    hrv = {}
             except Exception:
-                hrv = None
+                hrv = {}
             try:
                 sleep = client.get_sleep_data(today)
+                if sleep is None:
+                    sleep = {}
             except Exception:
-                sleep = None
+                sleep = {}
             curated = {"date": today, "training_readiness": None, "training_status": None, "hrv": None, "sleep": None, "recommendations": []}
             if readiness:
                 curated["training_readiness"] = {"score": readiness.get('score') or readiness.get('trainingReadinessScore'), "level": readiness.get('level') or readiness.get('trainingReadinessLevel'), "feedback": readiness.get('feedbackPhrase')}
@@ -923,6 +938,10 @@ def register_tools(app):
                     curated["recommendations"].append("Moderate readiness - consider moderate intensity")
                 else:
                     curated["recommendations"].append("Low readiness - recommend easy/recovery workout or rest")
+            else:
+                # No readiness data available
+                if not curated.get("training_readiness"):
+                    curated["recommendations"].append("No readiness data available. This feature may require a compatible Garmin device with training readiness support.")
             curated = {k: v for k, v in curated.items() if v is not None}
             return json.dumps(curated, indent=2)
         except Exception as e:
