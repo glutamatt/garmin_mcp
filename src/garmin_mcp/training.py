@@ -2,8 +2,6 @@
 Training and performance functions for Garmin Connect MCP Server
 """
 import json
-import datetime
-from typing import Any, Dict, List, Optional, Union
 
 # The garmin_client will be set by the main file
 garmin_client = None

@@ -4,7 +4,7 @@ Workout-related functions for Garmin Connect MCP Server
 import copy
 import json
 import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 

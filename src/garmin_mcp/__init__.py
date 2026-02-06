@@ -9,7 +9,6 @@ Supports two modes:
 import os
 import sys
 
-import requests
 from fastmcp import FastMCP
 
 from garth.exc import GarthHTTPError
