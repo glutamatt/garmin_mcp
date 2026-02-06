@@ -436,12 +436,10 @@ async def test_plan_workout_creates_and_schedules(
     """Test plan_workout creates a workout then schedules it"""
     upload_response = {"workoutId": 2000, "workoutName": "Easy 30min Run"}
     mock_garmin_client.upload_workout.return_value = upload_response
-
-    # Mock garth.post for scheduling
-    mock_garmin_client.garth = Mock()
-    schedule_response = Mock()
-    schedule_response.status_code = 200
-    mock_garmin_client.garth.post.return_value = schedule_response
+    mock_garmin_client.schedule_workout.return_value = {
+        "workoutScheduleId": 5000,
+        "calendarDate": "2024-02-01",
+    }
 
     result = await app_with_workouts.call_tool(
         "plan_workout",
@@ -453,14 +451,8 @@ async def test_plan_workout_creates_and_schedules(
     assert parsed["workout_id"] == 2000
     assert parsed["scheduled_date"] == "2024-02-01"
 
-    # Verify upload was called with normalized JSON
     mock_garmin_client.upload_workout.assert_called_once()
-    # Verify schedule was called
-    mock_garmin_client.garth.post.assert_called_once_with(
-        "connectapi",
-        "workout-service/schedule/2000",
-        json={"date": "2024-02-01"},
-    )
+    mock_garmin_client.schedule_workout.assert_called_once_with(2000, "2024-02-01")
 
 
 @pytest.mark.asyncio
@@ -572,10 +564,11 @@ async def test_delete_workout_failure(app_with_workouts, mock_garmin_client):
 @pytest.mark.asyncio
 async def test_schedule_workout_tool(app_with_workouts, mock_garmin_client):
     """Test schedule_workout schedules an existing workout"""
-    mock_garmin_client.garth = Mock()
-    mock_response = Mock()
-    mock_response.status_code = 200
-    mock_garmin_client.garth.post.return_value = mock_response
+    mock_garmin_client.schedule_workout.return_value = {
+        "workoutScheduleId": 9000,
+        "calendarDate": "2024-02-01",
+        "workout": {"workoutId": 123456, "workoutName": "Test Run"},
+    }
 
     result = await app_with_workouts.call_tool(
         "schedule_workout",
@@ -583,8 +576,43 @@ async def test_schedule_workout_tool(app_with_workouts, mock_garmin_client):
     )
 
     parsed = json.loads(_get_text(result))
-    assert parsed["status"] == "success"
-    assert parsed["scheduled_date"] == "2024-02-01"
+    assert parsed["status"] == "scheduled"
+    assert parsed["schedule_id"] == 9000
+    mock_garmin_client.schedule_workout.assert_called_once_with(123456, "2024-02-01")
+
+
+@pytest.mark.asyncio
+async def test_unschedule_workout_tool(app_with_workouts, mock_garmin_client):
+    """Test unschedule_workout removes from calendar"""
+    mock_garmin_client.unschedule_workout.return_value = True
+
+    result = await app_with_workouts.call_tool(
+        "unschedule_workout",
+        {"schedule_id": 9000},
+    )
+
+    parsed = json.loads(_get_text(result))
+    assert parsed["status"] == "unscheduled"
+    mock_garmin_client.unschedule_workout.assert_called_once_with(9000)
+
+
+@pytest.mark.asyncio
+async def test_reschedule_workout_tool(app_with_workouts, mock_garmin_client):
+    """Test reschedule_workout moves to new date"""
+    mock_garmin_client.reschedule_workout.return_value = {
+        "workout": {"workoutName": "Test Run"},
+        "calendarDate": "2024-02-05",
+    }
+
+    result = await app_with_workouts.call_tool(
+        "reschedule_workout",
+        {"schedule_id": 9000, "new_date": "2024-02-05"},
+    )
+
+    parsed = json.loads(_get_text(result))
+    assert parsed["status"] == "rescheduled"
+    assert parsed["new_date"] == "2024-02-05"
+    mock_garmin_client.reschedule_workout.assert_called_once_with(9000, "2024-02-05")
 
 
 # =========================================================================

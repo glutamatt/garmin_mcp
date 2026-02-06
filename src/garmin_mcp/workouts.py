@@ -691,14 +691,14 @@ def register_tools(app):
                     "message": "Failed to create workout - no workout ID returned"
                 }, indent=2)
 
-            url = f"workout-service/schedule/{workout_id}"
-            schedule_response = client.garth.post("connectapi", url, json={"date": date})
+            schedule_result = client.schedule_workout(workout_id, date)
 
             curated = {
                 "status": "planned",
                 "workout_id": workout_id,
                 "workout_name": upload_result.get('workoutName'),
                 "scheduled_date": date,
+                "schedule_id": schedule_result.get('workoutScheduleId') if isinstance(schedule_result, dict) else None,
                 "message": f"Workout '{upload_result.get('workoutName')}' created and scheduled for {date}"
             }
             curated = {k: v for k, v in curated.items() if v is not None}
@@ -886,25 +886,69 @@ def register_tools(app):
             calendar_date: Date to schedule the workout in YYYY-MM-DD format
         """
         try:
-            url = f"workout-service/schedule/{workout_id}"
-            response = get_client(ctx).garth.post("connectapi", url, json={"date": calendar_date})
-
-            if response.status_code == 200:
-                return json.dumps({
-                    "status": "success",
-                    "workout_id": workout_id,
-                    "scheduled_date": calendar_date,
-                    "message": f"Successfully scheduled workout {workout_id} for {calendar_date}"
-                }, indent=2)
-            else:
-                return json.dumps({
-                    "status": "failed",
-                    "workout_id": workout_id,
-                    "scheduled_date": calendar_date,
-                    "http_status": response.status_code,
-                    "message": f"Failed to schedule workout: HTTP {response.status_code}"
-                }, indent=2)
+            result = get_client(ctx).schedule_workout(workout_id, calendar_date)
+            if isinstance(result, dict):
+                curated = {
+                    "status": "scheduled",
+                    "schedule_id": result.get('workoutScheduleId'),
+                    "workout_id": result.get('workout', {}).get('workoutId', workout_id),
+                    "workout_name": result.get('workout', {}).get('workoutName'),
+                    "scheduled_date": result.get('calendarDate', calendar_date),
+                    "message": f"Workout {workout_id} scheduled for {calendar_date}"
+                }
+                curated = {k: v for k, v in curated.items() if v is not None}
+                return json.dumps(curated, indent=2)
+            return json.dumps({"status": "scheduled", "workout_id": workout_id, "scheduled_date": calendar_date}, indent=2)
         except Exception as e:
             return f"Error scheduling workout: {str(e)}"
+
+    @app.tool()
+    async def unschedule_workout(schedule_id: int, ctx: Context) -> str:
+        """Remove a scheduled workout from the calendar.
+
+        This removes the workout from the calendar but keeps it in your workout library.
+
+        Args:
+            schedule_id: The schedule ID (from schedule_workout, plan_workout, or get_scheduled_workouts). This is NOT the workout ID.
+        """
+        try:
+            success = get_client(ctx).unschedule_workout(schedule_id)
+            if success:
+                return json.dumps({
+                    "status": "unscheduled",
+                    "schedule_id": schedule_id,
+                    "message": f"Workout schedule {schedule_id} removed from calendar"
+                }, indent=2)
+            return json.dumps({
+                "status": "failed",
+                "schedule_id": schedule_id,
+                "message": "Failed to unschedule workout"
+            }, indent=2)
+        except Exception as e:
+            return f"Error unscheduling workout: {str(e)}"
+
+    @app.tool()
+    async def reschedule_workout(schedule_id: int, new_date: str, ctx: Context) -> str:
+        """Move a scheduled workout to a different date.
+
+        Args:
+            schedule_id: The schedule ID (from schedule_workout, plan_workout, or get_scheduled_workouts). This is NOT the workout ID.
+            new_date: New date in YYYY-MM-DD format.
+        """
+        try:
+            result = get_client(ctx).reschedule_workout(schedule_id, new_date)
+            if isinstance(result, dict):
+                curated = {
+                    "status": "rescheduled",
+                    "schedule_id": schedule_id,
+                    "new_date": new_date,
+                    "workout_name": result.get('workout', {}).get('workoutName'),
+                    "message": f"Workout rescheduled to {new_date}"
+                }
+                curated = {k: v for k, v in curated.items() if v is not None}
+                return json.dumps(curated, indent=2)
+            return json.dumps({"status": "rescheduled", "schedule_id": schedule_id, "new_date": new_date}, indent=2)
+        except Exception as e:
+            return f"Error rescheduling workout: {str(e)}"
 
     return app
