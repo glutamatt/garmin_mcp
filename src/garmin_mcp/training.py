@@ -245,33 +245,25 @@ def register_tools(app):
             if not hrv_data:
                 return f"No HRV data found for {date}."
 
-            # Handle case where API returns a list instead of a dict
-            if isinstance(hrv_data, list):
-                if len(hrv_data) == 0:
-                    return f"No HRV data found for {date}."
-                hrv_data = hrv_data[0]
+            # API returns {hrvSummary: {...}, hrvReadings: [...]}
+            summary = hrv_data.get('hrvSummary') or hrv_data
+            baseline = summary.get('baseline') or {}
 
-            # Curate to essential fields only
             curated = {
-                "date": hrv_data.get('calendarDate') or date,
+                "date": summary.get('calendarDate') or date,
 
                 # Current HRV values
-                "last_night_avg_hrv_ms": hrv_data.get('lastNightAvg'),
-                "last_night_5min_high_hrv_ms": hrv_data.get('lastNight5MinHigh'),
+                "last_night_avg_hrv_ms": summary.get('lastNightAvg'),
+                "last_night_5min_high_hrv_ms": summary.get('lastNight5MinHigh'),
 
                 # Baseline and trends
-                "weekly_avg_hrv_ms": hrv_data.get('weeklyAvg'),
-                "baseline_hrv_ms": hrv_data.get('baseline'),
+                "weekly_avg_hrv_ms": summary.get('weeklyAvg'),
+                "baseline_balanced_low_ms": baseline.get('balancedLow'),
+                "baseline_balanced_upper_ms": baseline.get('balancedUpper'),
 
                 # Status and feedback
-                "status": hrv_data.get('status'),
-                "feedback": hrv_data.get('feedbackPhrase'),
-                "status_value": hrv_data.get('statusValue'),
-
-                # Historical markers
-                "last_7_days_avg_hrv_ms": hrv_data.get('lastSevenDaysAvg'),
-                "balanced_low_hrv_ms": hrv_data.get('balancedLow'),
-                "balanced_high_hrv_ms": hrv_data.get('balancedHigh'),
+                "status": summary.get('status'),
+                "feedback": summary.get('feedbackPhrase'),
             }
 
             # Remove None values
