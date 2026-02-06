@@ -33,56 +33,15 @@ def main():
 
     args = parser.parse_args()
 
-    # Import the module's main function and create the app
-    import os
-    from garminconnect import Garmin, GarminConnectAuthenticationError
-    from garth.exc import GarthHTTPError
     from fastmcp import FastMCP
     from garmin_mcp import (
         activity_management, health_wellness, user_profile, devices,
         gear_management, weight_management, challenges, training,
         workouts, data_management, womens_health, auth_tool,
-        init_api_from_env, DynamicGarminClient
     )
 
-    # Initialize garmin client (from init_api_from_env in __init__.py)
-    garmin_client = init_api_from_env()
-
-    if garmin_client:
-        print("Garmin Connect client initialized from environment.", file=sys.stderr)
-        auth_tool.set_client(garmin_client, "env_user")
-
-        # Configure modules with static client
-        activity_management.configure(garmin_client)
-        health_wellness.configure(garmin_client)
-        user_profile.configure(garmin_client)
-        devices.configure(garmin_client)
-        gear_management.configure(garmin_client)
-        weight_management.configure(garmin_client)
-        challenges.configure(garmin_client)
-        training.configure(garmin_client)
-        workouts.configure(garmin_client)
-        data_management.configure(garmin_client)
-        womens_health.configure(garmin_client)
-    else:
-        print(
-            "No pre-configured credentials. Use garmin_login tool to authenticate.",
-            file=sys.stderr,
-        )
-
-        # Configure modules with dynamic proxy client
-        dynamic_client = DynamicGarminClient()
-        activity_management.configure(dynamic_client)
-        health_wellness.configure(dynamic_client)
-        user_profile.configure(dynamic_client)
-        devices.configure(dynamic_client)
-        gear_management.configure(dynamic_client)
-        weight_management.configure(dynamic_client)
-        challenges.configure(dynamic_client)
-        training.configure(dynamic_client)
-        workouts.configure(dynamic_client)
-        data_management.configure(dynamic_client)
-        womens_health.configure(dynamic_client)
+    # All tools use per-request token loading via client_factory.get_client(ctx)
+    print("Garmin MCP: stateless mode - per-request token loading from JWT.", file=sys.stderr)
 
     # Create the MCP app
     app = FastMCP("Garmin Connect v1.0")

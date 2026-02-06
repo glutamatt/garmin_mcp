@@ -19,7 +19,6 @@ from tests.fixtures.garmin_responses import (
 @pytest.fixture
 def app_with_training(mock_garmin_client):
     """Create FastMCP app with training tools registered"""
-    training.configure(mock_garmin_client)
     app = FastMCP("Test Training")
     app = training.register_tools(app)
     return app

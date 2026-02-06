@@ -3,24 +3,18 @@ Women's health functions for Garmin Connect MCP Server
 """
 import json
 
-# The garmin_client will be set by the main file
-garmin_client = None
-
-
-def configure(client):
-    """Configure the module with the Garmin client instance"""
-    global garmin_client
-    garmin_client = client
+from mcp.server.fastmcp import Context
+from garmin_mcp.client_factory import get_client
 
 
 def register_tools(app):
     """Register all women's health tools with the MCP server app"""
-    
+
     @app.tool()
-    async def get_pregnancy_summary() -> str:
+    async def get_pregnancy_summary(ctx: Context) -> str:
         """Get pregnancy summary data"""
         try:
-            summary = garmin_client.get_pregnancy_summary()
+            summary = get_client(ctx).get_pregnancy_summary()
             if not summary:
                 return "No pregnancy summary data found."
             return json.dumps(summary, indent=2)
@@ -28,14 +22,14 @@ def register_tools(app):
             return f"Error retrieving pregnancy summary: {str(e)}"
     
     @app.tool()
-    async def get_menstrual_data_for_date(date: str) -> str:
+    async def get_menstrual_data_for_date(date: str, ctx: Context) -> str:
         """Get menstrual data for a specific date
         
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            data = garmin_client.get_menstrual_data_for_date(date)
+            data = get_client(ctx).get_menstrual_data_for_date(date)
             if not data:
                 return f"No menstrual data found for {date}."
             return json.dumps(data, indent=2)
@@ -43,7 +37,7 @@ def register_tools(app):
             return f"Error retrieving menstrual data: {str(e)}"
     
     @app.tool()
-    async def get_menstrual_calendar_data(start_date: str, end_date: str) -> str:
+    async def get_menstrual_calendar_data(start_date: str, end_date: str, ctx: Context) -> str:
         """Get menstrual calendar data between specified dates
         
         Args:
@@ -51,7 +45,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            data = garmin_client.get_menstrual_calendar_data(start_date, end_date)
+            data = get_client(ctx).get_menstrual_calendar_data(start_date, end_date)
             if not data:
                 return f"No menstrual calendar data found between {start_date} and {end_date}."
             return json.dumps(data, indent=2)

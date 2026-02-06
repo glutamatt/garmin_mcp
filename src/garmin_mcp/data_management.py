@@ -4,23 +4,18 @@ Data management functions for Garmin Connect MCP Server
 import json
 from typing import Optional
 
-# The garmin_client will be set by the main file
-garmin_client = None
-
-
-def configure(client):
-    """Configure the module with the Garmin client instance"""
-    global garmin_client
-    garmin_client = client
+from mcp.server.fastmcp import Context
+from garmin_mcp.client_factory import get_client
 
 
 def register_tools(app):
     """Register all data management tools with the MCP server app"""
-    
+
     @app.tool()
     async def add_body_composition(
         date: str,
         weight: float,
+        ctx: Context,
         percent_fat: Optional[float] = None,
         percent_hydration: Optional[float] = None,
         visceral_fat_mass: Optional[float] = None,
@@ -51,7 +46,7 @@ def register_tools(app):
             bmi: Body Mass Index
         """
         try:
-            result = garmin_client.add_body_composition(
+            result = get_client(ctx).add_body_composition(
                 date,
                 weight=weight,
                 percent_fat=percent_fat,
@@ -75,6 +70,7 @@ def register_tools(app):
         systolic: int,
         diastolic: int,
         pulse: int,
+        ctx: Context,
         notes: Optional[str] = None
     ) -> str:
         """Set blood pressure values
@@ -86,7 +82,7 @@ def register_tools(app):
             notes: Optional notes
         """
         try:
-            result = garmin_client.set_blood_pressure(
+            result = get_client(ctx).set_blood_pressure(
                 systolic, diastolic, pulse, notes=notes
             )
             return json.dumps(result, indent=2)
@@ -97,7 +93,8 @@ def register_tools(app):
     async def add_hydration_data(
         value_in_ml: int,
         cdate: str,
-        timestamp: str
+        timestamp: str,
+        ctx: Context
     ) -> str:
         """Add hydration data
         
@@ -107,7 +104,7 @@ def register_tools(app):
             timestamp: Timestamp in YYYY-MM-DDThh:mm:ss.sss format
         """
         try:
-            result = garmin_client.add_hydration_data(
+            result = get_client(ctx).add_hydration_data(
                 value_in_ml=value_in_ml,
                 cdate=cdate,
                 timestamp=timestamp

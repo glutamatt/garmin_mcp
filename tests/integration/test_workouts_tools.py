@@ -138,7 +138,6 @@ VALID_WORKOUT_WITH_REPEATS = {
 @pytest.fixture
 def app_with_workouts(mock_garmin_client):
     """Create FastMCP app with workouts tools registered"""
-    workouts.configure(mock_garmin_client)
     app = FastMCP("Test Workouts")
     app = workouts.register_tools(app)
     return app

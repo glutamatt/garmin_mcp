@@ -20,7 +20,6 @@ from tests.fixtures.garmin_responses import (
 @pytest.fixture
 def app_with_activity_management(mock_garmin_client):
     """Create FastMCP app with activity_management tools registered"""
-    activity_management.configure(mock_garmin_client)
     app = FastMCP("Test Activity Management")
     app = activity_management.register_tools(app)
     return app

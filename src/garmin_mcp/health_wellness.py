@@ -2,22 +2,15 @@
 Health & Wellness Data functions for Garmin Connect MCP Server
 """
 import json
-
-# The garmin_client will be set by the main file
-garmin_client = None
-
-
-def configure(client):
-    """Configure the module with the Garmin client instance"""
-    global garmin_client
-    garmin_client = client
+from mcp.server.fastmcp import Context
+from garmin_mcp.client_factory import get_client
 
 
 def register_tools(app):
     """Register all health and wellness tools with the MCP server app"""
 
     @app.tool()
-    async def get_stats(date: str) -> str:
+    async def get_stats(date: str, ctx: Context) -> str:
         """Get daily activity stats with curated essential metrics
 
         Returns a summary of daily health and activity data including steps,
@@ -27,7 +20,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            stats = garmin_client.get_stats(date)
+            stats = get_client(ctx).get_stats(date)
             if not stats:
                 return f"No stats found for {date}"
 
@@ -94,14 +87,14 @@ def register_tools(app):
             return f"Error retrieving stats: {str(e)}"
 
     @app.tool()
-    async def get_user_summary(date: str) -> str:
+    async def get_user_summary(date: str, ctx: Context) -> str:
         """Get user summary data (compatible with garminconnect-ha)
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            summary = garmin_client.get_user_summary(date)
+            summary = get_client(ctx).get_user_summary(date)
             if not summary:
                 return f"No user summary found for {date}"
 
@@ -110,7 +103,7 @@ def register_tools(app):
             return f"Error retrieving user summary: {str(e)}"
 
     @app.tool()
-    async def get_body_composition(start_date: str, end_date: str = None) -> str:
+    async def get_body_composition(start_date: str, ctx: Context, end_date: str = None) -> str:
         """Get body composition data for a single date or date range
 
         Args:
@@ -119,11 +112,11 @@ def register_tools(app):
         """
         try:
             if end_date:
-                composition = garmin_client.get_body_composition(start_date, end_date)
+                composition = get_client(ctx).get_body_composition(start_date, end_date)
                 if not composition:
                     return f"No body composition data found between {start_date} and {end_date}"
             else:
-                composition = garmin_client.get_body_composition(start_date)
+                composition = get_client(ctx).get_body_composition(start_date)
                 if not composition:
                     return f"No body composition data found for {start_date}"
 
@@ -132,14 +125,14 @@ def register_tools(app):
             return f"Error retrieving body composition data: {str(e)}"
 
     @app.tool()
-    async def get_stats_and_body(date: str) -> str:
+    async def get_stats_and_body(date: str, ctx: Context) -> str:
         """Get stats and body composition data
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            data = garmin_client.get_stats_and_body(date)
+            data = get_client(ctx).get_stats_and_body(date)
             if not data:
                 return f"No stats and body composition data found for {date}"
 
@@ -148,7 +141,7 @@ def register_tools(app):
             return f"Error retrieving stats and body composition data: {str(e)}"
 
     @app.tool()
-    async def get_steps_data(date: str) -> str:
+    async def get_steps_data(date: str, ctx: Context) -> str:
         """Get detailed steps data with 15-minute intervals
 
         Note: This returns full interval data (~14KB). For a compact summary,
@@ -158,7 +151,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            steps_data = garmin_client.get_steps_data(date)
+            steps_data = get_client(ctx).get_steps_data(date)
             if not steps_data:
                 return f"No steps data found for {date}"
 
@@ -167,7 +160,7 @@ def register_tools(app):
             return f"Error retrieving steps data: {str(e)}"
 
     @app.tool()
-    async def get_daily_steps(start_date: str, end_date: str) -> str:
+    async def get_daily_steps(start_date: str, end_date: str, ctx: Context) -> str:
         """Get steps data for a date range
 
         Args:
@@ -175,7 +168,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            steps_data = garmin_client.get_daily_steps(start_date, end_date)
+            steps_data = get_client(ctx).get_daily_steps(start_date, end_date)
             if not steps_data:
                 return f"No daily steps data found between {start_date} and {end_date}"
 
@@ -184,7 +177,7 @@ def register_tools(app):
             return f"Error retrieving daily steps data: {str(e)}"
 
     @app.tool()
-    async def get_training_readiness(date: str) -> str:
+    async def get_training_readiness(date: str, ctx: Context) -> str:
         """Get training readiness data with curated metrics
 
         Returns training readiness score and contributing factors.
@@ -193,7 +186,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            readiness_list = garmin_client.get_training_readiness(date)
+            readiness_list = get_client(ctx).get_training_readiness(date)
             if not readiness_list:
                 return f"No training readiness data found for {date}"
 
@@ -242,7 +235,7 @@ def register_tools(app):
             return f"Error retrieving training readiness data: {str(e)}"
 
     @app.tool()
-    async def get_body_battery(start_date: str, end_date: str) -> str:
+    async def get_body_battery(start_date: str, end_date: str, ctx: Context) -> str:
         """Get body battery data with events
 
         Args:
@@ -250,7 +243,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            battery_data = garmin_client.get_body_battery(start_date, end_date)
+            battery_data = get_client(ctx).get_body_battery(start_date, end_date)
             if not battery_data:
                 return f"No body battery data found between {start_date} and {end_date}"
 
@@ -288,14 +281,14 @@ def register_tools(app):
             return f"Error retrieving body battery data: {str(e)}"
 
     @app.tool()
-    async def get_body_battery_events(date: str) -> str:
+    async def get_body_battery_events(date: str, ctx: Context) -> str:
         """Get body battery events data
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            events = garmin_client.get_body_battery_events(date)
+            events = get_client(ctx).get_body_battery_events(date)
             if not events:
                 return f"No body battery events found for {date}"
 
@@ -304,7 +297,7 @@ def register_tools(app):
             return f"Error retrieving body battery events: {str(e)}"
 
     @app.tool()
-    async def get_blood_pressure(start_date: str, end_date: str) -> str:
+    async def get_blood_pressure(start_date: str, end_date: str, ctx: Context) -> str:
         """Get blood pressure data
 
         Args:
@@ -312,7 +305,7 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            bp_data = garmin_client.get_blood_pressure(start_date, end_date)
+            bp_data = get_client(ctx).get_blood_pressure(start_date, end_date)
             if not bp_data:
                 return f"No blood pressure data found between {start_date} and {end_date}"
 
@@ -321,14 +314,14 @@ def register_tools(app):
             return f"Error retrieving blood pressure data: {str(e)}"
 
     @app.tool()
-    async def get_floors(date: str) -> str:
+    async def get_floors(date: str, ctx: Context) -> str:
         """Get floors climbed data
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            floors_data = garmin_client.get_floors(date)
+            floors_data = get_client(ctx).get_floors(date)
             if not floors_data:
                 return f"No floors data found for {date}"
 
@@ -337,14 +330,14 @@ def register_tools(app):
             return f"Error retrieving floors data: {str(e)}"
 
     @app.tool()
-    async def get_rhr_day(date: str) -> str:
+    async def get_rhr_day(date: str, ctx: Context) -> str:
         """Get resting heart rate data
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            rhr_data = garmin_client.get_rhr_day(date)
+            rhr_data = get_client(ctx).get_rhr_day(date)
             if not rhr_data:
                 return f"No resting heart rate data found for {date}"
 
@@ -353,7 +346,7 @@ def register_tools(app):
             return f"Error retrieving resting heart rate data: {str(e)}"
 
     @app.tool()
-    async def get_heart_rates(date: str) -> str:
+    async def get_heart_rates(date: str, ctx: Context) -> str:
         """Get full heart rate time-series data
 
         Note: This returns detailed 2-minute interval data (~25KB).
@@ -363,7 +356,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            hr_data = garmin_client.get_heart_rates(date)
+            hr_data = get_client(ctx).get_heart_rates(date)
             if not hr_data:
                 return f"No heart rate data found for {date}"
 
@@ -372,7 +365,7 @@ def register_tools(app):
             return f"Error retrieving heart rate data: {str(e)}"
 
     @app.tool()
-    async def get_heart_rates_summary(date: str) -> str:
+    async def get_heart_rates_summary(date: str, ctx: Context) -> str:
         """Get heart rate summary with essential metrics (lightweight version)
 
         Returns a compact summary (~500 bytes) instead of full time-series data (~25KB).
@@ -382,7 +375,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            hr_data = garmin_client.get_heart_rates(date)
+            hr_data = get_client(ctx).get_heart_rates(date)
             if not hr_data:
                 return f"No heart rate data found for {date}"
 
@@ -410,14 +403,14 @@ def register_tools(app):
             return f"Error retrieving heart rate summary: {str(e)}"
 
     @app.tool()
-    async def get_hydration_data(date: str) -> str:
+    async def get_hydration_data(date: str, ctx: Context) -> str:
         """Get hydration data
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            hydration_data = garmin_client.get_hydration_data(date)
+            hydration_data = get_client(ctx).get_hydration_data(date)
             if not hydration_data:
                 return f"No hydration data found for {date}"
 
@@ -426,7 +419,7 @@ def register_tools(app):
             return f"Error retrieving hydration data: {str(e)}"
 
     @app.tool()
-    async def get_sleep_data(date: str) -> str:
+    async def get_sleep_data(date: str, ctx: Context) -> str:
         """Get full sleep data with all details
 
         Note: This returns detailed sleep data (~50KB).
@@ -436,7 +429,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            sleep_data = garmin_client.get_sleep_data(date)
+            sleep_data = get_client(ctx).get_sleep_data(date)
             if not sleep_data:
                 return f"No sleep data found for {date}"
 
@@ -445,7 +438,7 @@ def register_tools(app):
             return f"Error retrieving sleep data: {str(e)}"
 
     @app.tool()
-    async def get_sleep_summary(date: str) -> str:
+    async def get_sleep_summary(date: str, ctx: Context) -> str:
         """Get sleep summary with only essential metrics (lightweight version)
 
         This endpoint returns a compact summary of sleep data (~350 bytes) instead of
@@ -456,7 +449,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            sleep_data = garmin_client.get_sleep_data(date)
+            sleep_data = get_client(ctx).get_sleep_data(date)
             if not sleep_data:
                 return f"No sleep summary found for {date}"
 
@@ -519,7 +512,7 @@ def register_tools(app):
             return f"Error retrieving sleep summary: {str(e)}"
 
     @app.tool()
-    async def get_stress_data(date: str) -> str:
+    async def get_stress_data(date: str, ctx: Context) -> str:
         """Get full stress time-series data
 
         Note: This returns detailed interval data (~35KB) including body battery.
@@ -529,7 +522,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            stress_data = garmin_client.get_stress_data(date)
+            stress_data = get_client(ctx).get_stress_data(date)
             if not stress_data:
                 return f"No stress data found for {date}"
 
@@ -538,7 +531,7 @@ def register_tools(app):
             return f"Error retrieving stress data: {str(e)}"
 
     @app.tool()
-    async def get_stress_summary(date: str) -> str:
+    async def get_stress_summary(date: str, ctx: Context) -> str:
         """Get stress summary with essential metrics (lightweight version)
 
         Returns a compact summary (~400 bytes) instead of full time-series data (~35KB).
@@ -548,7 +541,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            stress_data = garmin_client.get_stress_data(date)
+            stress_data = get_client(ctx).get_stress_data(date)
             if not stress_data:
                 return f"No stress data found for {date}"
 
@@ -583,7 +576,7 @@ def register_tools(app):
             return f"Error retrieving stress summary: {str(e)}"
 
     @app.tool()
-    async def get_respiration_data(date: str) -> str:
+    async def get_respiration_data(date: str, ctx: Context) -> str:
         """Get full respiration time-series data
 
         Note: This returns detailed interval data (~20KB).
@@ -593,7 +586,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            respiration_data = garmin_client.get_respiration_data(date)
+            respiration_data = get_client(ctx).get_respiration_data(date)
             if not respiration_data:
                 return f"No respiration data found for {date}"
 
@@ -602,7 +595,7 @@ def register_tools(app):
             return f"Error retrieving respiration data: {str(e)}"
 
     @app.tool()
-    async def get_respiration_summary(date: str) -> str:
+    async def get_respiration_summary(date: str, ctx: Context) -> str:
         """Get respiration summary with essential metrics (lightweight version)
 
         Returns a compact summary (~300 bytes) instead of full time-series data (~20KB).
@@ -611,7 +604,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            resp_data = garmin_client.get_respiration_data(date)
+            resp_data = get_client(ctx).get_respiration_data(date)
             if not resp_data:
                 return f"No respiration data found for {date}"
 
@@ -631,14 +624,14 @@ def register_tools(app):
             return f"Error retrieving respiration summary: {str(e)}"
 
     @app.tool()
-    async def get_spo2_data(date: str) -> str:
+    async def get_spo2_data(date: str, ctx: Context) -> str:
         """Get SpO2 (blood oxygen) data
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            spo2_data = garmin_client.get_spo2_data(date)
+            spo2_data = get_client(ctx).get_spo2_data(date)
             if not spo2_data:
                 return f"No SpO2 data found for {date}"
 
@@ -666,14 +659,14 @@ def register_tools(app):
             return f"Error retrieving SpO2 data: {str(e)}"
 
     @app.tool()
-    async def get_all_day_stress(date: str) -> str:
+    async def get_all_day_stress(date: str, ctx: Context) -> str:
         """Get all-day stress data
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            stress_data = garmin_client.get_all_day_stress(date)
+            stress_data = get_client(ctx).get_all_day_stress(date)
             if not stress_data:
                 return f"No all-day stress data found for {date}"
 
@@ -682,14 +675,14 @@ def register_tools(app):
             return f"Error retrieving all-day stress data: {str(e)}"
 
     @app.tool()
-    async def get_all_day_events(date: str) -> str:
+    async def get_all_day_events(date: str, ctx: Context) -> str:
         """Get daily wellness events data
 
         Args:
             date: Date in YYYY-MM-DD format
         """
         try:
-            events = garmin_client.get_all_day_events(date)
+            events = get_client(ctx).get_all_day_events(date)
             if not events:
                 return f"No daily wellness events found for {date}"
 
@@ -698,7 +691,7 @@ def register_tools(app):
             return f"Error retrieving daily wellness events: {str(e)}"
 
     @app.tool()
-    async def get_weekly_steps(date: str) -> str:
+    async def get_weekly_steps(date: str, ctx: Context) -> str:
         """Get weekly step data aggregates
 
         Returns weekly step totals and daily breakdown for the week containing
@@ -708,7 +701,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format (any day in the week you want to query)
         """
         try:
-            weekly_data = garmin_client.get_weekly_steps(date)
+            weekly_data = get_client(ctx).get_weekly_steps(date)
             if not weekly_data:
                 return f"No weekly steps data found for week containing {date}"
 
@@ -741,7 +734,7 @@ def register_tools(app):
             return f"Error retrieving weekly steps data: {str(e)}"
 
     @app.tool()
-    async def get_weekly_stress(date: str) -> str:
+    async def get_weekly_stress(date: str, ctx: Context) -> str:
         """Get weekly stress data trends
 
         Returns weekly stress averages and daily breakdown for the week containing
@@ -751,7 +744,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format (any day in the week you want to query)
         """
         try:
-            weekly_data = garmin_client.get_weekly_stress(date)
+            weekly_data = get_client(ctx).get_weekly_stress(date)
             if not weekly_data:
                 return f"No weekly stress data found for week containing {date}"
 
@@ -794,7 +787,7 @@ def register_tools(app):
             return f"Error retrieving weekly stress data: {str(e)}"
 
     @app.tool()
-    async def get_weekly_intensity_minutes(date: str) -> str:
+    async def get_weekly_intensity_minutes(date: str, ctx: Context) -> str:
         """Get weekly intensity minutes data
 
         Returns weekly totals of moderate and vigorous intensity minutes for the
@@ -804,7 +797,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format (any day in the week you want to query)
         """
         try:
-            weekly_data = garmin_client.get_weekly_intensity_minutes(date)
+            weekly_data = get_client(ctx).get_weekly_intensity_minutes(date)
             if not weekly_data:
                 return f"No weekly intensity minutes data found for week containing {date}"
 
@@ -844,7 +837,7 @@ def register_tools(app):
             return f"Error retrieving weekly intensity minutes data: {str(e)}"
 
     @app.tool()
-    async def get_morning_training_readiness(date: str) -> str:
+    async def get_morning_training_readiness(date: str, ctx: Context) -> str:
         """Get morning training readiness score
 
         Returns the morning training readiness assessment, which evaluates
@@ -854,7 +847,7 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            readiness = garmin_client.get_morning_training_readiness(date)
+            readiness = get_client(ctx).get_morning_training_readiness(date)
             if not readiness:
                 return f"No morning training readiness data found for {date}"
 

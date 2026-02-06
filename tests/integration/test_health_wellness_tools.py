@@ -36,7 +36,6 @@ from tests.fixtures.garmin_responses import (
 @pytest.fixture
 def app_with_health_wellness(mock_garmin_client):
     """Create FastMCP app with health_wellness tools registered"""
-    health_wellness.configure(mock_garmin_client)
     app = FastMCP("Test Health Wellness")
     app = health_wellness.register_tools(app)
     return app

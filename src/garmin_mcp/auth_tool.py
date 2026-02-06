@@ -4,25 +4,11 @@ Allows login via MCP tool call instead of environment variables.
 Stateless: tokens are returned in response for JWT storage, not persisted to disk.
 """
 
+from mcp.server.fastmcp import Context
 from garminconnect import Garmin, GarminConnectAuthenticationError
 from garth.exc import GarthHTTPError
 
-
-# Global state for the authenticated client
-_garmin_client = None
-_current_user_id = None
-
-
-def get_client():
-    """Get the current authenticated Garmin client."""
-    return _garmin_client
-
-
-def set_client(client, user_id: str):
-    """Set the authenticated Garmin client."""
-    global _garmin_client, _current_user_id
-    _garmin_client = client
-    _current_user_id = user_id
+from garmin_mcp.client_factory import set_session_tokens
 
 
 def login(email: str, password: str, user_id: str = None) -> dict:
@@ -37,8 +23,6 @@ def login(email: str, password: str, user_id: str = None) -> dict:
     Returns:
         dict with success status and user info or error
     """
-    global _garmin_client, _current_user_id
-
     user_id = user_id or email.replace("@", "_at_").replace(".", "_")
 
     try:
@@ -48,9 +32,6 @@ def login(email: str, password: str, user_id: str = None) -> dict:
         # Get user info
         full_name = client.get_full_name()
         display_name = client.display_name
-
-        _garmin_client = client
-        _current_user_id = user_id
 
         return {
             "success": True,
@@ -155,45 +136,39 @@ def login(email: str, password: str, user_id: str = None) -> dict:
         }
 
 
-def logout() -> dict:
-    """Clear the current session."""
-    global _garmin_client, _current_user_id
-
-    _garmin_client = None
-    _current_user_id = None
-
-    return {
-        "success": True,
-        "message": "Logged out",
-    }
-
-
 def register_tools(app):
     """Register authentication tools with the MCP app."""
 
     @app.tool()
-    def garmin_login(email: str, password: str, user_id: str = None) -> dict:
+    def garmin_login(email: str, password: str, ctx: Context = None, user_id: str = None) -> dict:
         """
         Login to Garmin Connect. Validates credentials and returns tokens.
 
         Args:
             email: Your Garmin Connect email address
             password: Your Garmin Connect password
+            ctx: FastMCP Context (automatically injected)
             user_id: Optional custom user ID (defaults to email-based ID)
 
         Returns:
             Login result with user info or error message
         """
-        return login(email, password, user_id)
+        result = login(email, password, user_id)
+        if result.get("success") and ctx and result.get("tokens"):
+            set_session_tokens(ctx, result["tokens"])
+        return result
 
     @app.tool()
-    def garmin_logout() -> dict:
+    def garmin_logout(ctx: Context = None) -> dict:
         """
         Logout from the current Garmin session.
 
         Returns:
             Logout confirmation
         """
-        return logout()
+        return {
+            "success": True,
+            "message": "Logged out",
+        }
 
     return app

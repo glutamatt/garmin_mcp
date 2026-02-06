@@ -2,7 +2,7 @@
 Shared pytest fixtures for Garmin MCP testing
 """
 import pytest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from datetime import datetime, timedelta
 from mcp.server.fastmcp import FastMCP
 
@@ -160,29 +160,57 @@ def sample_training_status():
     }
 
 
-def create_test_app(module, mock_client):
+@pytest.fixture(autouse=True)
+def mock_get_client(mock_garmin_client):
+    """Auto-mock client_factory.get_client to return the mock Garmin client.
+
+    This patches get_client at the module level in every tool module so that
+    tool functions receive the mock client instead of trying to extract
+    tokens from the (non-existent in tests) request context.
+    """
+    modules_to_patch = [
+        "garmin_mcp.activity_management",
+        "garmin_mcp.health_wellness",
+        "garmin_mcp.user_profile",
+        "garmin_mcp.devices",
+        "garmin_mcp.gear_management",
+        "garmin_mcp.weight_management",
+        "garmin_mcp.challenges",
+        "garmin_mcp.training",
+        "garmin_mcp.workouts",
+        "garmin_mcp.data_management",
+        "garmin_mcp.womens_health",
+    ]
+
+    patchers = []
+    for module in modules_to_patch:
+        p = patch(f"{module}.get_client", return_value=mock_garmin_client)
+        p.start()
+        patchers.append(p)
+
+    yield mock_garmin_client
+
+    for p in patchers:
+        p.stop()
+
+
+def create_test_app(module):
     """
     Helper function to create a FastMCP app with a specific module registered
 
     Args:
         module: The module to register (e.g., health_wellness)
-        mock_client: Mock Garmin client to configure the module with
 
     Returns:
         FastMCP app instance with tools registered
     """
-    # Configure the module with mock client
-    module.configure(mock_client)
-
-    # Create app and register tools
     app = FastMCP("Test Garmin MCP")
     app = module.register_tools(app)
-
     return app
 
 
 @pytest.fixture
-def app_factory(mock_garmin_client):
+def app_factory():
     """
     Factory fixture to create FastMCP apps with different modules
 
@@ -190,6 +218,6 @@ def app_factory(mock_garmin_client):
         app = app_factory(health_wellness)
     """
     def _create_app(module):
-        return create_test_app(module, mock_garmin_client)
+        return create_test_app(module)
 
     return _create_app
