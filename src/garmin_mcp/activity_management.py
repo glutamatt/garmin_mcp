@@ -54,10 +54,18 @@ def register_tools(app):
 
     @app.tool()
     async def get_activities_fordate(date: str, ctx: Context) -> str:
-        """Get activities for a specific date
+        """Get activities for a specific date with intensity minutes breakdown.
+
+        Similar to get_activities_by_date but returns additional fields like lap_count,
+        moderate/vigorous intensity minutes. Use this when you need a single day's activities
+        with intensity data.
 
         Args:
             date: Date in YYYY-MM-DD format
+
+        Returns:
+            JSON with activity list including distance (meters), duration (seconds),
+            heart rate (bpm), lap count, and intensity minutes.
         """
         try:
             data = get_client(ctx).get_activities_fordate(date)
@@ -102,10 +110,16 @@ def register_tools(app):
 
     @app.tool()
     async def get_activity(activity_id: int, ctx: Context) -> str:
-        """Get basic activity information
+        """Get detailed activity information including timing, distance, heart rate, cadence, power, training effect, and recovery metrics.
+
+        Use get_activities_by_date or get_activities to find activity IDs first.
 
         Args:
-            activity_id: ID of the activity to retrieve
+            activity_id: Numeric activity ID (from get_activities_by_date or get_activities)
+
+        Returns:
+            JSON with distance (meters), duration (seconds), speed (m/s), heart rate (bpm),
+            cadence (steps/min), power (watts), training effect (0-5 scale), and more.
         """
         try:
             activity = get_client(ctx).get_activity(activity_id)
@@ -299,10 +313,13 @@ def register_tools(app):
 
     @app.tool()
     async def get_activity_hr_in_timezones(activity_id: int, ctx: Context) -> str:
-        """Get heart rate data in different time zones for an activity
+        """Get time spent in each heart rate zone during an activity.
+
+        Returns duration spent in each HR zone (zone 1 through zone 5),
+        useful for analyzing training intensity distribution.
 
         Args:
-            activity_id: ID of the activity to retrieve heart rate time zone data for
+            activity_id: Numeric activity ID
         """
         try:
             hr_zones = get_client(ctx).get_activity_hr_in_timezones(activity_id)

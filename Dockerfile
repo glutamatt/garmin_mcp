@@ -21,9 +21,6 @@ COPY pyproject.toml README.md ./
 # Copy the application source code (needed for editable install)
 COPY src/ ./src/
 
-# Install git (needed for garminconnect fork from GitHub)
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-
 # Install dependencies using uv
 RUN uv pip install .
 

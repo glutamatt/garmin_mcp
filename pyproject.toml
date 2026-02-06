@@ -13,7 +13,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "python-dotenv>=1.1.0",
-    "garminconnect @ git+https://github.com/glutamatt/python-garminconnect.git@feature/add-coaching-endpoints",
+    "garminconnect @ https://github.com/glutamatt/python-garminconnect/archive/refs/heads/feature/add-coaching-endpoints.tar.gz",
     "requests==2.32.3",
     "fastmcp>=2.3.0",
     "garth>=0.5.17,<0.6.0",
