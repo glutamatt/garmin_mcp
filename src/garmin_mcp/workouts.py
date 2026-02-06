@@ -7,7 +7,7 @@ import datetime
 from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
-from mcp.server.fastmcp import Context
+from fastmcp import Context
 from garmin_mcp.client_factory import get_client
 
 

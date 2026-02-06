@@ -18,7 +18,7 @@ Session Management:
 """
 
 from garminconnect import Garmin
-from mcp.server.fastmcp import Context
+from fastmcp import Context
 
 GARMIN_TOKENS_KEY = "garmin_tokens"
 

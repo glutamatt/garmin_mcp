@@ -6,6 +6,13 @@ from unittest.mock import Mock, patch
 from datetime import datetime, timedelta
 from mcp.server.fastmcp import FastMCP
 
+# Tests use mcp.server.fastmcp.FastMCP (has call_tool) but production uses
+# fastmcp.FastMCP (has HTTP transport). Patch fastmcp.Context to match
+# mcp.server.fastmcp.Context so tools work with the test FastMCP.
+import fastmcp
+import mcp.server.fastmcp.server as mcp_server
+fastmcp.Context = mcp_server.Context
+
 
 @pytest.fixture
 def mock_garmin_client():

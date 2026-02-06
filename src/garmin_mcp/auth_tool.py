@@ -4,7 +4,7 @@ Allows login via MCP tool call instead of environment variables.
 Stateless: tokens are returned in response for JWT storage, not persisted to disk.
 """
 
-from mcp.server.fastmcp import Context
+from fastmcp import Context
 from garminconnect import Garmin, GarminConnectAuthenticationError
 from garth.exc import GarthHTTPError
 

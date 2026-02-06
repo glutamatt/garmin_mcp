@@ -3,7 +3,7 @@ Training and performance functions for Garmin Connect MCP Server
 """
 import json
 
-from mcp.server.fastmcp import Context
+from fastmcp import Context
 from garmin_mcp.client_factory import get_client
 
 
