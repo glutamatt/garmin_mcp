@@ -81,9 +81,12 @@ def login(email: str, password: str, user_id: str = None) -> dict:
         client = Garmin(email=email, password=password, is_cn=False)
         client.login()
 
-        # Save tokens
-        token_dir.mkdir(parents=True, exist_ok=True)
-        client.garth.dump(str(token_dir))
+        # Save tokens to disk (optional cache - tokens are also returned in response)
+        try:
+            token_dir.mkdir(parents=True, exist_ok=True)
+            client.garth.dump(str(token_dir))
+        except OSError:
+            pass  # Non-fatal: tokens are returned via response for stateless JWT storage
 
         # Get user info
         full_name = client.get_full_name()
