@@ -566,10 +566,11 @@ def register_tools(app):
 
     @app.tool()
     async def get_workouts(ctx: Context) -> str:
-        """Get all workouts with curated summary list
+        """Get all workouts from the user's Garmin Connect workout library.
 
         Returns a count and list of workout summaries with essential metadata only.
-        For detailed workout information including segments, use get_workout_by_id.
+        Each workout includes a workout_id (used for schedule_workout, update_workout, delete_workout).
+        For detailed workout structure including steps/segments, use get_workout_by_id.
         """
         try:
             workouts = get_client(ctx).get_workouts()
@@ -635,12 +636,21 @@ def register_tools(app):
 
     @app.tool()
     async def upload_workout(workout_data: dict, ctx: Context) -> str:
-        """Create a new workout in the Garmin Connect library.
+        """Create a new workout in the Garmin Connect library (does NOT schedule it).
 
-        Accepts both simplified format (sport, steps) and full Garmin format (sportType, workoutSegments).
+        To also schedule it on a date, use plan_workout instead, or call schedule_workout after.
+
+        Accepts simplified format: {workoutName, sport: "running", steps: [{stepOrder: 1, stepType: "warmup", endCondition: "time", endConditionValue: 600}, {stepOrder: 2, stepType: "interval", endCondition: "distance", endConditionValue: 1000, targetType: "pace.zone", targetValueOne: 4.0, targetValueTwo: 3.5}, ...]}
+
+        Step types: warmup, cooldown, interval, recovery, rest, repeat, other.
+        End conditions: time (seconds), distance (meters), lap.button.
+        Target types: no.target, heart.rate.zone (zoneNumber 1-5), pace.zone (targetValueOne=faster m/s, targetValueTwo=slower m/s), power.zone (zoneNumber 1-7).
 
         Args:
-            workout_data: Workout structure. Simplified example: {workoutName, sport: "running", steps: [{stepOrder, stepType: "warmup", endCondition: "time", endConditionValue: 600}, ...]}. Full format also accepted with sportType, workoutSegments, etc.
+            workout_data: Workout structure (simplified or full Garmin format).
+
+        Returns:
+            JSON with workout_id (needed for schedule_workout, update_workout, delete_workout).
         """
         try:
             preprocessed = _preprocess_workout_input(workout_data)
@@ -667,13 +677,18 @@ def register_tools(app):
 
     @app.tool()
     async def plan_workout(workout_data: dict, date: str, ctx: Context) -> str:
-        """Create and schedule a workout in one step.
+        """Create a new workout AND schedule it on a specific date in one step.
 
-        Accepts both simplified format (sport, steps) and full Garmin format (sportType, workoutSegments).
+        Combines upload_workout + schedule_workout. Use this when you want to both
+        create and schedule in one call. See upload_workout for workout_data format.
 
         Args:
-            workout_data: Workout structure. Simplified example: {workoutName, sport: "running", steps: [{stepOrder, stepType: "interval", endCondition: "time", endConditionValue: 1200}, ...]}
+            workout_data: Workout structure (simplified or full Garmin format). See upload_workout for format details.
             date: Schedule date in YYYY-MM-DD format.
+
+        Returns:
+            JSON with workout_id and schedule_id. The schedule_id is needed for
+            unschedule_workout or reschedule_workout (not the workout_id).
         """
         try:
             client = get_client(ctx)
@@ -708,11 +723,14 @@ def register_tools(app):
 
     @app.tool()
     async def update_workout(workout_id: int, workout_data: dict, ctx: Context) -> str:
-        """Update an existing workout in the library.
+        """Replace an existing workout's definition in the library.
+
+        This is a full replacement, not a partial update -- you must provide the
+        complete workout structure including all steps. See upload_workout for format details.
 
         Args:
             workout_id: ID of the workout to update (from get_workouts).
-            workout_data: Workout structure (simplified or full Garmin format).
+            workout_data: Complete workout structure (simplified or full Garmin format).
         """
         try:
             client = get_client(ctx)
@@ -753,10 +771,13 @@ def register_tools(app):
 
     @app.tool()
     async def delete_workout(workout_id: int, ctx: Context) -> str:
-        """Delete a workout from the library.
+        """Delete a workout from the library and any scheduled instances of it.
+
+        This permanently removes the workout. Any calendar entries using this workout
+        will also be removed. This action cannot be undone.
 
         Args:
-            workout_id: ID of the workout to delete (from get_workouts).
+            workout_id: ID of the workout to delete (from get_workouts). This is NOT a schedule_id.
         """
         try:
             success = get_client(ctx).delete_workout(workout_id)
@@ -777,10 +798,12 @@ def register_tools(app):
 
     @app.tool()
     async def get_scheduled_workouts(start_date: str, end_date: str, ctx: Context) -> str:
-        """Get scheduled workouts between two dates with curated summary list
+        """Get workouts scheduled on the Garmin Connect calendar between two dates.
 
-        Returns workouts that have been scheduled on the Garmin Connect calendar,
-        including their scheduled dates and completion status.
+        Returns scheduled workouts with their dates, completion status, and importantly
+        the workout_id for each entry. To unschedule or reschedule, you need the
+        schedule_id (returned by schedule_workout or plan_workout), not the workout_id
+        returned here. Use this primarily to see what's on the calendar.
 
         Args:
             start_date: Start date in YYYY-MM-DD format
@@ -876,14 +899,19 @@ def register_tools(app):
 
     @app.tool()
     async def schedule_workout(workout_id: int, calendar_date: str, ctx: Context) -> str:
-        """Schedule a workout to a specific calendar date
+        """Schedule an existing workout from the library onto a specific calendar date.
 
-        This adds an existing workout from your Garmin workout library
-        to your Garmin Connect calendar on the specified date.
+        The workout must already exist in the library (created via upload_workout or plan_workout).
+        The same workout can be scheduled on multiple dates.
 
         Args:
-            workout_id: ID of the workout to schedule (get IDs from get_workouts)
+            workout_id: ID of the workout to schedule (from get_workouts or upload_workout)
             calendar_date: Date to schedule the workout in YYYY-MM-DD format
+
+        Returns:
+            JSON with schedule_id (needed for unschedule_workout or reschedule_workout).
+            Important: schedule_id != workout_id. The schedule_id identifies this specific
+            calendar entry, while workout_id identifies the workout definition.
         """
         try:
             result = get_client(ctx).schedule_workout(workout_id, calendar_date)

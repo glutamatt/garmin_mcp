@@ -11,7 +11,10 @@ def register_tools(app):
 
     @app.tool()
     async def get_weigh_ins(start_date: str, end_date: str, ctx: Context) -> str:
-        """Get weight measurements between specified dates
+        """Get weight measurements between specified dates.
+
+        Returns weight in grams, BMI, body fat %, body water %, bone mass (grams),
+        and muscle mass (grams) for each measurement.
 
         Args:
             start_date: Start date in YYYY-MM-DD format
@@ -108,11 +111,11 @@ def register_tools(app):
 
     @app.tool()
     async def add_weigh_in(weight: float, ctx: Context, unit_key: str = "kg") -> str:
-        """Add a new weight measurement
+        """Add a new weight measurement with the current timestamp.
 
         Args:
-            weight: Weight value
-            unit_key: Unit of weight ('kg' or 'lb')
+            weight: Weight value in the specified unit (e.g. 75.5 for kg, 166.4 for lb)
+            unit_key: Unit of weight: 'kg' (default) or 'lb'
         """
         try:
             result = get_client(ctx).add_weigh_in(weight=weight, unitKey=unit_key)

@@ -28,22 +28,22 @@ def register_tools(app):
         visceral_fat_rating: Optional[int] = None,
         bmi: Optional[float] = None
     ) -> str:
-        """Add body composition data
-        
+        """Add body composition data for a specific date.
+
         Args:
             date: Date in YYYY-MM-DD format
-            weight: Weight in kg
-            percent_fat: Body fat percentage
-            percent_hydration: Hydration percentage
-            visceral_fat_mass: Visceral fat mass
-            bone_mass: Bone mass
-            muscle_mass: Muscle mass
-            basal_met: Basal metabolic rate
-            active_met: Active metabolic rate
-            physique_rating: Physique rating
-            metabolic_age: Metabolic age
-            visceral_fat_rating: Visceral fat rating
-            bmi: Body Mass Index
+            weight: Weight in kg (e.g. 75.5)
+            percent_fat: Body fat percentage (e.g. 18.5)
+            percent_hydration: Hydration percentage (e.g. 55.0)
+            visceral_fat_mass: Visceral fat mass in grams
+            bone_mass: Bone mass in grams
+            muscle_mass: Muscle mass in grams
+            basal_met: Basal metabolic rate in kcal
+            active_met: Active metabolic rate in kcal
+            physique_rating: Physique rating (1-9 scale)
+            metabolic_age: Metabolic age in years
+            visceral_fat_rating: Visceral fat rating (1-59 scale)
+            bmi: Body Mass Index (e.g. 24.5)
         """
         try:
             result = get_client(ctx).add_body_composition(
@@ -73,13 +73,13 @@ def register_tools(app):
         ctx: Context,
         notes: Optional[str] = None
     ) -> str:
-        """Set blood pressure values
-        
+        """Record a blood pressure measurement.
+
         Args:
-            systolic: Systolic pressure (top number)
-            diastolic: Diastolic pressure (bottom number)
-            pulse: Pulse rate
-            notes: Optional notes
+            systolic: Systolic pressure in mmHg (top number, e.g. 120)
+            diastolic: Diastolic pressure in mmHg (bottom number, e.g. 80)
+            pulse: Pulse rate in bpm (e.g. 72)
+            notes: Optional text notes about the measurement
         """
         try:
             result = get_client(ctx).set_blood_pressure(

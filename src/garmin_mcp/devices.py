@@ -86,10 +86,10 @@ def register_tools(app):
 
     @app.tool()
     async def get_device_settings(device_id: Union[int, str], ctx: Context) -> str:
-        """Get settings for a specific Garmin device
+        """Get settings for a specific Garmin device including timezone, heart rate monitor, activity tracking, and notification preferences.
 
         Args:
-            device_id: Device ID
+            device_id: Device ID (obtain from get_devices or get_device_last_used)
         """
         try:
             device_id = str(device_id)

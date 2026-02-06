@@ -88,7 +88,10 @@ def register_tools(app):
 
     @app.tool()
     async def get_user_summary(date: str, ctx: Context) -> str:
-        """Get user summary data (compatible with garminconnect-ha)
+        """Get raw daily user summary including steps, calories, distance, heart rate, stress, and intensity minutes.
+
+        Returns the full unprocessed Garmin response. For a curated version with
+        cleaner field names, use get_stats() instead.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -126,7 +129,10 @@ def register_tools(app):
 
     @app.tool()
     async def get_stats_and_body(date: str, ctx: Context) -> str:
-        """Get stats and body composition data
+        """Get combined daily activity stats and body composition data in a single call.
+
+        Returns the same data as calling get_stats() and get_body_composition() separately.
+        Returns raw unprocessed Garmin response.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -236,7 +242,10 @@ def register_tools(app):
 
     @app.tool()
     async def get_body_battery(start_date: str, end_date: str, ctx: Context) -> str:
-        """Get body battery data with events
+        """Get body battery data with charge/drain breakdown and activity events.
+
+        Returns daily body battery levels (0-100) with events showing what activities
+        charged or drained the battery (sleep, exercise, stress, etc.) and their impact.
 
         Args:
             start_date: Start date in YYYY-MM-DD format
@@ -282,7 +291,10 @@ def register_tools(app):
 
     @app.tool()
     async def get_body_battery_events(date: str, ctx: Context) -> str:
-        """Get body battery events data
+        """Get raw body battery events for a single date.
+
+        Returns the unprocessed event data. For a curated version with charge/drain
+        breakdown, use get_body_battery() with a date range instead.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -660,7 +672,10 @@ def register_tools(app):
 
     @app.tool()
     async def get_all_day_stress(date: str, ctx: Context) -> str:
-        """Get all-day stress data
+        """Get raw all-day stress data including stress duration breakdowns.
+
+        Returns unprocessed Garmin response with rest/low/medium/high stress durations.
+        For a curated summary, use get_stress_summary() instead.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -676,7 +691,10 @@ def register_tools(app):
 
     @app.tool()
     async def get_all_day_events(date: str, ctx: Context) -> str:
-        """Get daily wellness events data
+        """Get daily wellness events including activity sessions, sleep periods, and stress events.
+
+        Returns timestamped events that occurred throughout the day, useful for
+        understanding the day's activity timeline.
 
         Args:
             date: Date in YYYY-MM-DD format

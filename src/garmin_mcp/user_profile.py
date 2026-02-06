@@ -11,7 +11,10 @@ def register_tools(app):
     
     @app.tool()
     async def get_full_name(ctx: Context) -> str:
-        """Get user's full name from profile"""
+        """Get user's full display name from their Garmin profile.
+
+        Returns the name as a plain string (e.g. "Jean Dupont"), not JSON.
+        """
         try:
             full_name = get_client(ctx).get_full_name()
             if isinstance(full_name, (dict, list)):
@@ -33,7 +36,7 @@ def register_tools(app):
     
     @app.tool()
     async def get_user_profile(ctx: Context) -> str:
-        """Get user profile information"""
+        """Get user profile including display name, profile image URL, and location."""
         try:
             profile = get_client(ctx).get_user_profile()
             if not profile:
@@ -44,7 +47,7 @@ def register_tools(app):
 
     @app.tool()
     async def get_userprofile_settings(ctx: Context) -> str:
-        """Get user profile settings"""
+        """Get user profile settings including preferred units, date format, heart rate zones, power zones, and activity preferences."""
         try:
             settings = get_client(ctx).get_userprofile_settings()
             if not settings:

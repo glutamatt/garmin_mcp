@@ -204,10 +204,13 @@ def register_tools(app):
 
     @app.tool()
     async def get_activity_splits(activity_id: int, ctx: Context) -> str:
-        """Get splits for an activity
+        """Get per-lap splits for an activity.
+
+        Returns data for each lap including distance (meters), duration (seconds),
+        pace (m/s), heart rate (bpm), cadence, and power (watts).
 
         Args:
-            activity_id: ID of the activity to retrieve splits for
+            activity_id: Numeric activity ID
         """
         try:
             splits = get_client(ctx).get_activity_splits(activity_id)
@@ -248,10 +251,13 @@ def register_tools(app):
 
     @app.tool()
     async def get_activity_typed_splits(activity_id: int, ctx: Context) -> str:
-        """Get typed splits for an activity
+        """Get splits categorized by type (e.g. running vs walking segments) for an activity.
+
+        Unlike regular splits (per-lap), typed splits group continuous segments by movement type,
+        useful for activities with mixed movement patterns like run/walk intervals.
 
         Args:
-            activity_id: ID of the activity to retrieve typed splits for
+            activity_id: Numeric activity ID
         """
         try:
             typed_splits = get_client(ctx).get_activity_typed_splits(activity_id)
@@ -264,10 +270,13 @@ def register_tools(app):
 
     @app.tool()
     async def get_activity_split_summaries(activity_id: int, ctx: Context) -> str:
-        """Get split summaries for an activity
+        """Get per-kilometer (or per-mile) split summaries for an activity.
+
+        Returns pace, heart rate, and elevation data for each distance-based split.
+        Useful for analyzing pacing consistency across a run or ride.
 
         Args:
-            activity_id: ID of the activity to retrieve split summaries for
+            activity_id: Numeric activity ID
         """
         try:
             split_summaries = get_client(ctx).get_activity_split_summaries(activity_id)

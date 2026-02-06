@@ -229,7 +229,11 @@ def register_tools(app):
 
     @app.tool()
     async def get_hrv_data(date: str, ctx: Context) -> str:
-        """Get Heart Rate Variability (HRV) data
+        """Get Heart Rate Variability (HRV) overnight summary.
+
+        Returns last night's average HRV (in milliseconds), weekly average,
+        baseline balanced range, and HRV status (BALANCED, LOW, UNBALANCED).
+        Higher HRV generally indicates better recovery and fitness.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -306,10 +310,14 @@ def register_tools(app):
 
     @app.tool()
     async def get_training_status(date: str, ctx: Context) -> str:
-        """Get training status with curated metrics
+        """Get training status with curated metrics.
 
-        Returns comprehensive training status including load, VO2 max, recovery,
-        and training readiness indicators.
+        Returns comprehensive training status including:
+        - Training status label (Productive, Maintaining, Detraining, etc.)
+        - Acute/chronic workload ratio (ACWR) and load balance
+        - VO2 max estimate
+        - Monthly aerobic/anaerobic load distribution
+        - Fitness trend direction
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -418,7 +426,10 @@ def register_tools(app):
 
     @app.tool()
     async def request_reload(date: str, ctx: Context) -> str:
-        """Request reload of epoch data
+        """Request Garmin to reprocess monitoring data for a specific date.
+
+        Triggers a server-side recalculation of daily metrics (steps, stress, body battery, etc.).
+        Use this if data appears stale or incomplete for a given date. Rarely needed.
 
         Args:
             date: Date in YYYY-MM-DD format

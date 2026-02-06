@@ -11,10 +11,12 @@ def register_tools(app):
 
     @app.tool()
     async def get_gear(user_profile_id: str, ctx: Context) -> str:
-        """Get all gear registered with the user account
+        """Get all gear (shoes, bikes, etc.) registered with the user account.
+
+        Returns gear name, brand, distance tracked (in meters), and retirement status.
 
         Args:
-            user_profile_id: User profile ID (can be obtained from get_device_last_used)
+            user_profile_id: User profile ID string (obtain from get_device_last_used's userProfileId field)
         """
         try:
             gear_list = get_client(ctx).get_gear(user_profile_id)
