@@ -71,6 +71,7 @@ def login(email: str, password: str, user_id: str = None) -> dict:
                     "user_id": user_id,
                     "display_name": display_name,
                     "full_name": full_name,
+                    "tokens": client.garth.dumps(),
                 }
             except Exception:
                 # Tokens invalid, continue to fresh login
@@ -97,6 +98,7 @@ def login(email: str, password: str, user_id: str = None) -> dict:
             "user_id": user_id,
             "display_name": display_name,
             "full_name": full_name,
+            "tokens": client.garth.dumps(),
         }
 
     except GarminConnectAuthenticationError as e:
