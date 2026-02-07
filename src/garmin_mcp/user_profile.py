@@ -16,7 +16,18 @@ def register_tools(app):
         Returns the name as a plain string (e.g. "Jean Dupont"), not JSON.
         """
         try:
-            full_name = get_client(ctx).get_full_name()
+            client = get_client(ctx)
+            full_name = client.get_full_name()
+            if not full_name:
+                # Stateless mode: full_name not populated during client creation.
+                # Fetch profile explicitly via API.
+                profile = client.garth.connectapi(
+                    "/userprofile-service/userprofile/profile"
+                )
+                if profile and isinstance(profile, dict):
+                    full_name = profile.get("fullName") or profile.get("displayName")
+            if not full_name:
+                return "Unknown"
             if isinstance(full_name, (dict, list)):
                 return json.dumps(full_name, indent=2)
             return str(full_name)

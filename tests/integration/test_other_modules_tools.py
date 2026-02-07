@@ -195,11 +195,36 @@ def app_with_user_profile(mock_garmin_client):
 
 @pytest.mark.asyncio
 async def test_get_full_name_tool(app_with_user_profile, mock_garmin_client):
-    """Test get_full_name tool"""
+    """Test get_full_name tool returns name when available"""
     mock_garmin_client.get_full_name.return_value = "Test User Full Name"
     result = await app_with_user_profile.call_tool("get_full_name", {})
     assert result is not None
+    content = result[0].text if hasattr(result[0], 'text') else str(result)
+    assert "Test User Full Name" in content
     mock_garmin_client.get_full_name.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_full_name_tool_fallback_when_none(app_with_user_profile, mock_garmin_client):
+    """Test get_full_name falls back to API when cached name is None (old JWT)"""
+    mock_garmin_client.get_full_name.return_value = None
+    mock_garmin_client.garth.connectapi.return_value = {
+        "fullName": "Fetched Name",
+        "displayName": "fetched_user",
+    }
+    result = await app_with_user_profile.call_tool("get_full_name", {})
+    content = result[0].text if hasattr(result[0], 'text') else str(result)
+    assert "Fetched Name" in content
+
+
+@pytest.mark.asyncio
+async def test_get_full_name_tool_returns_unknown_when_all_fail(app_with_user_profile, mock_garmin_client):
+    """Test get_full_name returns Unknown when no name available"""
+    mock_garmin_client.get_full_name.return_value = None
+    mock_garmin_client.garth.connectapi.return_value = {}
+    result = await app_with_user_profile.call_tool("get_full_name", {})
+    content = result[0].text if hasattr(result[0], 'text') else str(result)
+    assert "Unknown" in content
 
 
 @pytest.mark.asyncio
