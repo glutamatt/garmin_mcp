@@ -1,7 +1,8 @@
 # Use Python 3.12 slim image for smaller size
 FROM python:3.12-slim
 
-# Note: .dockerignore is symlinked to .gitignore for unified exclusion rules
+# Note: Build context must be ./mcp-servers (not ./mcp-servers/garmin_mcp)
+# to access the python-garminconnect submodule as a sibling directory.
 
 # Set working directory
 WORKDIR /app
@@ -15,18 +16,23 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_SYSTEM_PYTHON=1
 
+# Copy python-garminconnect submodule (sibling directory)
+COPY python-garminconnect /app/python-garminconnect
+
 # Copy dependency files and README first for better layer caching
-COPY pyproject.toml README.md ./
+COPY garmin_mcp/pyproject.toml garmin_mcp/README.md ./
 
 # Copy the application source code (needed for editable install)
-COPY src/ ./src/
+COPY garmin_mcp/src/ ./src/
 
-# Install dependencies using uv
-RUN uv pip install .
+# Install dependencies using uv (strip uv.sources, use local path directly)
+RUN sed -i '/\[tool.uv.sources\]/,$d' pyproject.toml && \
+    uv pip install /app/python-garminconnect && \
+    uv pip install .
 
 # Copy test files (optional, for testing in container)
-COPY tests/ ./tests/
-COPY pytest.ini ./
+COPY garmin_mcp/tests/ ./tests/
+COPY garmin_mcp/pytest.ini ./
 
 # Create directory for Garmin tokens
 RUN mkdir -p /root/.garminconnect && \
