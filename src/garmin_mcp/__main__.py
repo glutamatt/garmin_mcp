@@ -37,7 +37,7 @@ def main():
     from garmin_mcp import (
         activity_management, health_wellness, user_profile, devices,
         gear_management, weight_management, challenges, training,
-        workouts, data_management, womens_health, auth_tool,
+        workouts, data_management, womens_health, calendar_events, auth_tool,
     )
 
     # All tools use per-request token loading via client_factory.get_client(ctx)
@@ -59,6 +59,7 @@ def main():
     app = workouts.register_tools(app)
     app = data_management.register_tools(app)
     app = womens_health.register_tools(app)
+    app = calendar_events.register_tools(app)
 
     # Run the MCP server with appropriate transport
     if args.http:

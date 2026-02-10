@@ -21,6 +21,7 @@ from garmin_mcp import training
 from garmin_mcp import workouts
 from garmin_mcp import data_management
 from garmin_mcp import womens_health
+from garmin_mcp import calendar_events
 from garmin_mcp import auth_tool
 
 
@@ -45,6 +46,7 @@ def main():
     app = workouts.register_tools(app)
     app = data_management.register_tools(app)
     app = womens_health.register_tools(app)
+    app = calendar_events.register_tools(app)
 
     # Run the MCP server
     app.run()

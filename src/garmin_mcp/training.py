@@ -193,37 +193,43 @@ def register_tools(app):
             date: Date in YYYY-MM-DD format
         """
         try:
-            metrics = get_client(ctx).get_max_metrics(date)
-            if not metrics:
+            raw = get_client(ctx).get_max_metrics(date)
+            if not raw:
                 return f"No max metrics data found for {date}."
 
-            # Curate to essential fields only
-            curated = {
-                "date": date,
+            # API may return a list of metric entries or a single dict
+            metrics_list = raw if isinstance(raw, list) else [raw]
 
-                # VO2 Max metrics
-                "vo2_max": metrics.get('vo2MaxValue'),
-                "vo2_max_precision": metrics.get('vo2MaxPrecisionIndex'),
+            results = []
+            for metrics in metrics_list:
+                curated = {
+                    "date": date,
+                    "metric_type": metrics.get('metricType') or metrics.get('sport'),
 
-                # Fitness age
-                "fitness_age_years": metrics.get('fitnessAge'),
-                "chronological_age_years": metrics.get('chronologicalAge'),
-                "fitness_age_description": metrics.get('fitnessAgeDescription'),
+                    # VO2 Max metrics
+                    "vo2_max": metrics.get('vo2MaxValue') or (metrics.get('generic', {}) or {}).get('vo2MaxValue'),
+                    "vo2_max_precision": metrics.get('vo2MaxPrecisionIndex'),
 
-                # Lactate threshold
-                "lactate_threshold_heart_rate_bpm": metrics.get('lactateThresholdHeartRate'),
-                "lactate_threshold_speed_mps": metrics.get('lactateThresholdSpeed'),
-                "lactate_threshold_pace_seconds_per_km": metrics.get('lactateThresholdPace'),
+                    # Fitness age
+                    "fitness_age_years": metrics.get('fitnessAge'),
+                    "chronological_age_years": metrics.get('chronologicalAge'),
+                    "fitness_age_description": metrics.get('fitnessAgeDescription'),
 
-                # Other max metrics
-                "max_heart_rate_bpm": metrics.get('maxHeartRate'),
-                "max_avg_power_watts": metrics.get('functionalThresholdPower'),
-            }
+                    # Lactate threshold
+                    "lactate_threshold_heart_rate_bpm": metrics.get('lactateThresholdHeartRate'),
+                    "lactate_threshold_speed_mps": metrics.get('lactateThresholdSpeed'),
+                    "lactate_threshold_pace_seconds_per_km": metrics.get('lactateThresholdPace'),
 
-            # Remove None values
-            curated = {k: v for k, v in curated.items() if v is not None}
+                    # Other max metrics
+                    "max_heart_rate_bpm": metrics.get('maxHeartRate'),
+                    "max_avg_power_watts": metrics.get('functionalThresholdPower'),
+                }
 
-            return json.dumps(curated, indent=2)
+                # Remove None values
+                curated = {k: v for k, v in curated.items() if v is not None}
+                results.append(curated)
+
+            return json.dumps(results[0] if len(results) == 1 else results, indent=2)
         except Exception as e:
             return f"Error retrieving max metrics data: {str(e)}"
 
