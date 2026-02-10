@@ -642,6 +642,13 @@ def register_tools(app):
 
         Accepts simplified format: {workoutName, sport: "running", steps: [{stepOrder: 1, stepType: "warmup", endCondition: "time", endConditionValue: 600}, {stepOrder: 2, stepType: "interval", endCondition: "distance", endConditionValue: 1000, targetType: "pace.zone", targetValueOne: 4.0, targetValueTwo: 3.5}, ...]}
 
+        REPEAT GROUPS (use for intervals instead of duplicating steps):
+        {stepOrder: 2, stepType: "repeat", numberOfIterations: 6, workoutSteps: [
+          {stepOrder: 1, stepType: "interval", endCondition: "distance", endConditionValue: 800, targetType: "pace.zone", targetValueOne: 4.0, targetValueTwo: 3.5},
+          {stepOrder: 2, stepType: "recovery", endCondition: "distance", endConditionValue: 200, targetType: "no.target"}
+        ]}
+        ALWAYS use repeat groups for repeated intervals (e.g. 6x800m). NEVER duplicate steps manually.
+
         Step types: warmup, cooldown, interval, recovery, rest, repeat, other.
         End conditions: time (seconds), distance (meters), lap.button.
         Target types: no.target, heart.rate.zone (zoneNumber 1-5), pace.zone (targetValueOne=faster m/s, targetValueTwo=slower m/s), power.zone (zoneNumber 1-7).
