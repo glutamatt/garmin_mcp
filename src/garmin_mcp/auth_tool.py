@@ -53,8 +53,7 @@ def login(email: str, password: str, user_id: str = None) -> dict:
                 "details": {
                     "message": "Your Garmin account has two-factor authentication (MFA) enabled",
                     "context": "MFA requires interactive authentication which cannot be done through the API",
-                    "solution": "Use the local auth helper to authenticate:\n  1. Run: make auth-helper\n  2. Enter your credentials and MFA code\n  3. Upload tokens to HuggingFace Dataset\n  4. Tokens will be automatically loaded in the app",
-                    "documentation": "See tools/auth-helper/QUICKSTART.md for detailed instructions",
+                    "solution": "MFA requires interactive authentication which cannot be done through the API. Disable MFA on your Garmin account or use an app password if available.",
                 },
             }
         return {
@@ -83,7 +82,7 @@ def login(email: str, password: str, user_id: str = None) -> dict:
                 "details": {
                     "message": "Too many login attempts detected by Garmin",
                     "context": "Garmin's security system has temporarily blocked login attempts from this location",
-                    "solution": "Wait 10-15 minutes before trying again. If this persists:\n  1. Use the local auth helper: make auth-helper\n  2. Authenticate from your home IP (not datacenter)\n  3. Upload tokens to bypass rate limiting",
+                    "solution": "Wait 10-15 minutes before trying again",
                     "prevention": "Avoid rapid repeated login attempts",
                 },
             }
@@ -97,8 +96,7 @@ def login(email: str, password: str, user_id: str = None) -> dict:
                     "details": {
                         "message": "Garmin detected login from an unfamiliar or suspicious location and blocked it for security",
                         "context": "HuggingFace Spaces and datacenter IPs are often flagged as suspicious by Garmin's security systems",
-                        "solution": "Use the local auth helper to authenticate from your home IP:\n  1. Run: make auth-helper\n  2. Enter your Garmin credentials\n  3. Tokens will be saved and uploaded to HuggingFace Dataset\n  4. The app will automatically use these pre-authenticated tokens",
-                        "documentation": "See tools/auth-helper/QUICKSTART.md",
+                        "solution": "Try logging in from a different network. Datacenter IPs are often blocked by Garmin's security systems.",
                         "why_this_happens": "Garmin blocks logins from datacenter IPs to prevent unauthorized access. This is expected when running on HuggingFace Spaces.",
                     },
                 }
@@ -131,7 +129,7 @@ def login(email: str, password: str, user_id: str = None) -> dict:
             "details": {
                 "message": "An unexpected error occurred during authentication",
                 "context": str(e),
-                "solution": "Please try again. If the problem persists:\n  • Check the error message above for clues\n  • Try using the local auth helper: make auth-helper\n  • Report the issue if it continues",
+                "solution": "Please try again. If the problem persists, check the error message above for clues.",
             },
         }
 
