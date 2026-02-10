@@ -771,22 +771,60 @@ def register_tools(app):
 
     @app.tool()
     async def delete_workout(workout_id: int, ctx: Context) -> str:
-        """Delete a workout from the library and any scheduled instances of it.
+        """Delete a workout from the library after cleaning up any scheduled instances.
 
-        This permanently removes the workout. Any calendar entries using this workout
-        will also be removed. This action cannot be undone.
+        Garmin's backend leaves orphaned calendar entries when a workout is deleted directly.
+        This tool first finds and removes all scheduled instances of the workout, then deletes
+        the workout itself. This action cannot be undone.
 
         Args:
             workout_id: ID of the workout to delete (from get_workouts). This is NOT a schedule_id.
         """
         try:
-            success = get_client(ctx).delete_workout(workout_id)
+            client = get_client(ctx)
+            unscheduled = []
+            unschedule_errors = []
+
+            # Find and remove scheduled instances before deleting
+            try:
+                today = datetime.date.today()
+                start_date = (today - datetime.timedelta(days=30)).isoformat()
+                end_date = (today + datetime.timedelta(days=365)).isoformat()
+                scheduled = client.get_scheduled_workouts_for_range(start_date, end_date)
+
+                for entry in scheduled:
+                    entry_workout = entry.get('workout', {})
+                    if entry_workout.get('workoutId') == workout_id:
+                        schedule_id = entry.get('workoutScheduleId')
+                        if schedule_id:
+                            try:
+                                client.unschedule_workout(schedule_id)
+                                unscheduled.append({
+                                    "schedule_id": schedule_id,
+                                    "date": entry.get('date'),
+                                })
+                            except Exception as ue:
+                                unschedule_errors.append({
+                                    "schedule_id": schedule_id,
+                                    "error": str(ue),
+                                })
+            except Exception as e:
+                # Don't block deletion if schedule cleanup fails
+                unschedule_errors.append({"error": f"Failed to query schedules: {e}"})
+
+            success = client.delete_workout(workout_id)
             if success:
-                return json.dumps({
+                result = {
                     "status": "deleted",
                     "workout_id": workout_id,
-                    "message": f"Workout {workout_id} deleted from library"
-                }, indent=2)
+                    "message": f"Workout {workout_id} deleted from library",
+                }
+                if unscheduled:
+                    result["unscheduled_count"] = len(unscheduled)
+                    result["unscheduled"] = unscheduled
+                if unschedule_errors:
+                    result["unschedule_errors"] = unschedule_errors
+                return json.dumps(result, indent=2)
             else:
                 return json.dumps({
                     "status": "failed",
