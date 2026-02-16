@@ -1,5 +1,5 @@
 """
-Integration tests for health module MCP tools (v2 — 10 tools).
+Integration tests for health module MCP tools (v2 — 9 tools).
 
 Tests the thin tool wrappers via FastMCP call_tool with mocked Garmin client.
 """
@@ -244,22 +244,6 @@ async def test_get_training_readiness(app, mock_garmin_client):
 
     assert data["score"] == 72
     assert data["level"] == "MODERATE"
-
-
-# ── get_body_composition ──────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_get_body_composition(app, mock_garmin_client):
-    mock_garmin_client.get_body_composition.return_value = {
-        "totalAverage": {"weight": 75000, "bmi": 24.5, "bodyFat": 18.5}
-    }
-
-    result = await app.call_tool("get_body_composition", {"start_date": "2024-01-15"})
-    data = _parse(result)
-
-    assert result is not None
-    mock_garmin_client.get_body_composition.assert_called_once()
 
 
 # ── exception handling ────────────────────────────────────────────────────────
