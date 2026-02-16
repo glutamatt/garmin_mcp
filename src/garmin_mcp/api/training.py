@@ -116,38 +116,64 @@ def get_training_status(client: Garmin, date: str) -> dict:
 def get_progress_summary(
     client: Garmin, start_date: str, end_date: str, metric: str
 ) -> dict:
-    """Progress summary for a metric between dates."""
+    """Progress summary for a metric between dates.
+
+    SDK returns: [{date, countOfActivities, stats: {running: {<metric>: {count, min, max, avg, sum}}, ...}}]
+    We flatten per-sport stats into a clean list.
+    """
     raw = client.get_progress_summary_between_dates(start_date, end_date, metric)
     if not raw:
         return {"error": f"No progress data for {metric} between {start_date} and {end_date}"}
 
-    result = {
+    entries = raw if isinstance(raw, list) else [raw]
+
+    # Aggregate across all periods, grouped by sport
+    sport_totals = {}
+    total_activities = 0
+    for entry in entries:
+        total_activities += entry.get("countOfActivities", 0)
+        stats = entry.get("stats", {})
+        for sport, metrics in stats.items():
+            metric_data = metrics.get(metric, {})
+            if sport not in sport_totals:
+                sport_totals[sport] = {"count": 0, "sum": 0.0}
+            sport_totals[sport]["count"] += metric_data.get("count", 0)
+            sport_totals[sport]["sum"] += metric_data.get("sum", 0.0)
+            sport_totals[sport]["avg"] = metric_data.get("avg")
+            sport_totals[sport]["min"] = metric_data.get("min")
+            sport_totals[sport]["max"] = metric_data.get("max")
+
+    # Build curated per-sport entries
+    curated_entries = []
+    for sport, data in sport_totals.items():
+        entry = clean_nones({
+            "activity_type": sport,
+            "activity_count": data["count"],
+        })
+        total = data["sum"]
+        avg = data.get("avg")
+        if metric == "distance":
+            # Garmin returns distance in cm, convert to meters
+            entry["total_distance_meters"] = round(total / 100, 1) if total else None
+            entry["avg_distance_meters"] = round(avg / 100, 1) if avg else None
+        elif metric == "duration":
+            entry["total_duration_seconds"] = round(total / 1000) if total else None
+            entry["avg_duration_seconds"] = round(avg / 1000) if avg else None
+        elif metric == "elevationGain":
+            entry["total_elevation_meters"] = round(total / 100, 1) if total else None
+            entry["avg_elevation_meters"] = round(avg / 100, 1) if avg else None
+        elif metric == "movingDuration":
+            entry["total_moving_seconds"] = round(total / 1000) if total else None
+            entry["avg_moving_seconds"] = round(avg / 1000) if avg else None
+        curated_entries.append(clean_nones(entry))
+
+    return clean_nones({
         "metric": metric,
         "start_date": start_date,
         "end_date": end_date,
-    }
-
-    # Metric-specific fields
-    if metric == "distance":
-        result["total_distance_meters"] = raw.get("totalDistance")
-        result["avg_distance_meters"] = raw.get("avgDistance")
-    elif metric == "duration":
-        result["total_duration_seconds"] = raw.get("totalDuration")
-        result["avg_duration_seconds"] = raw.get("avgDuration")
-    elif metric == "elevationGain":
-        result["total_elevation_meters"] = raw.get("totalElevationGain")
-        result["avg_elevation_meters"] = raw.get("avgElevationGain")
-    elif metric == "movingDuration":
-        result["total_moving_seconds"] = raw.get("totalMovingDuration")
-        result["avg_moving_seconds"] = raw.get("avgMovingDuration")
-
-    # Common training metrics
-    result["aerobic_effect"] = raw.get("aerobicEffect")
-    result["anaerobic_effect"] = raw.get("anaerobicEffect")
-    result["training_load"] = raw.get("trainingLoad")
-    result["activity_count"] = raw.get("numberOfActivities")
-
-    return clean_nones(result)
+        "total_activities": total_activities,
+        "entries": curated_entries,
+    })
 
 
 def get_race_predictions(client: Garmin) -> dict:

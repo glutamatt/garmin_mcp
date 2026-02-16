@@ -111,15 +111,28 @@ class TestGetTrainingStatus:
 
 class TestGetProgressSummary:
     def test_distance_metric(self, client):
-        client.get_progress_summary_between_dates.return_value = {
-            "totalDistance": 50000,
-            "avgDistance": 5000,
-            "aerobicEffect": 3.2,
-            "numberOfActivities": 10,
-        }
+        client.get_progress_summary_between_dates.return_value = [
+            {
+                "date": "2024-01-15",
+                "countOfActivities": 10,
+                "stats": {
+                    "running": {
+                        "distance": {
+                            "count": 10,
+                            "min": 300000,
+                            "max": 1000000,
+                            "avg": 500000,
+                            "sum": 5000000,
+                        }
+                    }
+                },
+            }
+        ]
         result = api.get_progress_summary(client, "2024-01-01", "2024-01-15", "distance")
-        assert result["total_distance_meters"] == 50000
-        assert result["activity_count"] == 10
+        assert result["entries"][0]["activity_type"] == "running"
+        assert result["entries"][0]["activity_count"] == 10
+        assert result["entries"][0]["total_distance_meters"] == 50000.0
+        assert result["total_activities"] == 10
 
     def test_no_data(self, client):
         client.get_progress_summary_between_dates.return_value = None

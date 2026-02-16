@@ -188,7 +188,7 @@ class TestDeleteWorkout:
 
     def test_with_scheduled_cleanup(self, client):
         client.get_scheduled_workouts_for_range.return_value = [
-            {"workout": {"workoutId": 42}, "workoutScheduleId": 99, "date": "2024-01-20"}
+            {"workoutId": 42, "scheduledWorkoutId": 99, "scheduleDate": "2024-01-20"}
         ]
         client.unschedule_workout.return_value = True
         client.delete_workout.return_value = True

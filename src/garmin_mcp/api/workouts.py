@@ -450,19 +450,20 @@ def _curate_workout_summary(workout: dict) -> dict:
 
 
 def _curate_scheduled_workout(scheduled: dict) -> dict:
-    """Extract essential scheduled workout information."""
-    workout = scheduled.get('workout', {})
-    sport_type = workout.get('sportType', {})
+    """Extract essential scheduled workout information.
+
+    SDK returns flat structure: {scheduledWorkoutId, workoutId, workoutName,
+    workoutType, scheduleDate, estimatedDurationInSecs, ...}
+    """
     return clean_nones({
-        "date": scheduled.get('date'),
-        "schedule_id": scheduled.get('workoutScheduleId'),
-        "workout_id": workout.get('workoutId'),
-        "name": workout.get('workoutName'),
-        "sport": sport_type.get('sportTypeKey'),
-        "provider": workout.get('workoutProvider'),
-        "completed": scheduled.get('completed', False),
-        "estimated_duration_seconds": workout.get('estimatedDuration'),
-        "estimated_distance_meters": workout.get('estimatedDistance'),
+        "date": scheduled.get('scheduleDate'),
+        "schedule_id": scheduled.get('scheduledWorkoutId'),
+        "workout_id": scheduled.get('workoutId'),
+        "name": scheduled.get('workoutName'),
+        "sport": scheduled.get('workoutType'),
+        "completed": scheduled.get('associatedActivityId') is not None,
+        "estimated_duration_seconds": scheduled.get('estimatedDurationInSecs'),
+        "estimated_distance_meters": scheduled.get('estimatedDistanceInMeters'),
     })
 
 
@@ -513,14 +514,7 @@ def get_workout_by_id(client, workout_id: int) -> dict:
 
 def get_scheduled_workouts(client, start_date: str, end_date: str) -> dict:
     """Get workouts scheduled on the calendar between two dates."""
-    query = {
-        "query": f'query{{workoutScheduleSummariesScalar(startDate:"{start_date}", endDate:"{end_date}")}}'
-    }
-    result = client.query_garmin_graphql(query)
-    if not result or "data" not in result:
-        return {"error": f"No scheduled workouts between {start_date} and {end_date}"}
-
-    scheduled = result.get("data", {}).get("workoutScheduleSummariesScalar", [])
+    scheduled = client.get_scheduled_workouts_for_range(start_date, end_date)
     if not scheduled:
         return {"error": f"No workouts scheduled between {start_date} and {end_date}"}
 
@@ -599,13 +593,12 @@ def delete_workout(client, workout_id: int) -> dict:
         scheduled = client.get_scheduled_workouts_for_range(start_date, end_date)
 
         for entry in scheduled:
-            entry_workout = entry.get('workout', {})
-            if entry_workout.get('workoutId') == workout_id:
-                schedule_id = entry.get('workoutScheduleId')
+            if entry.get('workoutId') == workout_id:
+                schedule_id = entry.get('scheduledWorkoutId')
                 if schedule_id:
                     try:
                         client.unschedule_workout(schedule_id)
-                        unscheduled.append({"schedule_id": schedule_id, "date": entry.get('date')})
+                        unscheduled.append({"schedule_id": schedule_id, "date": entry.get('scheduleDate')})
                     except Exception as ue:
                         unschedule_errors.append({"schedule_id": schedule_id, "error": str(ue)})
     except Exception as e:

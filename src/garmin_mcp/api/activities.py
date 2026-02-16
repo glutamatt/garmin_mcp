@@ -100,8 +100,8 @@ def get_activity(client: Garmin, activity_id: int) -> dict:
         # Recovery
         "recovery_hr_bpm": summary.get("recoveryHeartRate"),
         "body_battery_impact": summary.get("differenceBodyBattery"),
-        # Weather (folded into detail)
-        "temperature_celsius": summary.get("startingTemperatureInFahrenheit"),
+        # Weather (folded into detail) — Garmin returns Fahrenheit, convert to Celsius
+        "temperature_celsius": round((summary.get("startingTemperatureInFahrenheit", 32) - 32) * 5 / 9, 1) if summary.get("startingTemperatureInFahrenheit") is not None else None,
         # Metadata
         "lap_count": metadata.get("lapCount"),
         "has_splits": metadata.get("hasSplits"),
@@ -112,8 +112,8 @@ def get_activity(client: Garmin, activity_id: int) -> dict:
         weather = client.get_activity_weather(activity_id)
         if weather:
             result["weather"] = clean_nones({
-                "temperature_celsius": weather.get("temp"),
-                "apparent_temperature_celsius": weather.get("apparentTemp"),
+                "temperature_celsius": round((weather["temp"] - 32) * 5 / 9, 1) if weather.get("temp") is not None else None,
+                "apparent_temperature_celsius": round((weather["apparentTemp"] - 32) * 5 / 9, 1) if weather.get("apparentTemp") is not None else None,
                 "humidity_percent": weather.get("relativeHumidity"),
                 "wind_speed_mps": weather.get("windSpeed"),
                 "weather_type": (weather.get("weatherTypeDTO") or {}).get("weatherTypeName"),

@@ -29,21 +29,21 @@ class TestGetFullName:
 class TestGetUserProfile:
     def test_enriches_with_settings(self, client):
         client.get_user_profile.return_value = {
+            "id": 138658236,
             "displayName": "Jean Dupont",
             "location": "Paris, France",
-        }
-        client.get_userprofile_settings.return_value = {
             "userData": {
                 "weight": 75000,
-                "height": 1800,
+                "height": 180.0,
                 "birthDate": "1990-01-01",
                 "gender": "MALE",
-            }
+            },
         }
         client.get_unit_system.return_value = "metric"
 
         result = api.get_user_profile(client)
 
+        assert result["user_profile_id"] == 138658236
         assert result["display_name"] == "Jean Dupont"
         assert result["settings"]["weight_kg"] == 75.0
         assert result["settings"]["height_cm"] == 180.0
@@ -54,9 +54,8 @@ class TestGetUserProfile:
         result = api.get_user_profile(client)
         assert "error" in result
 
-    def test_settings_failure_doesnt_crash(self, client):
+    def test_no_userdata_doesnt_crash(self, client):
         client.get_user_profile.return_value = {"displayName": "Test"}
-        client.get_userprofile_settings.side_effect = Exception("fail")
         client.get_unit_system.side_effect = Exception("fail")
 
         result = api.get_user_profile(client)
@@ -64,14 +63,14 @@ class TestGetUserProfile:
         assert "settings" not in result
 
     def test_hr_zones(self, client):
-        client.get_user_profile.return_value = {"displayName": "Test"}
-        client.get_userprofile_settings.return_value = {
+        client.get_user_profile.return_value = {
+            "displayName": "Test",
             "userData": {
                 "heartRateZones": [
                     {"zoneNumber": 1, "startBPM": 100, "endBPM": 120},
                     {"zoneNumber": 2, "startBPM": 120, "endBPM": 140},
                 ]
-            }
+            },
         }
         client.get_unit_system.return_value = None
 

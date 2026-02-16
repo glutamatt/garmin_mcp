@@ -31,55 +31,52 @@ def get_user_profile(client) -> dict:
         return {"error": "No user profile found"}
 
     result = clean_nones({
+        "user_profile_id": profile.get("id"),
         "display_name": profile.get("displayName"),
         "profile_image_url": profile.get("profileImageUrlLarge") or profile.get("profileImageUrlMedium"),
         "location": profile.get("location"),
         "bio": profile.get("aboutMe"),
     })
 
-    # Merge settings
-    try:
-        settings = client.get_userprofile_settings()
-        if settings and isinstance(settings, dict):
-            user_data = settings.get("userData", settings)
-            result["settings"] = clean_nones({
-                "weight_kg": _safe_div(user_data.get("weight"), 1000),
-                "height_cm": _safe_div(user_data.get("height"), 10) if user_data.get("height") else None,
-                "birth_date": user_data.get("birthDate"),
-                "gender": user_data.get("gender"),
-                "activity_level": user_data.get("activityLevel"),
-                "handedness": user_data.get("handedness"),
-                "vo2_max_running": user_data.get("vo2MaxRunning"),
-                "vo2_max_cycling": user_data.get("vo2MaxCycling"),
-                "lactate_threshold_hr": user_data.get("lactateThresholdHeartRate"),
-                "training_status_paused": user_data.get("trainingStatusPaused"),
-            })
+    # User data is inside the profile response, not settings
+    user_data = profile.get("userData", {})
+    if user_data:
+        result["settings"] = clean_nones({
+            "weight_kg": _safe_div(user_data.get("weight"), 1000),
+            "height_cm": user_data.get("height"),
+            "birth_date": user_data.get("birthDate"),
+            "gender": user_data.get("gender"),
+            "activity_level": user_data.get("activityLevel"),
+            "handedness": user_data.get("handedness"),
+            "vo2_max_running": user_data.get("vo2MaxRunning"),
+            "vo2_max_cycling": user_data.get("vo2MaxCycling"),
+            "lactate_threshold_hr": user_data.get("lactateThresholdHeartRate"),
+            "training_status_paused": user_data.get("trainingStatusPaused"),
+        })
 
-            # HR zones if present
-            hr_zones = user_data.get("heartRateZones")
-            if hr_zones and isinstance(hr_zones, list):
-                result["hr_zones"] = [
-                    clean_nones({
-                        "zone": z.get("zoneNumber"),
-                        "low_bpm": z.get("startBPM"),
-                        "high_bpm": z.get("endBPM"),
-                    })
-                    for z in hr_zones
-                ]
+        # HR zones if present
+        hr_zones = user_data.get("heartRateZones")
+        if hr_zones and isinstance(hr_zones, list):
+            result["hr_zones"] = [
+                clean_nones({
+                    "zone": z.get("zoneNumber"),
+                    "low_bpm": z.get("startBPM"),
+                    "high_bpm": z.get("endBPM"),
+                })
+                for z in hr_zones
+            ]
 
-            # Power zones if present
-            power_zones = user_data.get("powerZones")
-            if power_zones and isinstance(power_zones, list):
-                result["power_zones"] = [
-                    clean_nones({
-                        "zone": z.get("zoneNumber"),
-                        "low_watts": z.get("zoneLowBoundary"),
-                        "high_watts": z.get("zoneHighBoundary"),
-                    })
-                    for z in power_zones
-                ]
-    except Exception:
-        pass
+        # Power zones if present
+        power_zones = user_data.get("powerZones")
+        if power_zones and isinstance(power_zones, list):
+            result["power_zones"] = [
+                clean_nones({
+                    "zone": z.get("zoneNumber"),
+                    "low_watts": z.get("zoneLowBoundary"),
+                    "high_watts": z.get("zoneHighBoundary"),
+                })
+                for z in power_zones
+            ]
 
     # Merge unit system
     try:

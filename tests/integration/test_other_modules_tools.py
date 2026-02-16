@@ -127,7 +127,7 @@ async def test_add_gear_to_activity_tool(app_with_gear, mock_garmin_client):
     )
     data = _parse(result)
     assert data["status"] == "success"
-    mock_garmin_client.add_gear_to_activity.assert_called_once_with(12345678901, "abc123")
+    mock_garmin_client.add_gear_to_activity.assert_called_once_with("abc123", 12345678901)
 
 
 @pytest.mark.asyncio
@@ -138,4 +138,4 @@ async def test_remove_gear_from_activity_tool(app_with_gear, mock_garmin_client)
     )
     data = _parse(result)
     assert data["status"] == "success"
-    mock_garmin_client.remove_gear_from_activity.assert_called_once_with(12345678901, "abc123")
+    mock_garmin_client.remove_gear_from_activity.assert_called_once_with("abc123", 12345678901)

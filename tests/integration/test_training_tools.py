@@ -125,11 +125,23 @@ async def test_get_training_status(app, mock_garmin_client):
 
 @pytest.mark.asyncio
 async def test_get_progress_summary(app, mock_garmin_client):
-    mock_garmin_client.get_progress_summary_between_dates.return_value = {
-        "totalDistance": 50000,
-        "avgDistance": 5000,
-        "numberOfActivities": 10,
-    }
+    mock_garmin_client.get_progress_summary_between_dates.return_value = [
+        {
+            "date": "2024-01-15",
+            "countOfActivities": 10,
+            "stats": {
+                "running": {
+                    "distance": {
+                        "count": 10,
+                        "sum": 5000000,
+                        "avg": 500000,
+                        "min": 300000,
+                        "max": 1000000,
+                    }
+                }
+            },
+        }
+    ]
 
     result = await app.call_tool(
         "get_progress_summary",
@@ -137,8 +149,8 @@ async def test_get_progress_summary(app, mock_garmin_client):
     )
     data = _parse(result)
 
-    assert data["total_distance_meters"] == 50000
-    assert data["activity_count"] == 10
+    assert data["entries"][0]["total_distance_meters"] == 50000.0
+    assert data["entries"][0]["activity_count"] == 10
     mock_garmin_client.get_progress_summary_between_dates.assert_called_once_with(
         "2024-01-01", "2024-01-15", "distance"
     )

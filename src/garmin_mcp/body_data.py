@@ -27,16 +27,30 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
         """
         try:
-            weigh_ins = get_client(ctx).get_weigh_ins(start_date, end_date)
-            if not weigh_ins:
+            raw = get_client(ctx).get_weigh_ins(start_date, end_date)
+            if not raw:
+                return json.dumps({"error": f"No weight measurements found between {start_date} and {end_date}."})
+
+            # SDK returns a dict with dailyWeightSummaries → allWeightMetrics
+            entries = []
+            if isinstance(raw, dict):
+                for day in raw.get("dailyWeightSummaries", []):
+                    entries.extend(day.get("allWeightMetrics", []))
+                if not entries:
+                    # Fallback: maybe the dict itself is a single entry
+                    entries = [raw] if "weight" in raw else []
+            elif isinstance(raw, list):
+                entries = raw
+
+            if not entries:
                 return json.dumps({"error": f"No weight measurements found between {start_date} and {end_date}."})
 
             curated = {
-                "count": len(weigh_ins),
+                "count": len(entries),
                 "date_range": {"start": start_date, "end": end_date},
                 "measurements": [],
             }
-            for w in weigh_ins:
+            for w in entries:
                 m = {
                     "date": w.get("date") or w.get("calendarDate"),
                     "weight_grams": w.get("weight"),
