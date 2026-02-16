@@ -1,8 +1,9 @@
 """
-Body data tools — weight, blood pressure, hydration (5 tools).
+Body data tools — weight management (3 tools).
 
-Merges weight_management + data_management into a single module.
 Thin MCP wrappers over Garmin Connect body data APIs.
+Blood pressure and hydration removed from tool layer (no coaching value).
+SDK/API layer still available if needed.
 """
 import json
 from typing import Optional
@@ -100,44 +101,6 @@ def register_tools(app):
         try:
             get_client(ctx).delete_weigh_ins(date, delete_all=delete_all)
             return json.dumps({"status": "success", "date": date})
-        except Exception as e:
-            return json.dumps({"error": str(e)})
-
-    @app.tool()
-    async def set_blood_pressure(
-        systolic: int, diastolic: int, pulse: int,
-        ctx: Context, notes: Optional[str] = None,
-    ) -> str:
-        """Record a blood pressure measurement.
-
-        Args:
-            systolic: Systolic pressure in mmHg (top number, e.g. 120)
-            diastolic: Diastolic pressure in mmHg (bottom number, e.g. 80)
-            pulse: Pulse rate in bpm (e.g. 72)
-            notes: Optional text notes about the measurement
-        """
-        try:
-            result = get_client(ctx).set_blood_pressure(systolic, diastolic, pulse, notes=notes)
-            return json.dumps(result, indent=2)
-        except Exception as e:
-            return json.dumps({"error": str(e)})
-
-    @app.tool()
-    async def add_hydration_data(
-        value_in_ml: int, cdate: str, timestamp: str, ctx: Context,
-    ) -> str:
-        """Add hydration data.
-
-        Args:
-            value_in_ml: Amount of liquid in milliliters
-            cdate: Date in YYYY-MM-DD format
-            timestamp: Timestamp in YYYY-MM-DDThh:mm:ss.sss format
-        """
-        try:
-            result = get_client(ctx).add_hydration_data(
-                value_in_ml=value_in_ml, cdate=cdate, timestamp=timestamp,
-            )
-            return json.dumps(result, indent=2)
         except Exception as e:
             return json.dumps({"error": str(e)})
 

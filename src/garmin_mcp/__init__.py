@@ -20,7 +20,6 @@ from garmin_mcp import workouts
 from garmin_mcp import profile
 from garmin_mcp import gear
 from garmin_mcp import body_data
-from garmin_mcp import womens_health
 from garmin_mcp import calendar
 from garmin_mcp import auth_tool
 
@@ -33,7 +32,7 @@ def main():
     # Create the MCP app
     app = FastMCP("Garmin Connect v2.0")
 
-    # Register all tools (50 total)
+    # Register all tools (44 total)
     app = auth_tool.register_tools(app)
     app = health.register_tools(app)
     app = activities.register_tools(app)
@@ -42,7 +41,6 @@ def main():
     app = profile.register_tools(app)
     app = gear.register_tools(app)
     app = body_data.register_tools(app)
-    app = womens_health.register_tools(app)
     app = calendar.register_tools(app)
 
     # Run the MCP server

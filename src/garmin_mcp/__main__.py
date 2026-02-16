@@ -38,7 +38,7 @@ def main():
         health, activities, training,
         workouts, profile,
         gear, body_data,
-        womens_health, calendar, auth_tool,
+        calendar, auth_tool,
     )
 
     # All tools use per-request token loading via client_factory.get_client(ctx)
@@ -56,7 +56,6 @@ def main():
     app = profile.register_tools(app)
     app = gear.register_tools(app)
     app = body_data.register_tools(app)
-    app = womens_health.register_tools(app)
     app = calendar.register_tools(app)
 
     # Run the MCP server with appropriate transport

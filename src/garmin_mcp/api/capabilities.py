@@ -34,29 +34,14 @@ CAPABILITY_TOOL_MAP = {
     "hasSpO2CapableDevice": [
         "get_spo2_data",
     ],
-    "hasTrainingEffectCapableDevice": [
-        "get_training_status",
-    ],
-    "hasTrainingLoadCapableDevice": [
-        "get_training_status",
-    ],
-    "hasEnduranceScoreCapableDevice": [
-        "get_progress_summary",
-    ],
     "hasStressCapableDevice": [
         "get_stress",
     ],
     "hasFitnessAgeCapableDevice": [
         "get_max_metrics",
     ],
-    "hasBloodPressureCapableDevice": [
-        "set_blood_pressure",
-    ],
-    "hasWomenHealthCapableDevice": [
-        "get_menstrual_calendar",
-        "get_menstrual_dayview",
-        "get_pregnancy_snapshot",
-    ],
+    # Blood pressure and women's health tools removed from tool layer (no coaching value).
+    # Capabilities still tracked for reference but no tools to disable.
 }
 
 

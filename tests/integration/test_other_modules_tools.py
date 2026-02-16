@@ -2,10 +2,9 @@
 Integration tests for remaining module MCP tools
 
 Tests tools from:
-- body_data (5 tools: get_weigh_ins, add_weigh_in, delete_weigh_ins, set_blood_pressure, add_hydration_data)
+- body_data (3 tools: get_weigh_ins, add_weigh_in, delete_weigh_ins)
 - gear (3 tools: get_gear, add_gear_to_activity, remove_gear_from_activity)
-- womens_health (3 tools)
-Total: 11 tools
+Total: 6 tools
 """
 import json
 import pytest
@@ -14,12 +13,10 @@ from mcp.server.fastmcp import FastMCP
 from garmin_mcp import (
     body_data,
     gear,
-    womens_health,
 )
 from tests.fixtures.garmin_responses import (
     MOCK_WEIGH_INS,
     MOCK_GEAR,
-    MOCK_MENSTRUAL_DATA,
 )
 
 
@@ -95,31 +92,6 @@ async def test_delete_weigh_ins_tool(app_with_body_data, mock_garmin_client):
     mock_garmin_client.delete_weigh_ins.assert_called_once_with("2024-01-15", delete_all=True)
 
 
-@pytest.mark.asyncio
-async def test_set_blood_pressure_tool(app_with_body_data, mock_garmin_client):
-    mock_garmin_client.set_blood_pressure.return_value = {"status": "ok"}
-    result = await app_with_body_data.call_tool(
-        "set_blood_pressure", {"systolic": 120, "diastolic": 80, "pulse": 65}
-    )
-    data = _parse(result)
-    assert data["status"] == "ok"
-    mock_garmin_client.set_blood_pressure.assert_called_once_with(120, 80, 65, notes=None)
-
-
-@pytest.mark.asyncio
-async def test_add_hydration_data_tool(app_with_body_data, mock_garmin_client):
-    mock_garmin_client.add_hydration_data.return_value = {"status": "ok"}
-    result = await app_with_body_data.call_tool(
-        "add_hydration_data",
-        {"value_in_ml": 500, "cdate": "2024-01-15", "timestamp": "2024-01-15T10:00:00"},
-    )
-    data = _parse(result)
-    assert data["status"] == "ok"
-    mock_garmin_client.add_hydration_data.assert_called_once_with(
-        value_in_ml=500, cdate="2024-01-15", timestamp="2024-01-15T10:00:00"
-    )
-
-
 # ── Gear ─────────────────────────────────────────────────────────────────────
 
 
@@ -167,41 +139,3 @@ async def test_remove_gear_from_activity_tool(app_with_gear, mock_garmin_client)
     data = _parse(result)
     assert data["status"] == "success"
     mock_garmin_client.remove_gear_from_activity.assert_called_once_with(12345678901, "abc123")
-
-
-# ── Women's Health ───────────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def app_with_womens_health(mock_garmin_client):
-    app = FastMCP("Test Womens Health")
-    app = womens_health.register_tools(app)
-    return app
-
-
-@pytest.mark.asyncio
-async def test_get_pregnancy_summary_tool(app_with_womens_health, mock_garmin_client):
-    mock_garmin_client.get_pregnancy_summary.return_value = {"isPregnant": False}
-    result = await app_with_womens_health.call_tool("get_pregnancy_summary", {})
-    assert result is not None
-    mock_garmin_client.get_pregnancy_summary.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_get_menstrual_data_for_date_tool(app_with_womens_health, mock_garmin_client):
-    mock_garmin_client.get_menstrual_data_for_date.return_value = MOCK_MENSTRUAL_DATA
-    result = await app_with_womens_health.call_tool(
-        "get_menstrual_data_for_date", {"date": "2024-01-15"}
-    )
-    assert result is not None
-    mock_garmin_client.get_menstrual_data_for_date.assert_called_once_with("2024-01-15")
-
-
-@pytest.mark.asyncio
-async def test_get_menstrual_calendar_data_tool(app_with_womens_health, mock_garmin_client):
-    mock_garmin_client.get_menstrual_calendar_data.return_value = [MOCK_MENSTRUAL_DATA]
-    result = await app_with_womens_health.call_tool(
-        "get_menstrual_calendar_data", {"start_date": "2024-01-01", "end_date": "2024-01-31"}
-    )
-    assert result is not None
-    mock_garmin_client.get_menstrual_calendar_data.assert_called_once_with("2024-01-01", "2024-01-31")

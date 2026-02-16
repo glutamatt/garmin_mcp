@@ -126,17 +126,4 @@ def register_tools(app):
         except Exception as e:
             return json.dumps({"error": str(e)}, indent=2)
 
-    @app.tool()
-    async def get_body_composition(start_date: str, ctx: Context, end_date: str = None) -> str:
-        """Body composition data for a date or range.
-
-        Args:
-            start_date: Date in YYYY-MM-DD format (or start of range)
-            end_date: Optional end date in YYYY-MM-DD format
-        """
-        try:
-            return json.dumps(api.get_body_composition(get_client(ctx), start_date, end_date), indent=2)
-        except Exception as e:
-            return json.dumps({"error": str(e)}, indent=2)
-
     return app

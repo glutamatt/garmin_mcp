@@ -219,7 +219,6 @@ def mock_get_client(mock_garmin_client):
         # Consolidated modules
         "garmin_mcp.gear",
         "garmin_mcp.body_data",
-        "garmin_mcp.womens_health",
     ]
 
     patchers = []
