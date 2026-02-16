@@ -6,7 +6,7 @@ transformed into Garmin Connect API-compatible format.
 """
 import pytest
 
-from garmin_mcp.workouts import (
+from garmin_mcp.api.workouts import (
     WorkoutData,
     SportType,
     StepType,
@@ -15,8 +15,8 @@ from garmin_mcp.workouts import (
     WorkoutStep,
     RepeatGroup,
     WorkoutSegment,
-    _preprocess_workout_input,
-    _normalize_workout_structure,
+    preprocess_workout_input,
+    normalize_workout_structure,
     _normalize_executable_step,
     _normalize_repeat_group,
     _normalize_steps,
@@ -363,7 +363,7 @@ class TestRestructureFlatRepeats:
 
 
 # =============================================================================
-# _normalize_workout_structure Tests (top-level)
+# normalize_workout_structure Tests (top-level)
 # =============================================================================
 
 
@@ -376,7 +376,7 @@ class TestNormalizeWorkoutStructure:
             "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
             "workoutSegments": [],
         }
-        result = _normalize_workout_structure(data)
+        result = normalize_workout_structure(data)
         assert result["avgTrainingSpeed"] == 2.5
         assert result["estimatedDurationInSecs"] == 0
         assert result["estimatedDistanceInMeters"] == 0.0
@@ -388,7 +388,7 @@ class TestNormalizeWorkoutStructure:
             "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
             "workoutSegments": [],
         }
-        result = _normalize_workout_structure(data)
+        result = normalize_workout_structure(data)
         assert result["isWheelchair"] is False
 
     def test_no_is_wheelchair_for_cycling(self):
@@ -397,7 +397,7 @@ class TestNormalizeWorkoutStructure:
             "sportType": {"sportTypeId": 2, "sportTypeKey": "cycling"},
             "workoutSegments": [],
         }
-        result = _normalize_workout_structure(data)
+        result = normalize_workout_structure(data)
         assert "isWheelchair" not in result
 
     def test_adds_display_order_to_sport_types(self):
@@ -411,7 +411,7 @@ class TestNormalizeWorkoutStructure:
                 }
             ],
         }
-        result = _normalize_workout_structure(data)
+        result = normalize_workout_structure(data)
         assert result["sportType"]["displayOrder"] == 1
         assert result["workoutSegments"][0]["sportType"]["displayOrder"] == 1
 
@@ -422,7 +422,7 @@ class TestNormalizeWorkoutStructure:
             "avgTrainingSpeed": 4.0,
             "workoutSegments": [],
         }
-        result = _normalize_workout_structure(data)
+        result = normalize_workout_structure(data)
         assert result["avgTrainingSpeed"] == 4.0  # not overwritten
 
     def test_does_not_mutate_input(self):
@@ -431,7 +431,7 @@ class TestNormalizeWorkoutStructure:
             "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
             "workoutSegments": [],
         }
-        _normalize_workout_structure(data)
+        normalize_workout_structure(data)
         assert "avgTrainingSpeed" not in data
 
     def test_full_normalization_pipeline(self):
@@ -479,7 +479,7 @@ class TestNormalizeWorkoutStructure:
         )
 
         data = wd.model_dump(exclude_none=True)
-        result = _normalize_workout_structure(data)
+        result = normalize_workout_structure(data)
 
         # Top-level
         assert result["avgTrainingSpeed"] == 2.5
@@ -578,7 +578,7 @@ class TestStepIdAssignment:
 
 
 # =============================================================================
-# _preprocess_workout_input Tests
+# preprocess_workout_input Tests
 # =============================================================================
 
 
@@ -599,7 +599,7 @@ class TestPreprocessWorkoutInput:
                 }
             ],
         }
-        result = _preprocess_workout_input(data)
+        result = preprocess_workout_input(data)
         assert result["sportType"] == {"sportTypeId": 1, "sportTypeKey": "running"}
         assert "workoutSegments" in result
         assert len(result["workoutSegments"]) == 1
@@ -624,7 +624,7 @@ class TestPreprocessWorkoutInput:
                 }
             ],
         }
-        result = _preprocess_workout_input(data)
+        result = preprocess_workout_input(data)
 
         # Validate via Pydantic
         validated = WorkoutData(**result)
@@ -655,7 +655,7 @@ class TestPreprocessWorkoutInput:
                 }
             ],
         }
-        result = _preprocess_workout_input(data)
+        result = preprocess_workout_input(data)
         assert result == data  # unchanged
 
     def test_target_value_mapping(self):
@@ -675,7 +675,7 @@ class TestPreprocessWorkoutInput:
                 }
             ],
         }
-        result = _preprocess_workout_input(data)
+        result = preprocess_workout_input(data)
         step = result["workoutSegments"][0]["workoutSteps"][0]
         assert step["targetValueOne"] == 3.5
         assert step["targetValueTwo"] == 3.0
@@ -686,7 +686,7 @@ class TestPreprocessWorkoutInput:
             "sport": "cycling",
             "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "endConditionValue": 600}],
         }
-        result = _preprocess_workout_input(data)
+        result = preprocess_workout_input(data)
         assert result["sportType"]["sportTypeId"] == 2
         assert result["sportType"]["sportTypeKey"] == "cycling"
 
@@ -696,7 +696,7 @@ class TestPreprocessWorkoutInput:
             "sport": "running",
             "steps": [{"stepOrder": 1, "stepType": "cooldown"}],
         }
-        result = _preprocess_workout_input(data)
+        result = preprocess_workout_input(data)
         step = result["workoutSegments"][0]["workoutSteps"][0]
         assert step["endCondition"]["conditionTypeKey"] == "lap.button"
 
@@ -712,9 +712,9 @@ class TestPreprocessWorkoutInput:
                 {"stepOrder": 3, "stepType": "cooldown", "endCondition": "lap.button"},
             ],
         }
-        preprocessed = _preprocess_workout_input(data)
+        preprocessed = preprocess_workout_input(data)
         validated = WorkoutData(**preprocessed)
-        normalized = _normalize_workout_structure(validated.model_dump(exclude_none=True))
+        normalized = normalize_workout_structure(validated.model_dump(exclude_none=True))
 
         assert normalized["avgTrainingSpeed"] == 2.5
         assert normalized["isWheelchair"] is False

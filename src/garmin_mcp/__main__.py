@@ -35,31 +35,29 @@ def main():
 
     from fastmcp import FastMCP
     from garmin_mcp import (
-        activity_management, health_wellness, user_profile, devices,
-        gear_management, weight_management, challenges, training,
-        workouts, data_management, womens_health, calendar_events, auth_tool,
+        health, activities, training,
+        workouts, profile,
+        gear, body_data,
+        womens_health, calendar, auth_tool,
     )
 
     # All tools use per-request token loading via client_factory.get_client(ctx)
-    print("Garmin MCP: stateless mode - per-request token loading from JWT.", file=sys.stderr)
+    print("Garmin MCP v2: 3-layer architecture, per-request token loading.", file=sys.stderr)
 
     # Create the MCP app
-    app = FastMCP("Garmin Connect v1.0")
+    app = FastMCP("Garmin Connect v2.0")
 
     # Register all tools
     app = auth_tool.register_tools(app)
-    app = activity_management.register_tools(app)
-    app = health_wellness.register_tools(app)
-    app = user_profile.register_tools(app)
-    app = devices.register_tools(app)
-    app = gear_management.register_tools(app)
-    app = weight_management.register_tools(app)
-    app = challenges.register_tools(app)
+    app = health.register_tools(app)
+    app = activities.register_tools(app)
     app = training.register_tools(app)
     app = workouts.register_tools(app)
-    app = data_management.register_tools(app)
+    app = profile.register_tools(app)
+    app = gear.register_tools(app)
+    app = body_data.register_tools(app)
     app = womens_health.register_tools(app)
-    app = calendar_events.register_tools(app)
+    app = calendar.register_tools(app)
 
     # Run the MCP server with appropriate transport
     if args.http:

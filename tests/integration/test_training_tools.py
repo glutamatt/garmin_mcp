@@ -1,264 +1,220 @@
 """
-Integration tests for training module MCP tools
+Integration tests for training module MCP tools (7 tools).
 
-Tests all 8 training tools using FastMCP integration with mocked Garmin API responses.
+Tests the thin tool wrappers via FastMCP call_tool with mocked Garmin client.
 """
+import json
 import pytest
-from unittest.mock import Mock
 from mcp.server.fastmcp import FastMCP
 
 from garmin_mcp import training
-from tests.fixtures.garmin_responses import (
-    MOCK_PROGRESS_SUMMARY,
-    MOCK_HRV_DATA,
-    MOCK_TRAINING_STATUS,
-    MOCK_LACTATE_THRESHOLD,
-)
+
+
+def _parse(result):
+    """Extract JSON from call_tool result tuple: (content_list, is_error)."""
+    return json.loads(result[0][0].text)
 
 
 @pytest.fixture
-def app_with_training(mock_garmin_client):
-    """Create FastMCP app with training tools registered"""
-    app = FastMCP("Test Training")
-    app = training.register_tools(app)
-    return app
+def app(mock_garmin_client):
+    """Create FastMCP app with training tools registered."""
+    a = FastMCP("Test Training")
+    a = training.register_tools(a)
+    return a
+
+
+# ── get_max_metrics ───────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_get_progress_summary_between_dates_tool(app_with_training, mock_garmin_client):
-    """Test get_progress_summary_between_dates tool"""
-    # Setup mock
-    mock_garmin_client.get_progress_summary_between_dates.return_value = MOCK_PROGRESS_SUMMARY
-
-    # Call tool
-    result = await app_with_training.call_tool(
-        "get_progress_summary_between_dates",
-        {
-            "start_date": "2024-01-08",
-            "end_date": "2024-01-15",
-            "metric": "duration"
-        }
-    )
-
-    # Verify
-    assert result is not None
-    mock_garmin_client.get_progress_summary_between_dates.assert_called_once_with(
-        "2024-01-08", "2024-01-15", "duration"
-    )
-
-
-@pytest.mark.asyncio
-async def test_get_hill_score_tool(app_with_training, mock_garmin_client):
-    """Test get_hill_score tool"""
-    # Setup mock
-    hill_score = {
-        "hillScore": 75,
-        "dateRange": {"start": "2024-01-08", "end": "2024-01-15"}
+async def test_get_max_metrics(app, mock_garmin_client):
+    mock_garmin_client.get_max_metrics.return_value = {
+        "metricType": "RUNNING",
+        "vo2MaxValue": 52.5,
+        "fitnessAge": 25,
+        "lactateThresholdHeartRate": 170,
+        "lactateThresholdSpeed": 3.5,
     }
-    mock_garmin_client.get_hill_score.return_value = hill_score
 
-    # Call tool
-    result = await app_with_training.call_tool(
-        "get_hill_score",
-        {"start_date": "2024-01-08", "end_date": "2024-01-15"}
-    )
+    result = await app.call_tool("get_max_metrics", {"date": "2024-01-15"})
+    data = _parse(result)
 
-    # Verify
-    assert result is not None
-    mock_garmin_client.get_hill_score.assert_called_once_with("2024-01-08", "2024-01-15")
-
-
-@pytest.mark.asyncio
-async def test_get_endurance_score_tool(app_with_training, mock_garmin_client):
-    """Test get_endurance_score tool"""
-    # Setup mock
-    endurance_score = {
-        "enduranceScore": 65,
-        "dateRange": {"start": "2024-01-08", "end": "2024-01-15"}
-    }
-    mock_garmin_client.get_endurance_score.return_value = endurance_score
-
-    # Call tool
-    result = await app_with_training.call_tool(
-        "get_endurance_score",
-        {"start_date": "2024-01-08", "end_date": "2024-01-15"}
-    )
-
-    # Verify
-    assert result is not None
-    mock_garmin_client.get_endurance_score.assert_called_once_with("2024-01-08", "2024-01-15")
-
-
-@pytest.mark.asyncio
-async def test_get_training_effect_tool(app_with_training, mock_garmin_client):
-    """Test get_training_effect tool"""
-    # Setup mock - get_training_effect uses get_activity internally
-    activity_data = {
-        "summaryDTO": {
-            "trainingEffect": 3.5,
-            "anaerobicTrainingEffect": 2.0,
-            "trainingEffectLabel": "Highly Improving",
-            "activityTrainingLoad": 150,
-            "recoveryTime": 720,  # 12 hours in minutes
-            "performanceCondition": 95,
-        }
-    }
-    mock_garmin_client.get_activity.return_value = activity_data
-
-    # Call tool
-    result = await app_with_training.call_tool(
-        "get_training_effect",
-        {"activity_id": 12345678901}
-    )
-
-    # Verify
-    assert result is not None
-    mock_garmin_client.get_activity.assert_called_once_with(12345678901)
-
-
-@pytest.mark.asyncio
-async def test_get_max_metrics_tool(app_with_training, mock_garmin_client):
-    """Test get_max_metrics tool"""
-    # Setup mock
-    max_metrics = {
-        "maxHeartRate": 180,
-        "maxSpeed": 4.5,
-        "maxPower": 350,
-        "date": "2024-01-15"
-    }
-    mock_garmin_client.get_max_metrics.return_value = max_metrics
-
-    # Call tool
-    result = await app_with_training.call_tool(
-        "get_max_metrics",
-        {"date": "2024-01-15"}
-    )
-
-    # Verify
-    assert result is not None
+    assert data["vo2_max"] == 52.5
+    assert data["fitness_age_years"] == 25
     mock_garmin_client.get_max_metrics.assert_called_once_with("2024-01-15")
 
 
 @pytest.mark.asyncio
-async def test_get_hrv_data_tool(app_with_training, mock_garmin_client):
-    """Test get_hrv_data tool"""
-    # Setup mock
-    mock_garmin_client.get_hrv_data.return_value = MOCK_HRV_DATA
+async def test_get_max_metrics_no_data(app, mock_garmin_client):
+    mock_garmin_client.get_max_metrics.return_value = None
 
-    # Call tool
-    result = await app_with_training.call_tool(
-        "get_hrv_data",
-        {"date": "2024-01-15"}
-    )
+    result = await app.call_tool("get_max_metrics", {"date": "2024-01-15"})
+    data = _parse(result)
 
-    # Verify
-    assert result is not None
+    assert "error" in data
+
+
+# ── get_hrv_data ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_hrv_data(app, mock_garmin_client):
+    mock_garmin_client.get_hrv_data.return_value = {
+        "hrvSummary": {
+            "calendarDate": "2024-01-15",
+            "lastNightAvg": 45,
+            "lastNight5MinHigh": 65,
+            "weeklyAvg": 48,
+            "baseline": {"balancedLow": 35, "balancedUpper": 55},
+            "status": "BALANCED",
+        }
+    }
+
+    result = await app.call_tool("get_hrv_data", {"date": "2024-01-15"})
+    data = _parse(result)
+
+    assert data["last_night_avg_hrv_ms"] == 45
+    assert data["status"] == "BALANCED"
     mock_garmin_client.get_hrv_data.assert_called_once_with("2024-01-15")
 
 
+# ── get_training_status ───────────────────────────────────────────────────────
+
+
 @pytest.mark.asyncio
-async def test_get_fitnessage_data_tool(app_with_training, mock_garmin_client):
-    """Test get_fitnessage_data tool"""
-    # Setup mock
-    fitness_age = {
-        "fitnessAge": 25,
-        "chronologicalAge": 30,
-        "vo2Max": 52.5,
-        "date": "2024-01-15"
+async def test_get_training_status(app, mock_garmin_client):
+    mock_garmin_client.get_training_status.return_value = {
+        "mostRecentTrainingStatus": {
+            "latestTrainingStatusData": {
+                "device123": {
+                    "calendarDate": "2024-01-15",
+                    "trainingStatus": "PRODUCTIVE",
+                    "sport": "RUNNING",
+                    "fitnessTrend": "UP",
+                    "acuteTrainingLoadDTO": {
+                        "dailyTrainingLoadAcute": 500,
+                        "dailyTrainingLoadChronic": 400,
+                        "dailyAcuteChronicWorkloadRatio": 1.25,
+                        "acwrStatus": "OPTIMAL",
+                    },
+                }
+            }
+        },
+        "mostRecentVO2Max": {"generic": {"vo2MaxValue": 52.5}},
+        "mostRecentTrainingLoadBalance": {
+            "metricsTrainingLoadBalanceDTOMap": {
+                "device123": {
+                    "monthlyLoadAerobicLow": 200,
+                    "monthlyLoadAerobicHigh": 150,
+                    "monthlyLoadAnaerobic": 50,
+                }
+            }
+        },
     }
-    mock_garmin_client.get_fitnessage_data.return_value = fitness_age
 
-    # Call tool
-    result = await app_with_training.call_tool(
-        "get_fitnessage_data",
-        {"date": "2024-01-15"}
-    )
+    result = await app.call_tool("get_training_status", {"date": "2024-01-15"})
+    data = _parse(result)
 
-    # Verify
-    assert result is not None
-    mock_garmin_client.get_fitnessage_data.assert_called_once_with("2024-01-15")
-
-
-@pytest.mark.asyncio
-async def test_request_reload_tool(app_with_training, mock_garmin_client):
-    """Test request_reload tool"""
-    # Setup mock
-    reload_response = {"status": "success", "message": "Data reload requested"}
-    mock_garmin_client.request_reload.return_value = reload_response
-
-    # Call tool
-    result = await app_with_training.call_tool(
-        "request_reload",
-        {"date": "2024-01-15"}
-    )
-
-    # Verify
-    assert result is not None
-    mock_garmin_client.request_reload.assert_called_once_with("2024-01-15")
-
-
-@pytest.mark.asyncio
-async def test_get_training_status_tool(app_with_training, mock_garmin_client):
-    """Test get_training_status tool returns training status"""
-    # Setup mock
-    mock_garmin_client.get_training_status.return_value = MOCK_TRAINING_STATUS
-
-    # Call tool
-    result = await app_with_training.call_tool(
-        "get_training_status",
-        {"date": "2024-01-15"}
-    )
-
-    # Verify
-    assert result is not None
+    assert data["training_status"] == "PRODUCTIVE"
+    assert data["vo2_max"] == 52.5
     mock_garmin_client.get_training_status.assert_called_once_with("2024-01-15")
 
 
-@pytest.mark.asyncio
-async def test_get_lactate_threshold_tool(app_with_training, mock_garmin_client):
-    """Test get_lactate_threshold tool returns lactate threshold data"""
-    # Setup mock
-    mock_garmin_client.get_lactate_threshold.return_value = MOCK_LACTATE_THRESHOLD
-
-    # Call tool
-    result = await app_with_training.call_tool(
-        "get_lactate_threshold",
-        {"date": "2024-01-15"}
-    )
-
-    # Verify
-    assert result is not None
-    mock_garmin_client.get_lactate_threshold.assert_called_once_with("2024-01-15")
-
-
-# Error handling tests
-@pytest.mark.asyncio
-async def test_get_hrv_data_no_data(app_with_training, mock_garmin_client):
-    """Test get_hrv_data tool when no data available"""
-    # Setup mock to return None
-    mock_garmin_client.get_hrv_data.return_value = None
-
-    # Call tool
-    result = await app_with_training.call_tool(
-        "get_hrv_data",
-        {"date": "2024-01-15"}
-    )
-
-    # Verify error message is returned
-    assert result is not None
+# ── get_progress_summary ──────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_get_training_effect_exception(app_with_training, mock_garmin_client):
-    """Test get_training_effect tool when API raises exception"""
-    # Setup mock to raise exception - get_training_effect uses get_activity internally
-    mock_garmin_client.get_activity.side_effect = Exception("API Error")
+async def test_get_progress_summary(app, mock_garmin_client):
+    mock_garmin_client.get_progress_summary_between_dates.return_value = {
+        "totalDistance": 50000,
+        "avgDistance": 5000,
+        "numberOfActivities": 10,
+    }
 
-    # Call tool
-    result = await app_with_training.call_tool(
-        "get_training_effect",
-        {"activity_id": 12345678901}
+    result = await app.call_tool(
+        "get_progress_summary",
+        {"start_date": "2024-01-01", "end_date": "2024-01-15", "metric": "distance"},
+    )
+    data = _parse(result)
+
+    assert data["total_distance_meters"] == 50000
+    assert data["activity_count"] == 10
+    mock_garmin_client.get_progress_summary_between_dates.assert_called_once_with(
+        "2024-01-01", "2024-01-15", "distance"
     )
 
-    # Verify error is handled gracefully
-    assert result is not None
+
+# ── get_race_predictions ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_race_predictions(app, mock_garmin_client):
+    mock_garmin_client.get_race_predictions.return_value = {"5K": "22:00", "10K": "46:00"}
+
+    result = await app.call_tool("get_race_predictions", {})
+    data = _parse(result)
+
+    assert "5K" in data
+    mock_garmin_client.get_race_predictions.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_race_predictions_no_data(app, mock_garmin_client):
+    mock_garmin_client.get_race_predictions.return_value = None
+
+    result = await app.call_tool("get_race_predictions", {})
+    data = _parse(result)
+
+    assert "error" in data
+
+
+# ── get_goals ─────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_goals(app, mock_garmin_client):
+    mock_garmin_client.get_goals.return_value = [{"goalType": "steps", "target": 10000}]
+
+    result = await app.call_tool("get_goals", {"goal_type": "active"})
+    data = _parse(result)
+
+    assert isinstance(data, list)
+    mock_garmin_client.get_goals.assert_called_once_with("active")
+
+
+@pytest.mark.asyncio
+async def test_get_goals_no_data(app, mock_garmin_client):
+    mock_garmin_client.get_goals.return_value = None
+
+    result = await app.call_tool("get_goals", {})
+    data = _parse(result)
+
+    assert "error" in data
+
+
+# ── get_personal_record ───────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_personal_record(app, mock_garmin_client):
+    mock_garmin_client.get_personal_record.return_value = [{"recordType": "FASTEST_5K"}]
+
+    result = await app.call_tool("get_personal_record", {})
+    data = _parse(result)
+
+    assert isinstance(data, list)
+    mock_garmin_client.get_personal_record.assert_called_once()
+
+
+# ── exception handling ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_tool_exception_returns_json_error(app, mock_garmin_client):
+    mock_garmin_client.get_max_metrics.side_effect = RuntimeError("Timeout")
+
+    result = await app.call_tool("get_max_metrics", {"date": "2024-01-15"})
+    data = _parse(result)
+
+    assert "error" in data
+    assert "Timeout" in data["error"]

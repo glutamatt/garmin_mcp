@@ -22,6 +22,7 @@ def mock_garmin_client():
     # Configure mock to have all the methods we need
     # By default, methods return None (can be overridden in tests)
     client.get_activities = Mock(return_value=[])
+    client.get_activities_by_date = Mock(return_value=[])
     client.get_stats = Mock(return_value={})
     client.get_user_summary = Mock(return_value={})
     client.get_body_composition = Mock(return_value={})
@@ -43,6 +44,39 @@ def mock_garmin_client():
     client.get_spo2_data = Mock(return_value={})
     client.get_all_day_stress = Mock(return_value={})
     client.get_all_day_events = Mock(return_value={})
+    client.get_coaching_snapshot = Mock(return_value={})
+    client.get_hrv_data = Mock(return_value={})
+    client.get_max_metrics = Mock(return_value={})
+    client.get_progress_summary_between_dates = Mock(return_value={})
+    client.get_race_predictions = Mock(return_value={})
+    client.get_goals = Mock(return_value={})
+    client.get_personal_record = Mock(return_value={})
+    client.get_activity = Mock(return_value={})
+    client.get_activity_splits = Mock(return_value={})
+    client.get_activity_hr_in_timezones = Mock(return_value={})
+    client.get_activity_types = Mock(return_value=[])
+    client.get_activity_weather = Mock(return_value={})
+
+    # Profile & devices
+    client.get_full_name = Mock(return_value="")
+    client.get_user_profile = Mock(return_value={})
+    client.get_userprofile_settings = Mock(return_value={})
+    client.get_unit_system = Mock(return_value=None)
+    client.get_devices = Mock(return_value=[])
+    client.get_device_last_used = Mock(return_value={})
+    client.get_primary_training_device = Mock(return_value={})
+    client.get_usage_indicators = Mock(return_value={})
+
+    # Workouts
+    client.get_workouts = Mock(return_value=[])
+    client.get_workout_by_id = Mock(return_value={})
+    client.upload_workout = Mock(return_value={})
+    client.schedule_workout = Mock(return_value={})
+    client.unschedule_workout = Mock(return_value=True)
+    client.delete_workout = Mock(return_value=True)
+    client.reschedule_workout = Mock(return_value={})
+    client.get_scheduled_workouts_for_range = Mock(return_value=[])
+    client.query_garmin_graphql = Mock(return_value={})
 
     return client
 
@@ -176,16 +210,15 @@ def mock_get_client(mock_garmin_client):
     tokens from the (non-existent in tests) request context.
     """
     modules_to_patch = [
-        "garmin_mcp.activity_management",
-        "garmin_mcp.health_wellness",
-        "garmin_mcp.user_profile",
-        "garmin_mcp.devices",
-        "garmin_mcp.gear_management",
-        "garmin_mcp.weight_management",
-        "garmin_mcp.challenges",
+        # New 3-layer modules
+        "garmin_mcp.health",
+        "garmin_mcp.activities",
         "garmin_mcp.training",
         "garmin_mcp.workouts",
-        "garmin_mcp.data_management",
+        "garmin_mcp.profile",
+        # Consolidated modules
+        "garmin_mcp.gear",
+        "garmin_mcp.body_data",
         "garmin_mcp.womens_health",
     ]
 
@@ -206,7 +239,7 @@ def create_test_app(module):
     Helper function to create a FastMCP app with a specific module registered
 
     Args:
-        module: The module to register (e.g., health_wellness)
+        module: The module to register (e.g., health)
 
     Returns:
         FastMCP app instance with tools registered
@@ -222,7 +255,7 @@ def app_factory():
     Factory fixture to create FastMCP apps with different modules
 
     Usage:
-        app = app_factory(health_wellness)
+        app = app_factory(health)
     """
     def _create_app(module):
         return create_test_app(module)
