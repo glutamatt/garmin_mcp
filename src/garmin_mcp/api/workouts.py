@@ -629,13 +629,39 @@ def unschedule_workout(client, schedule_id: int) -> dict:
 
 
 def reschedule_workout(client, schedule_id: int, new_date: str) -> dict:
-    """Move a scheduled workout to a different date."""
-    result = client.reschedule_workout(schedule_id, new_date)
-    if isinstance(result, dict):
-        return clean_nones({
-            "status": "rescheduled",
-            "schedule_id": schedule_id,
-            "new_date": new_date,
-            "workout_name": result.get('workout', {}).get('workoutName'),
-        })
-    return {"status": "rescheduled", "schedule_id": schedule_id, "new_date": new_date}
+    """Move a scheduled workout to a different date.
+
+    Implemented as unschedule + re-schedule (Garmin's PUT endpoint returns 500).
+    """
+    # Find the workout_id for this schedule entry
+    today = datetime.date.today()
+    start = (today - datetime.timedelta(days=30)).isoformat()
+    end = (today + datetime.timedelta(days=365)).isoformat()
+    scheduled = client.get_scheduled_workouts_for_range(start, end)
+
+    workout_id = None
+    workout_name = None
+    for entry in scheduled:
+        if entry.get('scheduledWorkoutId') == schedule_id:
+            workout_id = entry.get('workoutId')
+            workout_name = entry.get('workoutName')
+            break
+
+    if not workout_id:
+        return {"status": "error", "message": f"Schedule {schedule_id} not found"}
+
+    # Unschedule the old entry
+    client.unschedule_workout(schedule_id)
+
+    # Re-schedule on the new date
+    schedule_result = client.schedule_workout(workout_id, new_date)
+    new_schedule_id = schedule_result.get('workoutScheduleId') if isinstance(schedule_result, dict) else None
+
+    return clean_nones({
+        "status": "rescheduled",
+        "old_schedule_id": schedule_id,
+        "new_schedule_id": new_schedule_id,
+        "workout_id": workout_id,
+        "workout_name": workout_name,
+        "new_date": new_date,
+    })

@@ -139,15 +139,18 @@ async def test_unschedule_workout(app, mock_garmin_client):
 
 @pytest.mark.asyncio
 async def test_reschedule_workout(app, mock_garmin_client):
-    mock_garmin_client.reschedule_workout.return_value = {
-        "workout": {"workoutName": "Tempo"}
-    }
+    mock_garmin_client.get_scheduled_workouts_for_range.return_value = [
+        {"scheduledWorkoutId": 99, "workoutId": 42, "workoutName": "Tempo"}
+    ]
+    mock_garmin_client.unschedule_workout.return_value = True
+    mock_garmin_client.schedule_workout.return_value = {"workoutScheduleId": 100}
 
     result = await app.call_tool("reschedule_workout", {"schedule_id": 99, "new_date": "2024-01-25"})
     data = _parse(result)
 
     assert data["status"] == "rescheduled"
     assert data["new_date"] == "2024-01-25"
+    assert data["new_schedule_id"] == 100
 
 
 # ── exception handling ────────────────────────────────────────────────────────

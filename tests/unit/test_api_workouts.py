@@ -212,10 +212,16 @@ class TestUnscheduleWorkout:
 
 class TestRescheduleWorkout:
     def test_success(self, client):
-        client.reschedule_workout.return_value = {
-            "workout": {"workoutName": "Tempo Run"}
-        }
+        client.get_scheduled_workouts_for_range.return_value = [
+            {"scheduledWorkoutId": 99, "workoutId": 42, "workoutName": "Tempo Run"}
+        ]
+        client.unschedule_workout.return_value = True
+        client.schedule_workout.return_value = {"workoutScheduleId": 100}
+
         result = api.reschedule_workout(client, 99, "2024-01-25")
         assert result["status"] == "rescheduled"
         assert result["new_date"] == "2024-01-25"
         assert result["workout_name"] == "Tempo Run"
+        assert result["new_schedule_id"] == 100
+        client.unschedule_workout.assert_called_once_with(99)
+        client.schedule_workout.assert_called_once_with(42, "2024-01-25")
