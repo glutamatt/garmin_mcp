@@ -958,8 +958,52 @@ def execute(command: str, token: str, display_name: str = None) -> dict:
     args = ["--token", token]
     if display_name:
         args += ["--display-name", display_name]
+
+    # Extract --json value BEFORE shlex.split — shlex strips quotes from JSON,
+    # turning {"key":"val"} into {key:val} which is invalid.
+    json_value = None
+    import re
+    json_match = re.search(r'--json\s+(.+)', command)
+    if json_match:
+        raw_json = json_match.group(1).strip()
+        # Find the JSON object boundaries (handle nested braces)
+        if raw_json.startswith('{') or raw_json.startswith('['):
+            depth = 0
+            in_string = False
+            escape = False
+            end = 0
+            for ci, ch in enumerate(raw_json):
+                if escape:
+                    escape = False
+                    continue
+                if ch == '\\':
+                    escape = True
+                    continue
+                if ch == '"':
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if ch in ('{', '['):
+                    depth += 1
+                elif ch in ('}', ']'):
+                    depth -= 1
+                    if depth == 0:
+                        end = ci + 1
+                        break
+            if end > 0:
+                json_value = raw_json[:end]
+                # Remove --json <value> from command before shlex.split
+                command = command[:json_match.start()] + command[json_match.start() + len('--json ') + len(raw_json[:end]):]
+        elif raw_json.startswith("'") or raw_json.startswith('"'):
+            # Quoted JSON — let shlex handle it
+            pass
+
     cmd_args = shlex.split(command)
     cmd_args = _hoist_global_flags(cmd_args)
+    # Re-inject --json with the preserved value
+    if json_value is not None:
+        cmd_args += ["--json", json_value]
     args += cmd_args
 
     result = runner.invoke(garmin, args, catch_exceptions=True)

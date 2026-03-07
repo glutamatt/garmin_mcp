@@ -157,6 +157,33 @@ class TestExecuteValidation:
         assert "Empty command" in result["stderr"]
 
 
+class TestJsonExtraction:
+    """Test that --json values survive shlex.split (unquoted JSON from AI agents)."""
+
+    def test_unquoted_json_create(self):
+        result = execute('--dry-run workouts create --json {"workoutName":"Test","steps":[]}', "fake")
+        assert result["exit_code"] == 0
+        data = json.loads(result["stdout"])
+        assert data["name"] == "Test"
+
+    def test_nested_json(self):
+        result = execute('--dry-run workouts create --json {"workoutName":"Tempo","sportType":{"sportTypeId":1}}', "fake")
+        assert result["exit_code"] == 0
+        data = json.loads(result["stdout"])
+        assert data["name"] == "Tempo"
+
+    def test_json_with_trailing_flags(self):
+        result = execute('workouts create --json {"workoutName":"Test","steps":[]} --dry-run --date 2026-03-15', "fake")
+        assert result["exit_code"] == 0
+        data = json.loads(result["stdout"])
+        assert data["dry_run"] is True
+        assert data["date"] == "2026-03-15"
+
+    def test_quoted_json_still_works(self):
+        result = execute("--dry-run workouts create --json '{}'", "fake")
+        assert result["exit_code"] == 0
+
+
 class TestDryRun:
     """Test --dry-run flag on mutation commands (no real API calls)."""
 
