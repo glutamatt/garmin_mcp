@@ -81,6 +81,15 @@ def create_client_from_tokens(
         client.display_name = display_name
     if full_name:
         client.full_name = full_name
+
+    # If display_name is missing, resolve from garth profile (no API call).
+    # Many SDK endpoints use display_name in URL paths — without it they 403.
+    if not getattr(client, "display_name", None):
+        profile = getattr(client.garth, "profile", None)
+        if profile and isinstance(profile, dict):
+            client.display_name = profile.get("displayName")
+            client.full_name = client.full_name or profile.get("fullName")
+
     return client
 
 
