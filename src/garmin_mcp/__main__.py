@@ -8,7 +8,9 @@ Usage:
 """
 
 import argparse
+import os
 import sys
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -33,30 +35,9 @@ def main():
 
     args = parser.parse_args()
 
-    from fastmcp import FastMCP
-    from garmin_mcp import (
-        health, activities, training,
-        workouts, profile,
-        gear, body_data,
-        calendar, auth_tool,
-    )
+    from garmin_mcp.server import create_app
 
-    # All tools use per-request token loading via client_factory.get_client(ctx)
-    print("Garmin MCP v2: 3-layer architecture, per-request token loading.", file=sys.stderr)
-
-    # Create the MCP app
-    app = FastMCP("Garmin Connect v2.0")
-
-    # Register all tools
-    app = auth_tool.register_tools(app)
-    app = health.register_tools(app)
-    app = activities.register_tools(app)
-    app = training.register_tools(app)
-    app = workouts.register_tools(app)
-    app = profile.register_tools(app)
-    app = gear.register_tools(app)
-    app = body_data.register_tools(app)
-    app = calendar.register_tools(app)
+    app = create_app()
 
     # Run the MCP server with appropriate transport
     if args.http:
