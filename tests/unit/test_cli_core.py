@@ -10,6 +10,7 @@ from click.testing import CliRunner
 from garmin_mcp.cli import (
     _sanitize_path,
     _validate_command,
+    _hoist_global_flags,
     garmin,
     execute,
     SANDBOX_DIR,
@@ -74,6 +75,44 @@ class TestValidateCommand:
     def test_rejects_redirect(self):
         with pytest.raises(ValueError, match="Shell metacharacter"):
             _validate_command("activities list > /etc/passwd")
+
+
+class TestHoistGlobalFlags:
+    def test_flags_already_at_front(self):
+        args = ["--fields", "id,name", "activities", "list"]
+        assert _hoist_global_flags(args) == ["--fields", "id,name", "activities", "list"]
+
+    def test_flags_after_subcommand(self):
+        args = ["activities", "list", "--fields", "id,name", "--limit", "5"]
+        result = _hoist_global_flags(args)
+        assert result == ["--fields", "id,name", "activities", "list", "--limit", "5"]
+
+    def test_multiple_global_flags(self):
+        args = ["activities", "list", "--fields", "id", "--format", "table", "--limit", "3"]
+        result = _hoist_global_flags(args)
+        assert result[:4] == ["--fields", "id", "--format", "table"]
+        assert "activities" in result
+        assert "--limit" in result
+
+    def test_dry_run_boolean(self):
+        args = ["workouts", "create", "--dry-run", "--json", "{}"]
+        result = _hoist_global_flags(args)
+        assert result[0] == "--dry-run"
+        assert "workouts" in result
+
+    def test_output_flag(self):
+        args = ["activities", "list", "--output", "/tmp/garmin/test.json"]
+        result = _hoist_global_flags(args)
+        assert result[:2] == ["--output", "/tmp/garmin/test.json"]
+
+    def test_no_global_flags(self):
+        args = ["activities", "list", "--limit", "5"]
+        assert _hoist_global_flags(args) == args
+
+    def test_equals_style(self):
+        args = ["activities", "list", "--fields=id,name"]
+        result = _hoist_global_flags(args)
+        assert result[0] == "--fields=id,name"
 
 
 class TestSanitizePath:

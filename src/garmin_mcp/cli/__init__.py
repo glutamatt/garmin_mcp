@@ -893,6 +893,44 @@ def _validate_command(command: str) -> str:
     return command.strip()
 
 
+# Global flags that belong to the root garmin group.
+# AI agents often place these after the subcommand (e.g. "activities list --fields id,name")
+# but Click requires them before the subcommand. We hoist them automatically.
+_GLOBAL_FLAGS_WITH_VALUE = ("--format", "--fields", "--output")
+_GLOBAL_FLAGS_BOOLEAN = ("--dry-run",)
+
+
+def _hoist_global_flags(args: list[str]) -> list[str]:
+    """Move global flags from anywhere in args to the front.
+
+    Click requires group-level options before the subcommand.
+    AI agents consistently put them after. This fixes it transparently.
+    """
+    global_args = []
+    rest = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in _GLOBAL_FLAGS_WITH_VALUE:
+            global_args.append(arg)
+            if i + 1 < len(args):
+                global_args.append(args[i + 1])
+                i += 2
+            else:
+                i += 1
+        elif arg in _GLOBAL_FLAGS_BOOLEAN:
+            global_args.append(arg)
+            i += 1
+        elif any(arg.startswith(f + "=") for f in _GLOBAL_FLAGS_WITH_VALUE):
+            # Handle --fields=id,name style
+            global_args.append(arg)
+            i += 1
+        else:
+            rest.append(arg)
+            i += 1
+    return global_args + rest
+
+
 def execute(command: str, token: str, display_name: str = None) -> dict:
     """Execute a CLI command string, return {stdout, stderr, exit_code}.
 
@@ -900,6 +938,8 @@ def execute(command: str, token: str, display_name: str = None) -> dict:
 
     Input is validated: control characters and shell metacharacters are rejected.
     Commands are parsed by Click, not by a shell — no shell expansion occurs.
+    Global flags (--fields, --format, --output, --dry-run) are hoisted to the front
+    regardless of where the AI places them in the command.
     """
     import shlex
     import inspect
@@ -918,7 +958,9 @@ def execute(command: str, token: str, display_name: str = None) -> dict:
     args = ["--token", token]
     if display_name:
         args += ["--display-name", display_name]
-    args += shlex.split(command)
+    cmd_args = shlex.split(command)
+    cmd_args = _hoist_global_flags(cmd_args)
+    args += cmd_args
 
     result = runner.invoke(garmin, args, catch_exceptions=True)
     stderr = ""
