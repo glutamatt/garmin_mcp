@@ -207,6 +207,8 @@ def _first_not_none(d: dict, *keys):
 def _enrich_hr_zones(client: Garmin, activities: list[dict], raw: list[dict]) -> None:
     """Fetch HR zones per activity and embed as compact dict. Mutates activities in-place."""
     for activity, raw_a in zip(activities, raw):
+        if activity.get("hr_zones_seconds"):
+            continue  # Already has inline zones from list response
         activity_id = raw_a.get("activityId")
         if not activity_id:
             continue

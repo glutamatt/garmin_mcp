@@ -30,8 +30,9 @@ def register_tools(app):
         For date-based: provide start_date + end_date (+ optional activity_type filter).
         For pagination: provide start index + limit (newest first).
 
-        Each activity includes training_load (EPOC), training_effect, power.
-        Set include_hr_zones=true for per-zone seconds (costs 1 extra API call per activity).
+        Each activity includes training_effect, power, VO2max, and inline HR zones (z1-z5).
+        Set include_hr_zones=true to fetch detailed zone data via extra API calls
+        (only for activities missing inline zones).
 
         Args:
             start_date: Start date in YYYY-MM-DD format (date range mode)
