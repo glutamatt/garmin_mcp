@@ -16,6 +16,7 @@ def get_activities(
     activity_type: str = "",
     start: int = 0,
     limit: int = 20,
+    include_hr_zones: bool = False,
 ) -> dict:
     """Unified activity list: date range OR pagination.
 
@@ -32,23 +33,29 @@ def get_activities(
                 msg += f" for type '{activity_type}'"
             return {"error": msg}
 
+        activities = [_curate_activity_summary(a) for a in raw]
+        if include_hr_zones:
+            _enrich_hr_zones(client, activities, raw)
         return {
-            "count": len(raw),
+            "count": len(activities),
             "date_range": {"start": start_date, "end": end_date},
-            "activities": [_curate_activity_summary(a) for a in raw],
+            "activities": activities,
         }
     else:
         raw = client.get_activities(start, limit)
         if not raw:
             return {"error": f"No activities found at index {start}"}
 
+        activities = [_curate_activity_summary(a) for a in raw]
+        if include_hr_zones:
+            _enrich_hr_zones(client, activities, raw)
         return {
             "start": start,
             "limit": limit,
-            "count": len(raw),
+            "count": len(activities),
             "has_more": len(raw) == limit,
             "next_start": start + limit if len(raw) == limit else None,
-            "activities": [_curate_activity_summary(a) for a in raw],
+            "activities": activities,
         }
 
 
@@ -97,6 +104,9 @@ def get_activity(client: Garmin, activity_id: int) -> dict:
         "anaerobic_training_effect": summary.get("anaerobicTrainingEffect"),
         "training_effect_label": summary.get("trainingEffectLabel"),
         "training_load": summary.get("activityTrainingLoad"),
+        # Self-evaluation (athlete post-workout input)
+        "perceived_effort": summary.get("directWorkoutRpe"),
+        "workout_feel": summary.get("directWorkoutFeel"),
         # Recovery
         "recovery_hr_bpm": summary.get("recoveryHeartRate"),
         "body_battery_impact": summary.get("differenceBodyBattery"),
@@ -185,9 +195,36 @@ def get_activity_types(client: Garmin) -> dict:
 # ── Private helpers ──────────────────────────────────────────────────────────
 
 
+def _first_not_none(d: dict, *keys):
+    """Return the first non-None value from d for the given keys."""
+    for k in keys:
+        v = d.get(k)
+        if v is not None:
+            return v
+    return None
+
+
+def _enrich_hr_zones(client: Garmin, activities: list[dict], raw: list[dict]) -> None:
+    """Fetch HR zones per activity and embed as compact dict. Mutates activities in-place."""
+    for activity, raw_a in zip(activities, raw):
+        activity_id = raw_a.get("activityId")
+        if not activity_id:
+            continue
+        try:
+            zones = client.get_activity_hr_in_timezones(activity_id)
+            if zones:
+                activity["hr_zones_seconds"] = {
+                    f"z{z['zoneNumber']}": z.get("secsInZone", 0)
+                    for z in sorted(zones, key=lambda z: z.get("zoneNumber", 0))
+                    if z.get("zoneNumber")
+                }
+        except Exception:
+            pass  # Skip zones for this activity, don't fail the batch
+
+
 def _curate_activity_summary(a: dict) -> dict:
     """Curate an activity list item to essential fields."""
-    return clean_nones({
+    result = clean_nones({
         "id": a.get("activityId"),
         "name": a.get("activityName"),
         "type": (a.get("activityType") or {}).get("typeKey"),
@@ -199,4 +236,26 @@ def _curate_activity_summary(a: dict) -> dict:
         "avg_hr_bpm": a.get("averageHR"),
         "max_hr_bpm": a.get("maxHR"),
         "steps": a.get("steps"),
+        # Training effect (FirstBeat) — list uses aerobicTrainingEffect, detail uses trainingEffect
+        "training_effect": _first_not_none(a, "aerobicTrainingEffect", "trainingEffect"),
+        "anaerobic_training_effect": a.get("anaerobicTrainingEffect"),
+        "training_effect_label": a.get("trainingEffectLabel"),
+        # Power — list uses avgPower/normPower, detail uses averagePower/normalizedPower
+        "avg_power_watts": _first_not_none(a, "avgPower", "averagePower"),
+        "normalized_power_watts": _first_not_none(a, "normPower", "normalizedPower"),
+        # Self-evaluation (athlete post-workout input — detail only)
+        "perceived_effort": a.get("directWorkoutRpe"),
+        "workout_feel": a.get("directWorkoutFeel"),
+        # VO2max & body battery (available in list)
+        "vo2max": a.get("vO2MaxValue"),
+        "body_battery_impact": a.get("differenceBodyBattery"),
     })
+    # HR zones — available inline in list as hrTimeInZone_1..5 (seconds)
+    zones = {}
+    for z in range(1, 6):
+        val = a.get(f"hrTimeInZone_{z}")
+        if val:
+            zones[f"z{z}"] = round(val)
+    if zones:
+        result["hr_zones_seconds"] = zones
+    return result
