@@ -15,7 +15,7 @@ import os
 import click
 
 from garmin_mcp.client_factory import create_client_from_tokens
-from garmin_mcp.cli.output import filter_fields, format_output
+from garmin_mcp.cli.output import filter_fields, find_missing_fields, format_output
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -58,6 +58,9 @@ def _out(ctx, data):
     output_path = ctx.obj.get("output")
 
     if fields:
+        missing = find_missing_fields(data, fields)
+        if missing:
+            click.echo(f"Warning: unknown fields ignored: {', '.join(missing)}", err=True)
         data = filter_fields(data, fields)
 
     text = format_output(data, fmt)
@@ -229,8 +232,10 @@ def activities_list(ctx, start_date, end_date, activity_type, start, limit):
     """List activities by date range or pagination."""
     from garmin_mcp.api import activities as api
 
+    fields = ctx.obj.get("fields")
     _run(ctx, lambda: api.get_activities(
-        _client(ctx), start_date, end_date, activity_type, start, limit
+        _client(ctx), start_date, end_date, activity_type, start, limit,
+        fields=fields,
     ))
 
 
@@ -589,10 +594,19 @@ def profile_name(ctx):
 @profile.command("info")
 @click.pass_context
 def profile_info(ctx):
-    """Full user profile: settings, HR zones, power zones."""
+    """User profile: settings (weight, height, VO2max, lactate threshold), unit system."""
     from garmin_mcp.api import profile as api
 
     _run(ctx, lambda: api.get_user_profile(_client(ctx)))
+
+
+@profile.command("hr-zones")
+@click.pass_context
+def profile_hr_zones(ctx):
+    """HR and power zone boundaries (from latest activity)."""
+    from garmin_mcp.api import profile as api
+
+    _run(ctx, lambda: api.get_hr_zones(_client(ctx)))
 
 
 @profile.command("devices")
@@ -1007,12 +1021,17 @@ def execute(command: str, token: str, display_name: str = None) -> dict:
     args += cmd_args
 
     result = runner.invoke(garmin, args, catch_exceptions=True)
+    stdout = result.output or ""
     stderr = ""
     if hasattr(result, "stderr") and result.stderr:
         stderr = result.stderr
 
+    # Click sometimes writes errors to both stdout and stderr — deduplicate
+    if result.exit_code != 0 and stdout and stdout == stderr:
+        stdout = ""
+
     return {
-        "stdout": result.output or "",
+        "stdout": stdout,
         "stderr": stderr,
         "exit_code": result.exit_code,
     }

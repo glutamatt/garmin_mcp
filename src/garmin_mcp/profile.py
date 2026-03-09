@@ -29,12 +29,21 @@ def register_tools(app):
 
     @app.tool()
     async def get_user_profile(ctx: Context) -> str:
-        """Enriched user profile: display name, location, settings (weight, height, HR/power zones, unit system).
-
-        Combines profile + settings + unit system in one call.
-        """
+        """User profile: name, weight, height, VO2max, lactate threshold, unit system + HR zones (Z1-Z5) + power zones (Z1-Z7)."""
         try:
             return json.dumps(api.get_user_profile(get_client(ctx)), indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, indent=2)
+
+    @app.tool()
+    async def get_hr_zones(ctx: Context) -> str:
+        """Athlete's HR and power zone boundaries (Z1-Z5 for HR, Z1-Z7 for power).
+
+        Fetched from the latest activity's zone data. Returns low_bpm per HR zone
+        and low_watts per power zone. Use this to classify efforts by zone.
+        """
+        try:
+            return json.dumps(api.get_hr_zones(get_client(ctx)), indent=2)
         except Exception as e:
             return json.dumps({"error": str(e)}, indent=2)
 

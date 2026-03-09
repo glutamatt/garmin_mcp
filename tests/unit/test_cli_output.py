@@ -2,7 +2,7 @@
 
 import json
 
-from garmin_mcp.cli.output import filter_fields, format_output
+from garmin_mcp.cli.output import filter_fields, find_missing_fields, format_output
 
 
 class TestFilterFields:
@@ -55,6 +55,36 @@ class TestFilterFields:
         # filter_fields shouldn't be called with None, but test robustness
         result = filter_fields(data, ["id"])
         assert result == {"id": 1}
+
+
+class TestFindMissingFields:
+    def test_detects_missing_in_dict_with_list(self):
+        data = {
+            "count": 2,
+            "activities": [
+                {"id": 1, "name": "Run", "avg_hr_bpm": 150},
+            ],
+        }
+        missing = find_missing_fields(data, ["id", "perceived_exertion", "fake_field"])
+        assert "perceived_exertion" in missing
+        assert "fake_field" in missing
+        assert "id" not in missing
+
+    def test_no_missing(self):
+        data = {"id": 1, "name": "Run"}
+        assert find_missing_fields(data, ["id", "name"]) == []
+
+    def test_flat_dict(self):
+        data = {"id": 1}
+        assert find_missing_fields(data, ["id", "missing"]) == ["missing"]
+
+    def test_list_of_dicts(self):
+        data = [{"id": 1, "name": "X"}]
+        assert find_missing_fields(data, ["id", "nope"]) == ["nope"]
+
+    def test_empty_data(self):
+        assert find_missing_fields([], ["id"]) == []
+        assert find_missing_fields({}, ["id"]) == []
 
 
 class TestFormatOutput:

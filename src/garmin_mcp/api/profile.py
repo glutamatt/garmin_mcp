@@ -5,6 +5,7 @@ Pure functions: (Garmin client, params) → dict.
 Merges user_profile + settings + unit_system + devices into 3 calls.
 """
 
+from garminconnect import Garmin
 from garmin_mcp.utils import clean_nones
 
 
@@ -24,8 +25,23 @@ def get_full_name(client) -> str:
     return str(name) if name else "Unknown"
 
 
+def get_hr_zones(client: Garmin) -> dict:
+    """Athlete's HR and power zone boundaries from the most recent activity.
+
+    Garmin stores zone boundaries per-activity (not in user-settings).
+    Fetches the latest activity's hrTimeInZones to extract the current config.
+    """
+    result = _fetch_zones_from_activity(client)
+    if not result:
+        return {"error": "No zone data available"}
+    return result
+
+
 def get_user_profile(client) -> dict:
-    """Enriched user profile: profile + settings + unit system in one response."""
+    """User profile: settings (weight, height, VO2max, lactate threshold) + unit system.
+
+    Note: HR/power zone boundaries are NOT in user-settings — use get_hr_zones() instead.
+    """
     profile = client.get_user_profile()
     if not profile:
         return {"error": "No user profile found"}
@@ -77,6 +93,14 @@ def get_user_profile(client) -> dict:
                 })
                 for z in power_zones
             ]
+
+    # If no HR zones from user-settings, fetch from latest activity
+    if "hr_zones" not in result:
+        zones = _fetch_zones_from_activity(client)
+        if zones.get("hr_zones"):
+            result["hr_zones"] = zones["hr_zones"]
+        if zones.get("power_zones"):
+            result["power_zones"] = zones["power_zones"]
 
     # Merge unit system
     try:
@@ -133,6 +157,42 @@ def get_devices(client) -> dict:
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
+def _fetch_zones_from_activity(client: Garmin) -> dict:
+    """Fetch HR + power zone boundaries from the most recent activity."""
+    try:
+        activities = client.get_activities(0, 1)
+    except Exception:
+        return {}
+    if not activities:
+        return {}
+    activity_id = activities[0].get("activityId")
+    if not activity_id:
+        return {}
+
+    result = {}
+    try:
+        hr_zones_raw = client.get_activity_hr_in_timezones(activity_id)
+        if hr_zones_raw and isinstance(hr_zones_raw, list):
+            result["hr_zones"] = [
+                clean_nones({"zone": z.get("zoneNumber"), "low_bpm": z.get("zoneLowBoundary")})
+                for z in sorted(hr_zones_raw, key=lambda z: z.get("zoneNumber", 0))
+                if z.get("zoneNumber")
+            ]
+    except Exception:
+        pass
+    try:
+        power_zones_raw = client.get_activity_power_in_timezones(activity_id)
+        if power_zones_raw and isinstance(power_zones_raw, list):
+            result["power_zones"] = [
+                clean_nones({"zone": z.get("zoneNumber"), "low_watts": z.get("zoneLowBoundary")})
+                for z in sorted(power_zones_raw, key=lambda z: z.get("zoneNumber", 0))
+                if z.get("zoneNumber")
+            ]
+    except Exception:
+        pass
+    return result
+
 
 def _safe_div(value, divisor):
     """Safe division returning None if value is None."""

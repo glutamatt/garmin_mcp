@@ -17,11 +17,13 @@ def get_activities(
     start: int = 0,
     limit: int = 20,
     include_hr_zones: bool = False,
+    fields: list[str] | None = None,
 ) -> dict:
     """Unified activity list: date range OR pagination.
 
     If start_date and end_date are given, uses date-based query.
     Otherwise, uses pagination (start/limit).
+    Enriches with GraphQL data (training_load) when needed.
     """
     limit = min(max(1, limit), 100)
 
@@ -36,6 +38,7 @@ def get_activities(
         activities = [_curate_activity_summary(a) for a in raw]
         if include_hr_zones:
             _enrich_hr_zones(client, activities, raw)
+        _maybe_enrich_graphql(client, activities, start_date, end_date, fields)
         return {
             "count": len(activities),
             "date_range": {"start": start_date, "end": end_date},
@@ -49,6 +52,9 @@ def get_activities(
         activities = [_curate_activity_summary(a) for a in raw]
         if include_hr_zones:
             _enrich_hr_zones(client, activities, raw)
+        # For pagination: derive date range from results for GraphQL enrichment
+        if activities:
+            _maybe_enrich_graphql_from_activities(client, activities, fields)
         return {
             "start": start,
             "limit": limit,
@@ -202,6 +208,69 @@ def _first_not_none(d: dict, *keys):
         if v is not None:
             return v
     return None
+
+
+# Fields only available via GraphQL activitiesScalar (not in REST list)
+_GRAPHQL_ONLY_FIELDS = {"training_load"}
+
+
+def _needs_graphql(fields: list[str] | None) -> bool:
+    """Check if requested fields include GraphQL-only data."""
+    if fields is None:
+        return True  # No filter = include everything
+    return bool(set(fields) & _GRAPHQL_ONLY_FIELDS)
+
+
+def _maybe_enrich_graphql(
+    client: Garmin,
+    activities: list[dict],
+    start_date: str,
+    end_date: str,
+    fields: list[str] | None,
+) -> None:
+    """Enrich activities with GraphQL data (training_load) if needed."""
+    if not _needs_graphql(fields):
+        return
+    try:
+        display_name = getattr(client, "display_name", None)
+        if not display_name:
+            return
+        gql_data = client.query_garmin_graphql({
+            "query": f'query{{activitiesScalar(displayName:"{display_name}", '
+                     f'startTimestampLocal:"{start_date}T00:00:00.00", '
+                     f'endTimestampLocal:"{end_date}T23:59:59.999", '
+                     f'limit:200)}}'
+        })
+        gql_activities = (
+            gql_data.get("data", {})
+            .get("activitiesScalar", {})
+            .get("activityList", [])
+        )
+        if not gql_activities:
+            return
+        # Build lookup by activity ID
+        gql_by_id = {a["activityId"]: a for a in gql_activities if "activityId" in a}
+        for activity in activities:
+            gql = gql_by_id.get(activity.get("id"))
+            if gql and gql.get("activityTrainingLoad") is not None:
+                activity["training_load"] = gql["activityTrainingLoad"]
+    except Exception:
+        pass  # GraphQL enrichment is optional
+
+
+def _maybe_enrich_graphql_from_activities(
+    client: Garmin,
+    activities: list[dict],
+    fields: list[str] | None,
+) -> None:
+    """Derive date range from activities and enrich via GraphQL."""
+    if not _needs_graphql(fields):
+        return
+    # Extract date range from start_time fields
+    dates = [a.get("start_time", "")[:10] for a in activities if a.get("start_time")]
+    if not dates:
+        return
+    _maybe_enrich_graphql(client, activities, min(dates), max(dates), fields)
 
 
 def _enrich_hr_zones(client: Garmin, activities: list[dict], raw: list[dict]) -> None:

@@ -4,6 +4,27 @@ import json
 from garmin_mcp.utils import format_duration, format_distance, format_pace
 
 
+def find_missing_fields(data, fields: list[str]) -> list[str]:
+    """Return requested fields not present in the data's first item."""
+    sample = None
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        sample = data[0]
+    elif isinstance(data, dict):
+        for v in data.values():
+            if isinstance(v, list) and v and isinstance(v[0], dict):
+                sample = v[0]
+                break
+        if sample is None and data:
+            sample = data
+    if not sample or not isinstance(sample, dict):
+        return []
+    return [f for f in fields if f not in sample]
+
+
+# Always included in --fields output regardless of user selection
+_ALWAYS_FIELDS = {"type"}
+
+
 def filter_fields(data, fields: list[str]):
     """Filter data to only include specified fields.
 
@@ -12,6 +33,7 @@ def filter_fields(data, fields: list[str]):
     - Dict with list-of-dicts values → filter list items, keep scalar metadata
     - Flat dict → filter keys directly
     """
+    fields = list(set(fields) | _ALWAYS_FIELDS)
     if isinstance(data, list):
         return [_filter_dict(item, fields) for item in data if isinstance(item, dict)]
 
