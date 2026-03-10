@@ -5,8 +5,12 @@ Pure functions: (Garmin client, params) → dict.
 Returns {"error": "..."} for missing data.
 """
 
+import logging
+
 from garminconnect import Garmin
 from garmin_mcp.utils import clean_nones
+
+logger = logging.getLogger(__name__)
 
 
 def get_activities(
@@ -110,8 +114,8 @@ def get_activity(client: Garmin, activity_id: int) -> dict:
         "anaerobic_training_effect": summary.get("anaerobicTrainingEffect"),
         "training_effect_label": summary.get("trainingEffectLabel"),
         "training_load": summary.get("activityTrainingLoad"),
-        # Self-evaluation (athlete post-workout input)
-        "perceived_effort": summary.get("directWorkoutRpe"),
+        # Self-evaluation (athlete post-workout input) — Garmin 0-100 → Foster CR10 0-10
+        "perceived_effort": round(summary["directWorkoutRpe"] / 10, 1) if summary.get("directWorkoutRpe") is not None else None,
         "workout_feel": summary.get("directWorkoutFeel"),
         # Recovery
         "recovery_hr_bpm": summary.get("recoveryHeartRate"),
@@ -234,6 +238,7 @@ def _maybe_enrich_graphql(
     try:
         display_name = getattr(client, "display_name", None)
         if not display_name:
+            logger.warning("GraphQL enrichment skipped: no display_name on client")
             return
         gql_data = client.query_garmin_graphql({
             "query": f'query{{activitiesScalar(displayName:"{display_name}", '
@@ -247,15 +252,19 @@ def _maybe_enrich_graphql(
             .get("activityList", [])
         )
         if not gql_activities:
+            logger.info("GraphQL enrichment: no activities returned for %s..%s", start_date, end_date)
             return
         # Build lookup by activity ID
         gql_by_id = {a["activityId"]: a for a in gql_activities if "activityId" in a}
+        enriched = 0
         for activity in activities:
             gql = gql_by_id.get(activity.get("id"))
             if gql and gql.get("activityTrainingLoad") is not None:
                 activity["training_load"] = gql["activityTrainingLoad"]
-    except Exception:
-        pass  # GraphQL enrichment is optional
+                enriched += 1
+        logger.info("GraphQL enrichment: %d/%d activities got training_load", enriched, len(activities))
+    except Exception as e:
+        logger.warning("GraphQL enrichment failed: %s", e)
 
 
 def _maybe_enrich_graphql_from_activities(
@@ -314,9 +323,11 @@ def _curate_activity_summary(a: dict) -> dict:
         # Power — list uses avgPower/normPower, detail uses averagePower/normalizedPower
         "avg_power_watts": _first_not_none(a, "avgPower", "averagePower"),
         "normalized_power_watts": _first_not_none(a, "normPower", "normalizedPower"),
-        # Self-evaluation (athlete post-workout input — detail only)
-        "perceived_effort": a.get("directWorkoutRpe"),
+        # Self-evaluation (athlete post-workout input) — Garmin 0-100 → Foster CR10 0-10
+        "perceived_effort": round(a["directWorkoutRpe"] / 10, 1) if a.get("directWorkoutRpe") is not None else None,
         "workout_feel": a.get("directWorkoutFeel"),
+        # Training load (EPOC) — may be in REST list for some accounts, else GraphQL enriches
+        "training_load": a.get("activityTrainingLoad"),
         # VO2max & body battery (available in list)
         "vo2max": a.get("vO2MaxValue"),
         "body_battery_impact": a.get("differenceBodyBattery"),
