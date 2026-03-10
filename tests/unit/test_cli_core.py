@@ -4,11 +4,13 @@ import inspect
 import json
 import os
 
+import click
 import pytest
 from click.testing import CliRunner
 
 from garmin_mcp.cli import (
     _sanitize_path,
+    _session_sandbox,
     _validate_command,
     _hoist_global_flags,
     garmin,
@@ -138,6 +140,36 @@ class TestSanitizePath:
     def test_absolute_outside_sandbox(self):
         result = _sanitize_path("/home/user/data.json")
         assert result == os.path.join(SANDBOX_DIR, "data.json")
+
+    def test_session_sandbox(self):
+        """Files are sandboxed under session tmp_dir."""
+        result = _sanitize_path("data.json", "/tmp/s/abc123")
+        assert result == "/tmp/s/abc123/data.json"
+
+    def test_session_sandbox_traversal(self):
+        """Traversal from session sandbox still stays sandboxed."""
+        result = _sanitize_path("/tmp/s/abc123/../../etc/passwd", "/tmp/s/abc123")
+        assert result.startswith("/tmp/s/abc123")
+        assert "etc" not in result
+
+
+class TestSessionSandbox:
+    def test_with_tmp_dir(self):
+        ctx = click.Context(garmin, obj={"_tmp_dir": "/tmp/s/abc123"})
+        assert _session_sandbox(ctx) == "/tmp/s/abc123"
+
+    def test_without_tmp_dir(self):
+        ctx = click.Context(garmin, obj={})
+        assert _session_sandbox(ctx) == SANDBOX_DIR
+
+    def test_rejects_non_tmp_dir(self):
+        """tmp_dir outside /tmp/ falls back to SANDBOX_DIR."""
+        ctx = click.Context(garmin, obj={"_tmp_dir": "/home/evil"})
+        assert _session_sandbox(ctx) == SANDBOX_DIR
+
+    def test_none_tmp_dir(self):
+        ctx = click.Context(garmin, obj={"_tmp_dir": None})
+        assert _session_sandbox(ctx) == SANDBOX_DIR
 
 
 class TestExecuteValidation:

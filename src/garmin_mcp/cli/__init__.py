@@ -38,16 +38,24 @@ def _client(ctx):
 SANDBOX_DIR = "/tmp/garmin"
 
 
-def _sanitize_path(raw_path: str) -> str:
-    """Sandbox output path to SANDBOX_DIR. Reject traversals."""
+def _session_sandbox(ctx) -> str:
+    """Per-session sandbox from tmp_dir (set by frontend). Falls back to SANDBOX_DIR."""
+    tmp_dir = (ctx.obj or {}).get("_tmp_dir")
+    if tmp_dir and tmp_dir.startswith("/tmp/"):
+        return tmp_dir
+    return SANDBOX_DIR
+
+
+def _sanitize_path(raw_path: str, sandbox: str = SANDBOX_DIR) -> str:
+    """Sandbox output path to given sandbox dir. Reject traversals."""
     # Resolve to absolute, collapse ..'s
     resolved = os.path.realpath(raw_path)
     # If not already under sandbox, treat as relative filename inside it
-    if not resolved.startswith(SANDBOX_DIR):
+    if not resolved.startswith(sandbox):
         basename = os.path.basename(resolved)
         if not basename:
             raise click.ClickException(f"Invalid output path: {raw_path}")
-        resolved = os.path.join(SANDBOX_DIR, basename)
+        resolved = os.path.join(sandbox, basename)
     return resolved
 
 
@@ -66,11 +74,12 @@ def _out(ctx, data):
     text = format_output(data, fmt)
 
     if output_path:
-        safe_path = _sanitize_path(output_path)
-        os.makedirs(os.path.dirname(safe_path) or SANDBOX_DIR, exist_ok=True)
+        sandbox = _session_sandbox(ctx)
+        safe_path = _sanitize_path(output_path, sandbox)
+        os.makedirs(os.path.dirname(safe_path) or sandbox, exist_ok=True)
         with open(safe_path, "w") as f:
             f.write(text)
-        click.echo(f"Written to {safe_path}")
+        click.echo(f"Written to {output_path}")
     else:
         click.echo(text)
 
@@ -105,7 +114,7 @@ def _run(ctx, fn, *, dry_run_preview: dict | None = None):
     help="Output format",
 )
 @click.option("--fields", default=None, help="Comma-separated fields to include")
-@click.option("--output", "output_path", default=None, help="Write to file (sandboxed to /tmp/garmin/)")
+@click.option("--output", "output_path", default=None, help="Write to file (auto-sandboxed to session dir)")
 @click.option("--dry-run", is_flag=True, default=False, help="Validate without calling API (mutations only)")
 @click.option(
     "--token",
@@ -120,15 +129,21 @@ def _run(ctx, fn, *, dry_run_preview: dict | None = None):
     default=None,
     hidden=True,
 )
+@click.option(
+    "--tmp-dir",
+    default=None,
+    hidden=True,
+    help="Session-scoped tmp directory for file I/O isolation",
+)
 @click.pass_context
-def garmin(ctx, fmt, fields, output_path, dry_run, token, display_name):
+def garmin(ctx, fmt, fields, output_path, dry_run, token, display_name, tmp_dir):
     """Garmin Connect CLI — query athlete data.
 
     \b
     Global flags (before command):
       --fields f1,f2   Only include these fields (reduces output)
       --format table   Human-readable table instead of JSON
-      --output PATH    Write to file (sandboxed to /tmp/garmin/)
+      --output PATH    Write to file (auto-sandboxed)
       --dry-run        Validate mutation without calling API
 
     \b
@@ -143,6 +158,8 @@ def garmin(ctx, fmt, fields, output_path, dry_run, token, display_name):
     if token:
         ctx.obj.setdefault("_token", token)
         ctx.obj.setdefault("_display_name", display_name)
+    if tmp_dir:
+        ctx.obj.setdefault("_tmp_dir", tmp_dir)
 
 
 # ── Describe (schema introspection for agents) ──────────────────────────────
@@ -966,7 +983,7 @@ def _hoist_global_flags(args: list[str]) -> list[str]:
     return global_args + rest
 
 
-def execute(command: str, token: str, display_name: str = None) -> dict:
+def execute(command: str, token: str, display_name: str = None, tmp_dir: str = None) -> dict:
     """Execute a CLI command string, return {stdout, stderr, exit_code}.
 
     Used by the /cli HTTP endpoint and tests.
@@ -993,6 +1010,8 @@ def execute(command: str, token: str, display_name: str = None) -> dict:
     args = ["--token", token]
     if display_name:
         args += ["--display-name", display_name]
+    if tmp_dir:
+        args += ["--tmp-dir", tmp_dir]
 
     # Extract --json value BEFORE shlex.split — shlex strips quotes from JSON,
     # turning {"key":"val"} into {key:val} which is invalid.

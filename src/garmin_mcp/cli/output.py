@@ -5,20 +5,23 @@ from garmin_mcp.utils import format_duration, format_distance, format_pace
 
 
 def find_missing_fields(data, fields: list[str]) -> list[str]:
-    """Return requested fields not present in the data's first item."""
-    sample = None
-    if isinstance(data, list) and data and isinstance(data[0], dict):
-        sample = data[0]
+    """Return requested fields not present in ANY item (handles nullable fields stripped by clean_nones)."""
+    all_keys: set[str] = set()
+    items = []
+    if isinstance(data, list):
+        items = [d for d in data if isinstance(d, dict)]
     elif isinstance(data, dict):
         for v in data.values():
             if isinstance(v, list) and v and isinstance(v[0], dict):
-                sample = v[0]
+                items = v
                 break
-        if sample is None and data:
-            sample = data
-    if not sample or not isinstance(sample, dict):
+        if not items and data:
+            items = [data]
+    for item in items:
+        all_keys.update(item.keys())
+    if not all_keys:
         return []
-    return [f for f in fields if f not in sample]
+    return [f for f in fields if f not in all_keys]
 
 
 # Always included in --fields output regardless of user selection
