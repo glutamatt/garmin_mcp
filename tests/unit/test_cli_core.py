@@ -241,6 +241,56 @@ class TestDryRun:
         # but the point is it DOESN'T short-circuit with dry_run preview
         assert result.exit_code != 0  # No client, so errors
 
+    def test_dry_run_warns_unknown_keys(self):
+        """--dry-run should surface unknown key warnings."""
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "workouts", "create",
+            "--json", json.dumps({
+                "workoutName": "Test",
+                "sport": "running",
+                "bogusField": 42,
+                "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "endConditionValue": 600}],
+            }),
+        ], catch_exceptions=True)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["dry_run"] is True
+        assert "warnings" in data
+        assert any("bogusField" in w for w in data["warnings"])
+
+    def test_dry_run_warns_empty_steps(self):
+        """--dry-run should warn about workouts with no steps."""
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "workouts", "create",
+            "--json", json.dumps({"workoutName": "Empty", "sport": "running"}),
+        ], catch_exceptions=True)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert any("no steps" in w for w in data.get("warnings", []))
+
+    def test_dry_run_no_warnings_for_valid_workout(self):
+        """Valid workout should have no warnings in dry-run."""
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "workouts", "create",
+            "--json", json.dumps({
+                "workoutName": "Good Workout",
+                "sport": "running",
+                "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "endConditionValue": 600}],
+            }),
+        ], catch_exceptions=True)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "warnings" not in data
+
 
 class TestDescribe:
     def test_describe_all(self):

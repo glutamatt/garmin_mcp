@@ -520,7 +520,10 @@ def workouts_create(ctx, workout_json, date):
     from garmin_mcp.api import workouts as api
 
     workout_data = json.loads(workout_json)
+    warnings = api.validate_workout_keys(workout_data)
     preview = {"action": "create_workout", "name": workout_data.get("workoutName"), "date": date}
+    if warnings:
+        preview["warnings"] = warnings
     _run(ctx, lambda: api.create_workout(_client(ctx), workout_data, date), dry_run_preview=preview)
 
 
@@ -533,7 +536,10 @@ def workouts_update(ctx, workout_id, workout_json):
     from garmin_mcp.api import workouts as api
 
     workout_data = json.loads(workout_json)
+    warnings = api.validate_workout_keys(workout_data)
     preview = {"action": "update_workout", "workout_id": workout_id, "name": workout_data.get("workoutName")}
+    if warnings:
+        preview["warnings"] = warnings
     _run(ctx, lambda: api.update_workout(_client(ctx), workout_id, workout_data), dry_run_preview=preview)
 
 
@@ -851,17 +857,32 @@ def calendar_events(ctx, start_date, end_date, limit):
 
 
 @calendar.command("upcoming")
-@click.option("--days", default=365, type=int, help="Days forward to look")
-@click.option("--limit", default=10, type=int)
+@click.option("--days", default=7, type=int, help="Days forward to look")
 @click.pass_context
-def calendar_upcoming(ctx, days, limit):
-    """Upcoming race events."""
+def calendar_upcoming(ctx, days):
+    """Upcoming calendar items: workouts, activities, events, rest days."""
+    from datetime import date, timedelta
+    from garmin_mcp.utils import clean_nones
+
     client = _client(ctx)
-    raw = client.get_upcoming_calendar_events(num_days_forward=days, limit=limit)
-    if not raw:
-        _out(ctx, {"error": "No upcoming events"})
+    start = date.today().strftime("%Y-%m-%d")
+    end = (date.today() + timedelta(days=days)).strftime("%Y-%m-%d")
+    items = client.get_calendar_items_for_range(start, end)
+    if not items:
+        _out(ctx, {"error": f"No calendar items in the next {days} days"})
         return
-    _out(ctx, _curate_events(raw))
+    curated = []
+    for item in items:
+        curated.append(clean_nones({
+            "date": item.get("date"),
+            "type": item.get("itemType"),
+            "title": item.get("title"),
+            "activity_type_id": item.get("activityTypeId"),
+            "distance_meters": item.get("distance"),
+            "duration_seconds": item.get("duration"),
+            "event_type": item.get("eventType"),
+        }))
+    _out(ctx, {"from": start, "to": end, "items": curated})
 
 
 def _curate_events(events_data):

@@ -17,6 +17,7 @@ from garmin_mcp.api.workouts import (
     WorkoutSegment,
     preprocess_workout_input,
     normalize_workout_structure,
+    validate_workout_keys,
     _normalize_executable_step,
     _normalize_repeat_group,
     _normalize_steps,
@@ -201,7 +202,8 @@ class TestNormalizeExecutableStep:
         result = _normalize_executable_step(step)
         assert "strokeType" in result
         assert "equipmentType" in result
-        assert result["equipmentType"]["equipmentTypeId"] is None
+        assert result["equipmentType"]["equipmentTypeId"] == 0
+        assert result["strokeType"]["strokeTypeId"] == 0
 
     def test_hr_zone_number_extraction(self):
         """When targetValueOne == targetValueTwo for HR zone, extract zoneNumber"""
@@ -236,6 +238,29 @@ class TestNormalizeExecutableStep:
         }
         result = _normalize_executable_step(step)
         assert result["zoneNumber"] == 5
+
+    def test_defaults_target_type_to_no_target(self):
+        """Steps without targetType get no.target default (Garmin API requires it)."""
+        step = {
+            "stepOrder": 1,
+            "stepType": {"stepTypeId": 1, "stepTypeKey": "warmup"},
+            "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+        }
+        result = _normalize_executable_step(step)
+        assert result["targetType"]["workoutTargetTypeId"] == 1
+        assert result["targetType"]["workoutTargetTypeKey"] == "no.target"
+
+    def test_no_null_values_in_output(self):
+        """Garmin API silently drops steps with null values."""
+        step = {
+            "stepOrder": 1,
+            "stepType": {"stepTypeId": 1, "stepTypeKey": "warmup"},
+            "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+        }
+        result = _normalize_executable_step(step)
+        import json
+        serialized = json.dumps(result)
+        assert "null" not in serialized, f"Found null in: {serialized}"
 
     def test_does_not_mutate_input(self):
         step = {
@@ -380,7 +405,7 @@ class TestNormalizeWorkoutStructure:
         assert result["avgTrainingSpeed"] == 2.5
         assert result["estimatedDurationInSecs"] == 0
         assert result["estimatedDistanceInMeters"] == 0.0
-        assert result["estimateType"] is None
+        assert "estimateType" not in result  # removed: null values break Garmin API
 
     def test_adds_is_wheelchair_for_running(self):
         data = {
@@ -700,6 +725,50 @@ class TestPreprocessWorkoutInput:
         step = result["workoutSegments"][0]["workoutSteps"][0]
         assert step["endCondition"]["conditionTypeKey"] == "lap.button"
 
+    def test_segments_alias_for_workout_segments(self):
+        """AI reads 'segments' from get_workout_by_id curation and sends it back for create."""
+        data = {
+            "workoutName": "Footing 7km",
+            "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+            "segments": [
+                {
+                    "segmentOrder": 1,
+                    "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+                    "workoutSteps": [
+                        {
+                            "type": "ExecutableStepDTO",
+                            "stepOrder": 1,
+                            "stepType": {"stepTypeId": 1, "stepTypeKey": "warmup"},
+                            "endCondition": {"conditionTypeId": 3, "conditionTypeKey": "distance"},
+                            "endConditionValue": 1000.0,
+                            "targetType": {"workoutTargetTypeId": 4, "workoutTargetTypeKey": "heart.rate.zone"},
+                            "zoneNumber": 1,
+                        },
+                        {
+                            "type": "ExecutableStepDTO",
+                            "stepOrder": 2,
+                            "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+                            "endCondition": {"conditionTypeId": 3, "conditionTypeKey": "distance"},
+                            "endConditionValue": 5000.0,
+                        },
+                    ],
+                }
+            ],
+        }
+        result = preprocess_workout_input(data)
+        assert "workoutSegments" in result
+        assert len(result["workoutSegments"][0]["workoutSteps"]) == 2
+
+    def test_name_alias_for_workout_name(self):
+        """AI reads 'name' from get_workout_by_id curation and sends it back."""
+        data = {
+            "name": "Easy Run",
+            "sport": "running",
+            "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "endConditionValue": 600}],
+        }
+        result = preprocess_workout_input(data)
+        assert result["workoutName"] == "Easy Run"
+
     def test_full_preprocess_normalize_pipeline(self):
         """End-to-end: simplified AI format -> preprocess -> validate -> normalize."""
         data = {
@@ -722,3 +791,88 @@ class TestPreprocessWorkoutInput:
         assert steps[0]["type"] == "ExecutableStepDTO"
         assert steps[1]["targetType"]["displayOrder"] == 6
         assert steps[2]["endCondition"]["displayOrder"] == 1
+
+
+# =============================================================================
+# validate_workout_keys Tests
+# =============================================================================
+
+
+class TestValidateWorkoutKeys:
+    """Test unknown key detection for dry-run safety."""
+
+    def test_valid_workout_no_warnings(self):
+        data = {
+            "workoutName": "Test",
+            "sport": "running",
+            "steps": [
+                {"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "endConditionValue": 600},
+            ],
+        }
+        assert validate_workout_keys(data) == []
+
+    def test_unknown_top_level_key(self):
+        data = {
+            "workoutName": "Test",
+            "sport": "running",
+            "bogusField": 42,
+            "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "time"}],
+        }
+        warnings = validate_workout_keys(data)
+        assert len(warnings) == 1
+        assert "bogusField" in warnings[0]
+
+    def test_unknown_step_key(self):
+        data = {
+            "workoutName": "Test",
+            "sport": "running",
+            "steps": [
+                {"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "fooBar": "baz"},
+            ],
+        }
+        warnings = validate_workout_keys(data)
+        assert any("fooBar" in w for w in warnings)
+
+    def test_empty_steps_warning(self):
+        data = {"workoutName": "Empty", "sport": "running"}
+        warnings = validate_workout_keys(data)
+        assert any("no steps" in w for w in warnings)
+
+    def test_segments_alias_accepted(self):
+        """'segments' is a known alias — should not trigger unknown key warning."""
+        data = {
+            "workoutName": "Test",
+            "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+            "segments": [
+                {
+                    "segmentOrder": 1,
+                    "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+                    "workoutSteps": [
+                        {"stepOrder": 1, "stepType": {"stepTypeId": 1, "stepTypeKey": "warmup"},
+                         "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+                         "endConditionValue": 600},
+                    ],
+                }
+            ],
+        }
+        warnings = validate_workout_keys(data)
+        assert warnings == []
+
+    def test_steps_inside_segments_checked(self):
+        """Unknown keys inside workoutSegments steps are caught."""
+        data = {
+            "workoutName": "Test",
+            "workoutSegments": [
+                {
+                    "segmentOrder": 1,
+                    "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+                    "workoutSteps": [
+                        {"stepOrder": 1, "stepType": {"stepTypeId": 1, "stepTypeKey": "warmup"},
+                         "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+                         "unknownProp": True},
+                    ],
+                }
+            ],
+        }
+        warnings = validate_workout_keys(data)
+        assert any("unknownProp" in w for w in warnings)

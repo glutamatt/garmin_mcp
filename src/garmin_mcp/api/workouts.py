@@ -8,11 +8,14 @@ Pydantic models and normalization logic moved here from the old tool layer.
 import copy
 import json
 import datetime
+import logging
 from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 
 from garmin_mcp.utils import clean_nones
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -189,7 +192,18 @@ def _preprocess_step(step: dict) -> dict:
 
 
 def preprocess_workout_input(data: dict) -> dict:
-    """Convert simplified AI-generated workout to full Garmin-compatible format."""
+    """Convert simplified AI-generated workout to full Garmin-compatible format.
+
+    Accepts keys: steps, workoutSteps, workoutSegments, or segments (alias from curation).
+    """
+    # Normalize curation aliases so round-trip (GET → modify → create) works
+    if 'segments' in data and 'workoutSegments' not in data:
+        data = {**data, 'workoutSegments': data['segments']}
+        del data['segments']
+    if 'name' in data and 'workoutName' not in data:
+        data = {**data, 'workoutName': data['name']}
+        del data['name']
+
     if 'workoutSegments' in data and isinstance(data.get('sportType'), dict):
         steps_ok = True
         for seg in data['workoutSegments']:
@@ -246,7 +260,6 @@ def normalize_workout_structure(workout_data: dict) -> dict:
     normalized.setdefault('avgTrainingSpeed', 2.5)
     normalized.setdefault('estimatedDurationInSecs', 0)
     normalized.setdefault('estimatedDistanceInMeters', 0.0)
-    normalized.setdefault('estimateType', None)
 
     sport_type = normalized.get('sportType', {})
     if sport_type.get('sportTypeKey') == 'running':
@@ -397,12 +410,20 @@ def _normalize_executable_step(step: dict, step_id_counter: list = None) -> dict
         if 'displayable' not in normalized['endCondition']:
             normalized['endCondition']['displayable'] = True
 
-    if 'targetType' in normalized and 'displayOrder' not in normalized['targetType']:
+    # Garmin API requires targetType on every step — default to no.target
+    if 'targetType' not in normalized:
+        normalized['targetType'] = {
+            'workoutTargetTypeId': 1,
+            'workoutTargetTypeKey': 'no.target',
+            'displayOrder': 1,
+        }
+
+    if 'displayOrder' not in normalized['targetType']:
         target_key = normalized['targetType'].get('workoutTargetTypeKey', '')
         target_display_map = {'no.target': 1, 'speed.zone': 2, 'cadence': 3, 'heart.rate.zone': 4, 'power.zone': 5, 'pace.zone': 6}
         normalized['targetType']['displayOrder'] = target_display_map.get(target_key, 1)
 
-    if 'targetType' in normalized:
+    if True:
         target_key = normalized['targetType'].get('workoutTargetTypeKey', '')
         if target_key == 'heart.rate.zone':
             target_one = normalized.get('targetValueOne')
@@ -421,10 +442,11 @@ def _normalize_executable_step(step: dict, step_id_counter: list = None) -> dict
                 normalized['targetValueOne'] = None
                 normalized['targetValueTwo'] = None
 
+    # Garmin API expects numeric 0 defaults, not null — null values cause silent step rejection
     if 'strokeType' not in normalized:
-        normalized['strokeType'] = {}
+        normalized['strokeType'] = {'strokeTypeId': 0, 'displayOrder': 0}
     if 'equipmentType' not in normalized:
-        normalized['equipmentType'] = {'equipmentTypeId': None, 'equipmentTypeKey': None, 'displayOrder': None}
+        normalized['equipmentType'] = {'equipmentTypeId': 0, 'displayOrder': 0}
 
     return normalized
 
@@ -471,13 +493,62 @@ def _curate_scheduled_workout(scheduled: dict) -> dict:
 # PUBLIC API FUNCTIONS
 # =============================================================================
 
+_KNOWN_WORKOUT_KEYS = {
+    'workoutName', 'name', 'description', 'sport', 'sportType',
+    'steps', 'workoutSteps', 'workoutSegments', 'segments',
+}
+_KNOWN_STEP_KEYS = {
+    'type', 'stepId', 'stepOrder', 'stepType', 'endCondition', 'endConditionType',
+    'endConditionValue', 'targetType', 'targetValueOne', 'targetValueTwo',
+    'targetValueHigh', 'targetValueLow', 'zoneNumber',
+    'numberOfIterations', 'workoutSteps', 'childStepId',
+    'strokeType', 'equipmentType', 'skipLastRestStep', 'smartRepeat',
+}
+
+
+def validate_workout_keys(workout_data: dict) -> list[str]:
+    """Check for unknown keys that would be silently ignored. Returns list of warnings."""
+    warnings = []
+    top_unknown = set(workout_data.keys()) - _KNOWN_WORKOUT_KEYS
+    if top_unknown:
+        warnings.append(f"Unknown top-level keys (will be ignored): {', '.join(sorted(top_unknown))}")
+
+    # Check steps in all accepted locations
+    all_steps = []
+    for key in ('steps', 'workoutSteps'):
+        all_steps.extend(workout_data.get(key, []))
+    for seg in (workout_data.get('workoutSegments') or workout_data.get('segments') or []):
+        all_steps.extend(seg.get('workoutSteps', []))
+
+    for i, step in enumerate(all_steps):
+        step_unknown = set(step.keys()) - _KNOWN_STEP_KEYS
+        if step_unknown:
+            warnings.append(f"Step {i+1}: unknown keys: {', '.join(sorted(step_unknown))}")
+
+    # Check for empty steps
+    total_steps = len(all_steps)
+    if total_steps == 0:
+        warnings.append("Workout has no steps — will create an empty workout")
+
+    return warnings
+
+
 def prepare_workout_json(workout_data: dict) -> str:
     """Preprocess, validate, and normalize workout data → JSON string for SDK."""
+    warnings = validate_workout_keys(workout_data)
+    for w in warnings:
+        logger.warning("workout validation: %s", w)
+    logger.debug("prepare_workout_json input: %s", json.dumps(workout_data, default=str))
     preprocessed = preprocess_workout_input(workout_data)
     validated = WorkoutData(**preprocessed)
     data_dict = validated.model_dump(exclude_none=True)
     normalized = normalize_workout_structure(data_dict)
-    return json.dumps(normalized)
+    result = json.dumps(normalized)
+    # Log step count for debugging workout creation issues
+    steps = normalized.get('workoutSegments', [{}])[0].get('workoutSteps', []) if normalized.get('workoutSegments') else []
+    logger.info("prepare_workout_json: %d segments, %d steps", len(normalized.get('workoutSegments', [])), len(steps))
+    logger.debug("prepare_workout_json output: %s", result)
+    return result
 
 
 def get_workouts(client) -> dict:
