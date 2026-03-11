@@ -691,6 +691,15 @@ def delete_workout(client, workout_id: int) -> dict:
     return result
 
 
+def schedule_workout(client, workout_id: int, date: str) -> dict:
+    """Schedule an existing workout from the library onto a calendar date."""
+    schedule_result = client.schedule_workout(workout_id, date)
+    result = {"status": "scheduled", "workout_id": workout_id, "date": date}
+    if isinstance(schedule_result, dict):
+        result["schedule_id"] = schedule_result.get('workoutScheduleId')
+    return result
+
+
 def unschedule_workout(client, schedule_id: int) -> dict:
     """Remove a scheduled workout from the calendar (keeps library entry)."""
     success = client.unschedule_workout(schedule_id)

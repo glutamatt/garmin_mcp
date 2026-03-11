@@ -24,7 +24,7 @@ This MCP server implements **95+ tools** covering ~88% of the [python-garminconn
 - ✅ Activity Management (14 tools)
 - ✅ Health & Wellness (30 tools) - includes custom lightweight summary tools
 - ✅ Training & Performance (9 tools)
-- ✅ Workouts (8 tools)
+- ✅ Workouts (9 tools)
 - ✅ Devices (7 tools)
 - ✅ Gear Management (5 tools)
 - ✅ Weight Tracking (5 tools)

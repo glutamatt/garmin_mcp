@@ -248,6 +248,20 @@ class TestDryRun:
         assert data["action"] == "delete_workout"
         assert data["workout_id"] == 12345
 
+    def test_dry_run_schedule(self):
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "workouts", "schedule", "12345", "--date", "2024-03-15",
+        ], catch_exceptions=True)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["dry_run"] is True
+        assert data["action"] == "schedule_workout"
+        assert data["workout_id"] == 12345
+        assert data["date"] == "2024-03-15"
+
     def test_dry_run_add_weight(self):
         runner = _runner()
         result = runner.invoke(garmin, [
