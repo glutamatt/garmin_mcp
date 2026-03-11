@@ -64,6 +64,28 @@ def _sanitize_path(raw_path: str, sandbox: str = SANDBOX_DIR) -> str:
     return resolved
 
 
+def _describe_shape(data) -> str:
+    """Return a short structural preview of data for --output messages.
+
+    Examples: '{"count": 5, "activities": [...5 items]}', '[...3 items]'
+    """
+    if isinstance(data, list):
+        return f"[...{len(data)} items]"
+    if isinstance(data, dict):
+        parts = []
+        for k, v in data.items():
+            if isinstance(v, list) and v and isinstance(v[0], dict):
+                parts.append(f'"{k}": [...{len(v)} items]')
+            elif isinstance(v, (int, float, bool)):
+                parts.append(f'"{k}": {v}')
+            elif isinstance(v, str) and len(v) <= 30:
+                parts.append(f'"{k}": "{v}"')
+            else:
+                parts.append(f'"{k}": ...')
+        return "{" + ", ".join(parts) + "}"
+    return str(type(data).__name__)
+
+
 def _out(ctx, data):
     """Apply field filtering, format, and output."""
     fields = ctx.obj.get("fields")
@@ -84,7 +106,7 @@ def _out(ctx, data):
         os.makedirs(os.path.dirname(safe_path) or sandbox, exist_ok=True)
         with open(safe_path, "w") as f:
             f.write(text)
-        click.echo(f"Written to {output_path}")
+        click.echo(f"{_describe_shape(data)} written to {output_path}")
     else:
         click.echo(text)
 
@@ -1083,9 +1105,10 @@ def execute(command: str, token: str, display_name: str = None, tmp_dir: str = N
     if hasattr(result, "stderr") and result.stderr:
         stderr = result.stderr
 
-    # Click sometimes writes errors to both stdout and stderr — deduplicate
-    if result.exit_code != 0 and stdout and stdout == stderr:
-        stdout = ""
+    # Click 8.3+ mixes err=True output into both stdout and stderr — strip duplicates
+    if stderr and stdout:
+        for line in stderr.strip().splitlines():
+            stdout = stdout.replace(line + "\n", "", 1)
 
     return {
         "stdout": stdout,

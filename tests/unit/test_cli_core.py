@@ -8,11 +8,14 @@ import click
 import pytest
 from click.testing import CliRunner
 
+from unittest.mock import Mock, patch
+
 from garmin_mcp.cli import (
     _sanitize_path,
     _session_sandbox,
     _validate_command,
     _hoist_global_flags,
+    _describe_shape,
     garmin,
     execute,
     SANDBOX_DIR,
@@ -372,3 +375,117 @@ class TestDescribe:
         runner = _runner()
         result = runner.invoke(garmin, ["describe", "nonexistent"], catch_exceptions=True)
         assert result.exit_code != 0
+
+
+class TestStdoutStderrSeparation:
+    """Verify stderr warnings don't leak into stdout (Click 8.3+ dedup)."""
+
+    def _mock_client(self, activities):
+        client = Mock()
+        client.get_activities_by_date.return_value = activities
+        return client
+
+    def test_warning_only_in_stderr(self):
+        """Unknown --fields warning should appear in stderr only, not stdout."""
+        client = self._mock_client([
+            {"activityId": 1, "activityName": "Run", "activityType": {"typeKey": "running"}},
+        ])
+        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
+            result = execute(
+                "activities list --from 2024-01-01 --to 2024-01-07 --fields id,name,BOGUS",
+                "fake_token",
+            )
+        assert result["exit_code"] == 0
+        assert "BOGUS" in result["stderr"]
+        assert "BOGUS" not in result["stdout"]
+
+    def test_stdout_clean_when_no_warnings(self):
+        """No warnings → stderr empty, stdout has data."""
+        client = self._mock_client([
+            {"activityId": 1, "activityName": "Run", "activityType": {"typeKey": "running"}},
+        ])
+        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
+            result = execute(
+                "activities list --from 2024-01-01 --to 2024-01-07 --fields id,name",
+                "fake_token",
+            )
+        assert result["exit_code"] == 0
+        assert result["stderr"] == ""
+        data = json.loads(result["stdout"])
+        assert "activities" in data
+
+
+class TestOutputShapePreview:
+    """Verify --output shows structural preview instead of just filename."""
+
+    def _mock_client(self, activities):
+        client = Mock()
+        client.get_activities_by_date.return_value = activities
+        return client
+
+    def test_output_shows_shape(self):
+        """--output message should show JSON structure preview."""
+        client = self._mock_client([
+            {"activityId": 1, "activityName": "Run", "activityType": {"typeKey": "running"}},
+            {"activityId": 2, "activityName": "Walk", "activityType": {"typeKey": "walking"}},
+        ])
+        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
+            result = execute(
+                "activities list --from 2024-01-01 --to 2024-01-07 --fields id,name --output out.json",
+                "fake_token",
+                tmp_dir="/tmp",
+            )
+        assert result["exit_code"] == 0
+        assert "activities" in result["stdout"]
+        assert "...2 items" in result["stdout"]
+        assert "written to out.json" in result["stdout"]
+
+    def test_output_shape_with_warning_not_duplicated(self):
+        """--output with unknown fields: warning in stderr only, shape in stdout."""
+        client = self._mock_client([
+            {"activityId": 1, "activityName": "Run", "activityType": {"typeKey": "running"}},
+        ])
+        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
+            result = execute(
+                "activities list --from 2024-01-01 --to 2024-01-07 --fields id,BOGUS --output out.json",
+                "fake_token",
+                tmp_dir="/tmp",
+            )
+        assert result["exit_code"] == 0
+        assert "BOGUS" in result["stderr"]
+        assert "BOGUS" not in result["stdout"]
+        assert "written to out.json" in result["stdout"]
+        assert "activities" in result["stdout"]
+
+
+class TestDescribeShape:
+    """Unit tests for _describe_shape helper."""
+
+    def test_list(self):
+        assert _describe_shape([{"id": 1}, {"id": 2}]) == "[...2 items]"
+
+    def test_empty_list(self):
+        assert _describe_shape([]) == "[...0 items]"
+
+    def test_dict_with_nested_list(self):
+        data = {"count": 3, "activities": [{"id": 1}, {"id": 2}, {"id": 3}]}
+        shape = _describe_shape(data)
+        assert '"count": 3' in shape
+        assert '"activities": [...3 items]' in shape
+
+    def test_dict_with_scalar_values(self):
+        data = {"status": "ok", "count": 5}
+        shape = _describe_shape(data)
+        assert '"status": "ok"' in shape
+        assert '"count": 5' in shape
+
+    def test_dict_with_nested_dict(self):
+        data = {"stats": {"hr": 60}, "sleep": {"score": 85}}
+        shape = _describe_shape(data)
+        assert '"stats": ...' in shape
+        assert '"sleep": ...' in shape
+
+    def test_long_string_truncated(self):
+        data = {"description": "a" * 50}
+        shape = _describe_shape(data)
+        assert '"description": ...' in shape
