@@ -59,9 +59,22 @@ def _sanitize_path(raw_path: str, sandbox: str = SANDBOX_DIR) -> str:
     if not resolved.startswith(sandbox):
         basename = os.path.basename(resolved)
         if not basename:
-            raise click.ClickException(f"Invalid output path: {raw_path}")
+            raise click.ClickException(f"Invalid path: {raw_path}")
         resolved = os.path.join(sandbox, basename)
     return resolved
+
+
+def _read_input_file(ctx, path: str) -> dict:
+    """Read and parse a JSON file from the session sandbox."""
+    sandbox = _session_sandbox(ctx)
+    safe_path = _sanitize_path(path, sandbox)
+    if not os.path.isfile(safe_path):
+        raise click.ClickException(f"File not found: {path}")
+    with open(safe_path, "r") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError as e:
+            raise click.ClickException(f"Invalid JSON in {path}: {e}")
 
 
 def _describe_shape(data) -> str:
@@ -556,14 +569,27 @@ def workouts_scheduled(ctx, start_date, end_date):
 
 
 @workouts.command("create")
-@click.option("--json", "workout_json", required=True, help="Workout JSON definition")
+@click.option("--json", "workout_json", default=None, help="Workout JSON definition (inline string)")
+@click.option("--input", "input_file", default=None, help="Read workout JSON from file (sandboxed)")
 @click.option("--date", default=None, help="Schedule date YYYY-MM-DD (optional)")
 @click.pass_context
-def workouts_create(ctx, workout_json, date):
-    """Create a workout (and optionally schedule it)."""
+def workouts_create(ctx, workout_json, input_file, date):
+    """Create a workout (and optionally schedule it).
+
+    \b
+    Provide workout data via --json (inline) or --input (file):
+      garmin workouts create --json '{"workoutName":"Easy 5K",...}'
+      garmin workouts create --input workout.json
+      garmin workouts create --input workout.json --date 2026-03-20
+    """
     from garmin_mcp.api import workouts as api
 
-    workout_data = json.loads(workout_json)
+    if input_file and workout_json:
+        raise click.ClickException("Use --json or --input, not both")
+    if not input_file and not workout_json:
+        raise click.ClickException("Provide --json or --input")
+
+    workout_data = _read_input_file(ctx, input_file) if input_file else json.loads(workout_json)
     warnings = api.validate_workout_keys(workout_data)
     preview = {"action": "create_workout", "name": workout_data.get("workoutName"), "date": date}
     if warnings:
@@ -573,13 +599,25 @@ def workouts_create(ctx, workout_json, date):
 
 @workouts.command("update")
 @click.argument("workout_id", type=int)
-@click.option("--json", "workout_json", required=True, help="New workout JSON definition")
+@click.option("--json", "workout_json", default=None, help="New workout JSON definition (inline string)")
+@click.option("--input", "input_file", default=None, help="Read workout JSON from file (sandboxed)")
 @click.pass_context
-def workouts_update(ctx, workout_id, workout_json):
-    """Replace an existing workout's definition."""
+def workouts_update(ctx, workout_id, workout_json, input_file):
+    """Replace an existing workout's definition.
+
+    \b
+    Provide workout data via --json (inline) or --input (file):
+      garmin workouts update 123 --json '{"workoutName":"Updated",...}'
+      garmin workouts update 123 --input workout.json
+    """
     from garmin_mcp.api import workouts as api
 
-    workout_data = json.loads(workout_json)
+    if input_file and workout_json:
+        raise click.ClickException("Use --json or --input, not both")
+    if not input_file and not workout_json:
+        raise click.ClickException("Provide --json or --input")
+
+    workout_data = _read_input_file(ctx, input_file) if input_file else json.loads(workout_json)
     warnings = api.validate_workout_keys(workout_data)
     preview = {"action": "update_workout", "workout_id": workout_id, "name": workout_data.get("workoutName")}
     if warnings:

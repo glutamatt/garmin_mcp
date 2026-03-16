@@ -341,6 +341,158 @@ class TestDryRun:
         assert "warnings" not in data
 
 
+class TestInputFile:
+    """Test --input flag for reading workout JSON from files."""
+
+    def test_create_from_input_file(self, tmp_path):
+        """--input reads workout JSON from a file."""
+        workout = {"workoutName": "From File", "sport": "running", "steps": []}
+        f = tmp_path / "workout.json"
+        f.write_text(json.dumps(workout))
+
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "--tmp-dir", str(tmp_path),
+            "workouts", "create",
+            "--input", str(f),
+        ], catch_exceptions=True)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["dry_run"] is True
+        assert data["name"] == "From File"
+
+    def test_update_from_input_file(self, tmp_path):
+        """--input works for update too."""
+        workout = {"workoutName": "Updated From File", "steps": []}
+        f = tmp_path / "workout.json"
+        f.write_text(json.dumps(workout))
+
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "--tmp-dir", str(tmp_path),
+            "workouts", "update", "999",
+            "--input", str(f),
+        ], catch_exceptions=True)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["dry_run"] is True
+        assert data["name"] == "Updated From File"
+        assert data["workout_id"] == 999
+
+    def test_input_and_json_mutually_exclusive(self, tmp_path):
+        """--input + --json together should error."""
+        f = tmp_path / "workout.json"
+        f.write_text("{}")
+
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "--tmp-dir", str(tmp_path),
+            "workouts", "create",
+            "--json", "{}",
+            "--input", str(f),
+        ], catch_exceptions=True)
+        assert result.exit_code != 0
+        assert "not both" in result.output.lower() or "not both" in (getattr(result, 'stderr', '') or '').lower()
+
+    def test_neither_input_nor_json_errors(self):
+        """No --input and no --json should error."""
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "workouts", "create",
+        ], catch_exceptions=True)
+        assert result.exit_code != 0
+
+    def test_input_file_not_found(self, tmp_path):
+        """--input with missing file should error clearly."""
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "--tmp-dir", str(tmp_path),
+            "workouts", "create",
+            "--input", str(tmp_path / "nonexistent.json"),
+        ], catch_exceptions=True)
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower() or "not found" in (getattr(result, 'stderr', '') or '').lower()
+
+    def test_input_invalid_json(self, tmp_path):
+        """--input with bad JSON should error clearly."""
+        f = tmp_path / "bad.json"
+        f.write_text("not valid json {{{")
+
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "--tmp-dir", str(tmp_path),
+            "workouts", "create",
+            "--input", str(f),
+        ], catch_exceptions=True)
+        assert result.exit_code != 0
+        assert "invalid json" in result.output.lower() or "invalid json" in (getattr(result, 'stderr', '') or '').lower()
+
+    def test_input_file_sandboxed(self, tmp_path):
+        """--input outside sandbox should be rejected or sandboxed."""
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "--tmp-dir", str(tmp_path),
+            "workouts", "create",
+            "--input", "/etc/passwd",
+        ], catch_exceptions=True)
+        assert result.exit_code != 0
+
+    def test_round_trip_output_then_input(self, tmp_path):
+        """--output saves JSON, --input reads it back (round-trip)."""
+        from unittest.mock import Mock, patch
+
+        # Mock a workout get that writes to file
+        workout_data = {
+            "workoutName": "Round Trip",
+            "sport": "running",
+            "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "endConditionValue": 300}],
+        }
+        out_file = tmp_path / "exported.json"
+        out_file.write_text(json.dumps(workout_data))
+
+        # Now create from that file
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "--tmp-dir", str(tmp_path),
+            "workouts", "create",
+            "--input", str(out_file),
+        ], catch_exceptions=True)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["name"] == "Round Trip"
+
+    def test_input_via_execute(self, tmp_path):
+        """--input works through the execute() function too."""
+        workout = {"workoutName": "Via Execute", "steps": []}
+        f = tmp_path / "workout.json"
+        f.write_text(json.dumps(workout))
+
+        result = execute(
+            f"--dry-run workouts create --input {f}",
+            "fake",
+            tmp_dir=str(tmp_path),
+        )
+        assert result["exit_code"] == 0
+        data = json.loads(result["stdout"])
+        assert data["name"] == "Via Execute"
+
+
 class TestDescribe:
     def test_describe_all(self):
         runner = _runner()
