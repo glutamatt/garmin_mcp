@@ -6,6 +6,8 @@ Returns {"error": "..."} for missing data.
 """
 
 import logging
+import os
+import zipfile
 
 from garminconnect import Garmin
 from garmin_mcp.utils import clean_nones
@@ -199,6 +201,55 @@ def get_activity_types(client: Garmin) -> dict:
             })
             for at in raw
         ],
+    }
+
+
+def download_activity(client: Garmin, activity_id: int, fmt: str = "fit", sandbox: str = "/tmp/garmin") -> dict:
+    """Download activity file to sandbox directory.
+
+    FIT: downloads ORIGINAL (zip) and extracts the .fit file.
+    GPX/TCX: downloads directly.
+
+    Returns metadata dict with path — never the file contents.
+    """
+    fmt = fmt.lower().strip()
+    format_map = {
+        "fit": Garmin.ActivityDownloadFormat.ORIGINAL,
+        "gpx": Garmin.ActivityDownloadFormat.GPX,
+        "tcx": Garmin.ActivityDownloadFormat.TCX,
+    }
+    if fmt not in format_map:
+        return {"error": f"Unsupported format '{fmt}'. Use: fit, gpx, tcx"}
+
+    content = client.download_activity(str(activity_id), dl_fmt=format_map[fmt])
+
+    os.makedirs(sandbox, exist_ok=True)
+
+    if fmt == "fit":
+        zip_path = os.path.join(sandbox, f"activity_{activity_id}.zip")
+        with open(zip_path, "wb") as f:
+            f.write(content)
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            fit_names = [n for n in zf.namelist() if n.endswith(".fit")]
+            if not fit_names:
+                os.remove(zip_path)
+                return {"error": "No .fit file found in downloaded zip"}
+            out_path = os.path.join(sandbox, f"activity_{activity_id}.fit")
+            with open(out_path, "wb") as f:
+                f.write(zf.read(fit_names[0]))
+        os.remove(zip_path)
+        file_path = out_path
+    else:
+        file_path = os.path.join(sandbox, f"activity_{activity_id}.{fmt}")
+        with open(file_path, "wb") as f:
+            f.write(content)
+
+    size_kb = round(os.path.getsize(file_path) / 1024, 1)
+    return {
+        "activity_id": activity_id,
+        "format": fmt,
+        "path": file_path,
+        "size_kb": size_kb,
     }
 
 

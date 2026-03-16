@@ -335,6 +335,34 @@ def activities_types(ctx):
     _run(ctx, lambda: api.get_activity_types(_client(ctx)))
 
 
+@activities.command("download")
+@click.argument("activity_id", type=int)
+@click.option("--file-format", "file_format", default="fit",
+              type=click.Choice(["fit", "gpx", "tcx"], case_sensitive=False),
+              help="File format (default: fit)")
+@click.pass_context
+def activities_download(ctx, activity_id, file_format):
+    """Download activity file to disk (FIT/GPX/TCX).
+
+    \b
+    FIT = original second-by-second recording (HR, pace, cadence, power, GPS).
+    GPX/TCX = XML exports (lighter, interoperable).
+
+    File is written to the session sandbox. Analyze with execute_python + fitparse.
+    Load skill 'fit-analysis' for the full analysis pipeline.
+
+    \b
+    Examples:
+        activities download 12345
+        activities download 12345 --file-format gpx
+    """
+    from garmin_mcp.api import activities as api
+
+    _run(ctx, lambda: api.download_activity(
+        _client(ctx), activity_id, file_format, _session_sandbox(ctx),
+    ))
+
+
 # ── Health ───────────────────────────────────────────────────────────────────
 
 
