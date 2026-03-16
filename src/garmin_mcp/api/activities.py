@@ -333,11 +333,8 @@ def _fit_to_csv(zip_bytes: bytes, activity_id: int, sandbox: str) -> dict:
     if not rows:
         return {"error": "No record data found in FIT file"}
 
-    # Fix half-cadence glitch (Garmin wrist-based cadence bug: accelerometer
-    # miscounts when wrist is raised, producing values at exactly 50% of real).
-    # Detection: rolling median window, any point < 70% of local median → double it.
-    # Zero cadence → None (can't distinguish stop from glitch).
-    if cadence_label in rows[0]:
+    # Fix half-cadence glitch — running only (cycling 80rpm is valid)
+    if is_running and cadence_label in rows[0]:
         _fix_half_cadence_glitch(rows, cadence_label)
 
     # Drop columns that are entirely None
@@ -373,46 +370,29 @@ def _fit_to_csv(zip_bytes: bytes, activity_id: int, sandbox: str) -> dict:
 # ── Private helpers ──────────────────────────────────────────────────────────
 
 
+_CADENCE_HALF_THRESHOLD = 120  # spm — running cadence physically cannot be below this
+
+
 def _fix_half_cadence_glitch(rows: list[dict], key: str) -> None:
     """Fix wrist-based cadence sensor half-count glitch in-place.
 
-    Some Garmin watches (e.g. FR165) momentarily count 1 step out of 2
-    when the wrist is raised, producing cadence values at exactly 50% of
-    the real value. Can be sporadic or in clusters of several seconds.
-
-    Algorithm:
-    1. Compute global median of the "normal" band (values > 130 spm/rpm)
-    2. Any point < 70% of that median → half-count → double it
-    3. Zero values → None (ambiguous: stop or glitch)
+    Some Garmin watches (e.g. FR165) count 1 step out of 2 when wrist is
+    raised, producing values at exactly 50% of real cadence.
+    Running cadence < 120 spm is physically impossible → half-count → double it.
+    Zero → None.
     """
-    # Collect non-zero values
-    valid = [r[key] for r in rows if r.get(key) and r[key] > 0]
-    if len(valid) < 20:
-        return
-
-    # Normal band: values above 130 (running spm or cycling rpm — both work)
-    normal = sorted(v for v in valid if v > 130)
-    if len(normal) < 10:
-        # No clear normal band — can't detect glitches
-        return
-
-    global_median = normal[len(normal) // 2]
-    threshold = global_median * 0.7
     fixed = 0
-
     for r in rows:
         val = r.get(key)
         if val is None:
             continue
         if val == 0:
             r[key] = None
-        elif val < threshold:
+        elif val < _CADENCE_HALF_THRESHOLD:
             r[key] = val * 2
             fixed += 1
-
     if fixed:
-        logger.info("Half-cadence fix: corrected %d points (threshold=%.0f, median=%.0f)",
-                     fixed, threshold, global_median)
+        logger.info("Half-cadence fix: corrected %d points (threshold=%d)", fixed, _CADENCE_HALF_THRESHOLD)
 
 
 def _first_not_none(d: dict, *keys):
