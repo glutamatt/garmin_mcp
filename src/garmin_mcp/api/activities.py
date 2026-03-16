@@ -260,8 +260,19 @@ def _fit_to_csv(zip_bytes: bytes, activity_id: int, sandbox: str) -> dict:
     finally:
         os.remove(zip_path)
 
-    # Parse FIT records
+    # Parse FIT
     fit = FitFile(io.BytesIO(fit_bytes))
+
+    # Detect sport — running cadence is RPM (×2 for SPM), cycling cadence stays as RPM
+    sport = None
+    for msg in fit.get_messages("sport"):
+        sport = {f.name: f.value for f in msg.fields}.get("sport")
+        break
+
+    is_running = sport in ("running", "trail_running", "treadmill_running", None)
+    cadence_label = "cadence_spm" if is_running else "cadence_rpm"
+    cadence_multiplier = 2 if is_running else 1
+
     rows = []
     first_ts = None
     for record in fit.get_messages("record"):
@@ -283,11 +294,11 @@ def _fit_to_csv(zip_bytes: bytes, activity_id: int, sandbox: str) -> dict:
         row["distance_m"] = round(raw["distance"], 1) if raw.get("distance") is not None else None
         row["heart_rate"] = raw.get("heart_rate")
 
-        # Cadence: RPM → SPM (×2 for running)
+        # Cadence: running RPM×2 → SPM, cycling stays RPM
         if cadence_rpm is not None:
-            row["cadence_spm"] = round((cadence_rpm + frac_cadence) * 2)
+            row[cadence_label] = round((cadence_rpm + frac_cadence) * cadence_multiplier)
         else:
-            row["cadence_spm"] = None
+            row[cadence_label] = None
 
         if speed is not None:
             row["speed_ms"] = round(speed, 3)

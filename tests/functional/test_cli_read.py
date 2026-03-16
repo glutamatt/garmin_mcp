@@ -121,6 +121,52 @@ class TestActivities:
         assert "activity_types" in data
         assert len(data["activity_types"]) > 0
 
+    def test_download_csv(self, cli, readonly_token):
+        """Download activity as preprocessed CSV and validate structure."""
+        import csv
+        import os
+
+        # Get a recent activity
+        data = invoke_json(cli, readonly_token, "activities", "list", "--limit", "1")
+        if not data.get("activities"):
+            pytest.skip("No activities found")
+        activity_id = data["activities"][0]["id"]
+
+        result = invoke_json(cli, readonly_token, "activities", "download", str(activity_id))
+
+        # Metadata structure
+        assert result["activity_id"] == activity_id
+        assert result["format"] == "csv"
+        assert result["rows"] > 0
+        assert result["size_kb"] > 0
+        assert isinstance(result["columns"], list)
+        assert "timestamp" in result["columns"]
+        assert "elapsed_s" in result["columns"]
+        assert "heart_rate" in result["columns"]
+        assert "speed_ms" in result["columns"]
+
+        # File exists and is valid CSV
+        csv_path = result["path"]
+        assert os.path.isfile(csv_path)
+        with open(csv_path, "r") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        assert len(rows) == result["rows"]
+
+        # Spot-check first row
+        first = rows[0]
+        assert first["elapsed_s"] == "0.0"
+        assert "T" in first["timestamp"]  # ISO format
+
+        # Cadence column name depends on sport type
+        has_cadence = "cadence_spm" in result["columns"] or "cadence_rpm" in result["columns"]
+        # Cadence may be absent if no sensor (all-null → dropped)
+        if has_cadence and "cadence_spm" in result["columns"]:
+            # Running cadence should be doubled (typically 150-200 spm)
+            cadences = [int(r["cadence_spm"]) for r in rows if r["cadence_spm"]]
+            if cadences:
+                assert max(cadences) > 100, "cadence_spm should be doubled (>100 spm)"
+
 
 # ── Health ───────────────────────────────────────────────────────────────────
 
