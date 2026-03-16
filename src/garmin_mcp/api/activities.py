@@ -205,12 +205,15 @@ def get_activity_types(client: Garmin) -> dict:
 
 
 def download_activity(client: Garmin, activity_id: int, fmt: str = "fit", sandbox: str = "/tmp/garmin") -> dict:
-    """Download activity file to sandbox directory.
+    """Download activity and preprocess to pandas-ready CSV.
 
-    FIT: downloads ORIGINAL (zip) and extracts the .fit file.
-    GPX/TCX: downloads directly.
+    Downloads ORIGINAL FIT (zip), extracts, parses second-by-second records,
+    fixes all gotchas (cadence doubling, enhanced fields, semicircles→degrees,
+    computed pace), and writes a clean CSV.
 
-    Returns metadata dict with path — never the file contents.
+    GPX/TCX: written as-is (XML).
+
+    Returns metadata dict with path, columns, row count — never file contents.
     """
     fmt = fmt.lower().strip()
     format_map = {
@@ -222,33 +225,129 @@ def download_activity(client: Garmin, activity_id: int, fmt: str = "fit", sandbo
         return {"error": f"Unsupported format '{fmt}'. Use: fit, gpx, tcx"}
 
     content = client.download_activity(str(activity_id), dl_fmt=format_map[fmt])
-
     os.makedirs(sandbox, exist_ok=True)
 
-    if fmt == "fit":
-        zip_path = os.path.join(sandbox, f"activity_{activity_id}.zip")
-        with open(zip_path, "wb") as f:
-            f.write(content)
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            fit_names = [n for n in zf.namelist() if n.endswith(".fit")]
-            if not fit_names:
-                os.remove(zip_path)
-                return {"error": "No .fit file found in downloaded zip"}
-            out_path = os.path.join(sandbox, f"activity_{activity_id}.fit")
-            with open(out_path, "wb") as f:
-                f.write(zf.read(fit_names[0]))
-        os.remove(zip_path)
-        file_path = out_path
-    else:
+    if fmt != "fit":
         file_path = os.path.join(sandbox, f"activity_{activity_id}.{fmt}")
         with open(file_path, "wb") as f:
             f.write(content)
+        size_kb = round(os.path.getsize(file_path) / 1024, 1)
+        return {"activity_id": activity_id, "format": fmt, "path": file_path, "size_kb": size_kb}
 
-    size_kb = round(os.path.getsize(file_path) / 1024, 1)
+    # ── FIT → CSV preprocessing ──────────────────────────────────────────
+    return _fit_to_csv(content, activity_id, sandbox)
+
+
+_SEMICIRCLES_TO_DEG = 180.0 / (2 ** 31)
+
+
+def _fit_to_csv(zip_bytes: bytes, activity_id: int, sandbox: str) -> dict:
+    """Extract FIT from zip, parse records, write clean CSV."""
+    import csv
+    import io
+    from fitparse import FitFile
+
+    # Extract .fit from zip
+    zip_path = os.path.join(sandbox, f"_tmp_{activity_id}.zip")
+    with open(zip_path, "wb") as f:
+        f.write(zip_bytes)
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            fit_names = [n for n in zf.namelist() if n.endswith(".fit")]
+            if not fit_names:
+                return {"error": "No .fit file found in downloaded zip"}
+            fit_bytes = zf.read(fit_names[0])
+    finally:
+        os.remove(zip_path)
+
+    # Parse FIT records
+    fit = FitFile(io.BytesIO(fit_bytes))
+    rows = []
+    first_ts = None
+    for record in fit.get_messages("record"):
+        raw = {f.name: f.value for f in record.fields}
+
+        ts = raw.get("timestamp")
+        if ts is None:
+            continue
+        if first_ts is None:
+            first_ts = ts
+
+        speed = raw.get("enhanced_speed") or raw.get("speed")
+        altitude = raw.get("enhanced_altitude") or raw.get("altitude")
+        cadence_rpm = raw.get("cadence")
+        frac_cadence = raw.get("fractional_cadence") or 0.0
+
+        row = {"timestamp": ts.isoformat()}
+        row["elapsed_s"] = round((ts - first_ts).total_seconds(), 1)
+        row["distance_m"] = round(raw["distance"], 1) if raw.get("distance") is not None else None
+        row["heart_rate"] = raw.get("heart_rate")
+
+        # Cadence: RPM → SPM (×2 for running)
+        if cadence_rpm is not None:
+            row["cadence_spm"] = round((cadence_rpm + frac_cadence) * 2)
+        else:
+            row["cadence_spm"] = None
+
+        if speed is not None:
+            row["speed_ms"] = round(speed, 3)
+            row["pace_min_km"] = round(1000 / (speed * 60), 2) if speed > 0.3 else None
+        else:
+            row["speed_ms"] = None
+            row["pace_min_km"] = None
+
+        row["altitude_m"] = round(altitude, 1) if altitude is not None else None
+
+        # GPS: semicircles → degrees
+        lat = raw.get("position_lat")
+        lon = raw.get("position_long")
+        row["lat"] = round(lat * _SEMICIRCLES_TO_DEG, 6) if lat is not None else None
+        row["lon"] = round(lon * _SEMICIRCLES_TO_DEG, 6) if lon is not None else None
+
+        row["temperature_c"] = raw.get("temperature")
+
+        # Running dynamics (optional)
+        row["vertical_oscillation_mm"] = raw.get("vertical_oscillation")
+        row["ground_contact_time_ms"] = raw.get("stance_time")
+        row["ground_contact_balance_pct"] = raw.get("stance_time_balance")
+        step_len = raw.get("step_length")
+        row["step_length_cm"] = round(step_len / 10, 1) if step_len is not None else None
+        row["vertical_ratio_pct"] = raw.get("vertical_ratio")
+
+        # Power (optional)
+        row["power_w"] = raw.get("power")
+
+        rows.append(row)
+
+    if not rows:
+        return {"error": "No record data found in FIT file"}
+
+    # Drop columns that are entirely None
+    all_keys = list(rows[0].keys())
+    drop_keys = {k for k in all_keys if all(r.get(k) is None for r in rows)}
+    if drop_keys:
+        for r in rows:
+            for k in drop_keys:
+                del r[k]
+
+    # Write CSV
+    csv_path = os.path.join(sandbox, f"activity_{activity_id}.csv")
+    columns = [k for k in all_keys if k not in drop_keys]
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    size_kb = round(os.path.getsize(csv_path) / 1024, 1)
+    last = rows[-1]
     return {
         "activity_id": activity_id,
-        "format": fmt,
-        "path": file_path,
+        "format": "csv",
+        "path": csv_path,
+        "rows": len(rows),
+        "columns": columns,
+        "duration_s": last.get("elapsed_s"),
+        "distance_m": last.get("distance_m"),
         "size_kb": size_kb,
     }
 

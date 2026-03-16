@@ -337,29 +337,37 @@ def activities_types(ctx):
 
 @activities.command("download")
 @click.argument("activity_id", type=int)
-@click.option("--file-format", "file_format", default="fit",
-              type=click.Choice(["fit", "gpx", "tcx"], case_sensitive=False),
-              help="File format (default: fit)")
 @click.pass_context
-def activities_download(ctx, activity_id, file_format):
-    """Download activity file to disk (FIT/GPX/TCX).
+def activities_download(ctx, activity_id):
+    """Download activity as preprocessed CSV (pandas-ready).
 
     \b
-    FIT = original second-by-second recording (HR, pace, cadence, power, GPS).
-    GPX/TCX = XML exports (lighter, interoperable).
+    Downloads the original FIT recording, parses second-by-second data,
+    fixes all gotchas, and writes a clean CSV. Ready for pd.read_csv().
 
-    File is written to the session sandbox. Analyze with execute_python + fitparse.
-    Load skill 'fit-analysis' for the full analysis pipeline.
+    Columns (when available):
+      timestamp, elapsed_s, distance_m, heart_rate, cadence_spm,
+      speed_ms, pace_min_km, altitude_m, lat, lon, temperature_c,
+      vertical_oscillation_mm, ground_contact_time_ms, step_length_cm,
+      vertical_ratio_pct, power_w
+
+    Preprocessing applied:
+      - cadence: RPM×2 → steps/min
+      - speed: enhanced_speed (m/s), not deprecated field
+      - pace: computed min/km
+      - GPS: semicircles → degrees
+      - columns with all-null values dropped
+
+    Load skill 'fit-analysis' for analysis patterns.
 
     \b
     Examples:
         activities download 12345
-        activities download 12345 --file-format gpx
     """
     from garmin_mcp.api import activities as api
 
     _run(ctx, lambda: api.download_activity(
-        _client(ctx), activity_id, file_format, _session_sandbox(ctx),
+        _client(ctx), activity_id, "fit", _session_sandbox(ctx),
     ))
 
 
