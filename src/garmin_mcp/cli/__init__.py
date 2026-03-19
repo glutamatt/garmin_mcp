@@ -119,7 +119,7 @@ def _out(ctx, data):
         os.makedirs(os.path.dirname(safe_path) or sandbox, exist_ok=True)
         with open(safe_path, "w") as f:
             f.write(text)
-        click.echo(f"{_describe_shape(data)} written to {output_path}")
+        click.echo(f"{_describe_shape(data)} written to {os.path.basename(safe_path)}")
     else:
         click.echo(text)
 
