@@ -163,7 +163,19 @@ def _preprocess_step(step: dict) -> dict:
         result['endCondition'] = CONDITION_TYPE_MAP['lap.button'].copy()
 
     if 'endConditionValue' in step and step['endConditionValue'] is not None:
-        result['endConditionValue'] = step['endConditionValue']
+        val = step['endConditionValue']
+        # Guard: time endConditionValue is in SECONDS — reject likely millisecond mistakes
+        ec_key = result.get('endCondition', {}).get('conditionTypeKey', '')
+        if ec_key == 'time' and val > 36000:  # > 10 hours
+            raise ValueError(
+                f"endConditionValue={val} seconds ({val/3600:.1f}h) is unreasonably large. "
+                f"Unit is SECONDS, not milliseconds. Did you mean {val/1000:.0f}?"
+            )
+        if ec_key == 'distance' and val > 500000:  # > 500 km
+            raise ValueError(
+                f"endConditionValue={val} meters ({val/1000:.0f}km) is unreasonably large."
+            )
+        result['endConditionValue'] = val
 
     tt = step.get('targetType')
     if isinstance(tt, str):
