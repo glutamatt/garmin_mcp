@@ -15,10 +15,24 @@ Session Management:
 - Tokens passed from frontend on each request via _meta.context.sport_platform_token
 - Fallback to FastMCP Context state (for garmin_login tool flow)
 - Ephemeral Garmin clients created from tokens per-request
+
+Token types:
+- garth OAuth1+OAuth2: traditional flow (garth SSO → OAuth1 → OAuth2). Refresh via OAuth1 exchange.
+- DI/IT OAuth2: garmin-connector flow (web SSO → DI → IT). OAuth1 fields are empty.
+  Refresh via IT endpoint (services.garmin.com/api/oauth/token?grant_type=refresh_token).
+  Detected by empty oauth_token in OAuth1.
 """
 
+import logging
+import time
+
+import requests as _requests
 from garminconnect import Garmin
 from fastmcp import Context
+from garth.auth_tokens import OAuth2Token
+from garth.http import Client as GarthClient
+
+logger = logging.getLogger(__name__)
 
 GARMIN_TOKENS_KEY = "garmin_tokens"
 
@@ -59,6 +73,65 @@ def _get_session_tokens(ctx: Context) -> str | None:
     return ctx.get_state(GARMIN_TOKENS_KEY)
 
 
+IT_TOKEN_URL = "https://services.garmin.com/api/oauth/token"
+IT_CLIENT_IDS = (
+    "GARMIN_CONNECT_MOBILE_ANDROID_2025Q2",
+    "GARMIN_CONNECT_MOBILE_ANDROID_2024Q4",
+    "GARMIN_CONNECT_MOBILE_ANDROID",
+)
+IT_HEADERS = {"User-Agent": "GCM-Android-5.23"}
+
+
+def _is_di_token(garth_client: GarthClient) -> bool:
+    """Check if tokens are from the DI flow (empty OAuth1)."""
+    oauth1 = garth_client.oauth1_token
+    return not oauth1 or not getattr(oauth1, "oauth_token", None)
+
+
+def _patch_di_refresh(garth_client: GarthClient):
+    """
+    Replace garth's OAuth1-based refresh with IT token refresh.
+
+    DI-sourced tokens have empty OAuth1 fields, so garth's default
+    refresh_oauth2() would fail with AssertionError. This patches it
+    to use the IT refresh endpoint instead.
+    """
+
+    def _refresh():
+        old_token = garth_client.oauth2_token
+        for client_id in IT_CLIENT_IDS:
+            try:
+                r = _requests.post(
+                    f"{IT_TOKEN_URL}?grant_type=refresh_token",
+                    headers=IT_HEADERS,
+                    data={
+                        "client_id": client_id,
+                        "refresh_token": old_token.refresh_token,
+                    },
+                    timeout=15,
+                )
+                if r.status_code == 200:
+                    token = r.json()
+                    # Preserve fields that might not be in refresh response
+                    token.setdefault("scope", old_token.scope)
+                    token.setdefault("jti", old_token.jti)
+                    token.setdefault("token_type", old_token.token_type)
+                    token.setdefault("refresh_token", old_token.refresh_token)
+                    now = int(time.time())
+                    token["expires_at"] = now + int(token.get("expires_in", 3600))
+                    token["refresh_token_expires_at"] = now + int(
+                        token.get("refresh_token_expires_in", 7776000)
+                    )
+                    garth_client.oauth2_token = OAuth2Token(**token)
+                    logger.info("DI/IT token refreshed via %s", client_id)
+                    return
+            except Exception as e:
+                logger.warning("IT refresh failed with %s: %s", client_id, e)
+        raise Exception("IT token refresh failed with all client IDs")
+
+    garth_client.refresh_oauth2 = _refresh
+
+
 def create_client_from_tokens(
     tokens_b64: str,
     display_name: str | None = None,
@@ -66,6 +139,9 @@ def create_client_from_tokens(
 ) -> Garmin:
     """
     Create Garmin client from base64-encoded garth tokens.
+
+    Supports both traditional garth tokens (OAuth1+OAuth2) and
+    DI/IT tokens from garmin-connector (empty OAuth1, IT OAuth2).
 
     Args:
         tokens_b64: Base64-encoded garth token string from client.garth.dumps()
@@ -77,6 +153,11 @@ def create_client_from_tokens(
     """
     client = Garmin()
     client.garth.loads(tokens_b64)
+
+    # DI-sourced tokens: patch refresh to use IT endpoint instead of OAuth1
+    if _is_di_token(client.garth):
+        _patch_di_refresh(client.garth)
+
     if display_name:
         client.display_name = display_name
     if full_name:
