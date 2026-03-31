@@ -2,34 +2,98 @@
 Authentication tool for Garmin MCP server.
 Allows login via MCP tool call instead of environment variables.
 Stateless: tokens are returned in response for JWT storage, not persisted to disk.
+
+Login flow:
+1. Try garmin-connector (residential proxy with Playwright + token caching)
+2. Fall back to direct garth login (works with cached tokens, fails for new logins from datacenter IPs)
 """
 
+import logging
+import os
+
+import requests
 from fastmcp import Context
 from garminconnect import Garmin, GarminConnectAuthenticationError
 from garth.exc import GarthHTTPError
 
-from garmin_mcp.client_factory import set_session_tokens
+from garmin_mcp.client_factory import create_client_from_tokens, set_session_tokens
+
+logger = logging.getLogger(__name__)
+
+GARMIN_CONNECTOR_URL = os.environ.get("GARMIN_CONNECTOR_URL", "http://localhost:7860")
+
+
+def _login_via_connector(email: str, password: str) -> dict | None:
+    """
+    Try authenticating via garmin-connector (residential proxy).
+
+    Returns login result dict or None if connector is unavailable.
+    """
+    try:
+        r = requests.post(
+            f"{GARMIN_CONNECTOR_URL}/auth",
+            json={"email": email, "password": password},
+            timeout=90,  # Playwright login can take time
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("success") and data.get("tokens"):
+                # Resolve display_name from the token
+                try:
+                    client = create_client_from_tokens(data["tokens"])
+                    profile = client.garth.connectapi(
+                        "/userprofile-service/socialProfile"
+                    )
+                    display_name = profile.get("displayName") if profile else None
+                    full_name = profile.get("fullName") if profile else None
+                except Exception:
+                    display_name = None
+                    full_name = None
+
+                return {
+                    "success": True,
+                    "message": "Login successful (via garmin-connector)",
+                    "display_name": display_name,
+                    "full_name": full_name,
+                    "tokens": data["tokens"],
+                }
+        # Connector returned an error — pass it through
+        if r.status_code in (401, 400):
+            data = r.json()
+            return {
+                "success": False,
+                "error": data.get("error", "Authentication failed"),
+                "error_category": data.get("error_category", "unknown_error"),
+            }
+    except requests.ConnectionError:
+        logger.info("garmin-connector not available at %s", GARMIN_CONNECTOR_URL)
+        return None
+    except Exception as e:
+        logger.warning("garmin-connector error: %s", e)
+        return None
 
 
 def login(email: str, password: str, user_id: str = None) -> dict:
     """
     Authenticate with Garmin Connect.
 
-    Args:
-        email: Garmin Connect email
-        password: Garmin Connect password
-        user_id: Optional user ID (defaults to email)
-
-    Returns:
-        dict with success status and user info or error
+    Tries garmin-connector first (Playwright on residential IP),
+    falls back to direct garth login.
     """
     user_id = user_id or email.replace("@", "_at_").replace(".", "_")
 
+    # 1. Try garmin-connector
+    connector_result = _login_via_connector(email, password)
+    if connector_result is not None:
+        if connector_result.get("success"):
+            connector_result["user_id"] = user_id
+        return connector_result
+
+    # 2. Fall back to direct garth login
     try:
         client = Garmin(email=email, password=password, is_cn=False)
         client.login()
 
-        # Get user info
         full_name = client.get_full_name()
         display_name = client.display_name
 
@@ -53,7 +117,7 @@ def login(email: str, password: str, user_id: str = None) -> dict:
                 "details": {
                     "message": "Your Garmin account has two-factor authentication (MFA) enabled",
                     "context": "MFA requires interactive authentication which cannot be done through the API",
-                    "solution": "MFA requires interactive authentication which cannot be done through the API. Disable MFA on your Garmin account or use an app password if available.",
+                    "solution": "Disable MFA on your Garmin account or use an app password if available.",
                 },
             }
         return {
@@ -63,12 +127,7 @@ def login(email: str, password: str, user_id: str = None) -> dict:
             "details": {
                 "message": "The email or password you entered is incorrect",
                 "context": "Garmin rejected the login credentials",
-                "solution": "Double-check your email and password:\n  • Verify you're using your Garmin Connect email\n  • Check for typos in your password\n  • Try logging in at garmin.com to verify credentials",
-                "common_issues": [
-                    "Using wrong email (must be Garmin Connect account email)",
-                    "Copy-paste adding extra spaces",
-                    "Password recently changed but using old password",
-                ],
+                "solution": "Double-check your email and password.",
             },
         }
 
@@ -81,44 +140,23 @@ def login(email: str, password: str, user_id: str = None) -> dict:
                 "error_category": "rate_limited",
                 "details": {
                     "message": "Too many login attempts detected by Garmin",
-                    "context": "Garmin's security system has temporarily blocked login attempts from this location",
                     "solution": "Wait 10-15 minutes before trying again",
-                    "prevention": "Avoid rapid repeated login attempts",
                 },
             }
-        elif "401" in error_msg or "403" in error_msg:
-            is_likely_location_block = "403" in error_msg
-            if is_likely_location_block:
-                return {
-                    "success": False,
-                    "error": "Authentication blocked: Suspicious location detected",
-                    "error_category": "location_blocked",
-                    "details": {
-                        "message": "Garmin detected login from an unfamiliar or suspicious location and blocked it for security",
-                        "context": "HuggingFace Spaces and datacenter IPs are often flagged as suspicious by Garmin's security systems",
-                        "solution": "Try logging in from a different network. Datacenter IPs are often blocked by Garmin's security systems.",
-                        "why_this_happens": "Garmin blocks logins from datacenter IPs to prevent unauthorized access. This is expected when running on HuggingFace Spaces.",
-                    },
-                }
+        elif "403" in error_msg:
             return {
                 "success": False,
-                "error": "Invalid credentials",
-                "error_category": "invalid_credentials",
+                "error": "Authentication blocked from this location",
+                "error_category": "location_blocked",
                 "details": {
-                    "message": "Authentication failed with HTTP 401/403 error",
-                    "context": f"Garmin server returned: {error_msg.split(':')[0]}",
-                    "solution": "Verify your credentials at garmin.com and try again",
+                    "message": "Garmin blocks logins from datacenter IPs",
+                    "solution": "A garmin-connector on a residential IP is required for new logins.",
                 },
             }
         return {
             "success": False,
             "error": f"Authentication error: {error_msg.split(':')[0]}",
             "error_category": "connection_error",
-            "details": {
-                "message": "Network or API communication error",
-                "context": f"HTTP error from Garmin: {error_msg.split(':')[0]}",
-                "solution": "Check your internet connection and try again. If the problem persists:\n  • Verify Garmin Connect is online at garmin.com\n  • Try again in a few minutes\n  • Check if Garmin is experiencing outages",
-            },
         }
 
     except Exception as e:
@@ -126,11 +164,6 @@ def login(email: str, password: str, user_id: str = None) -> dict:
             "success": False,
             "error": f"Unexpected error: {str(e)}",
             "error_category": "unknown_error",
-            "details": {
-                "message": "An unexpected error occurred during authentication",
-                "context": str(e),
-                "solution": "Please try again. If the problem persists, check the error message above for clues.",
-            },
         }
 
 
