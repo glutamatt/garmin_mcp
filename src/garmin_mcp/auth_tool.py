@@ -44,8 +44,18 @@ def _login_via_connector(email: str, password: str) -> dict | None:
                     profile = client.garth.connectapi(
                         "/userprofile-service/socialProfile"
                     )
-                    display_name = profile.get("displayName") if profile else None
-                    full_name = profile.get("fullName") if profile else None
+                    if profile:
+                        raw_display = profile.get("displayName", "")
+                        full_name = (
+                            profile.get("userProfileFullName")
+                            or profile.get("fullName")
+                        )
+                        # displayName can be a GUID — prefer fullName
+                        is_guid = len(raw_display) == 36 and raw_display.count("-") == 4
+                        display_name = full_name or raw_display if is_guid else raw_display
+                    else:
+                        display_name = None
+                        full_name = None
                 except Exception:
                     display_name = None
                     full_name = None
