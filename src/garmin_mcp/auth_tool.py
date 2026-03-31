@@ -21,6 +21,11 @@ from garmin_mcp.client_factory import create_client_from_tokens, set_session_tok
 logger = logging.getLogger(__name__)
 
 GARMIN_CONNECTOR_URL = os.environ.get("GARMIN_CONNECTOR_URL", "http://localhost:7860")
+# SOCKS5 proxy for Tailscale userspace networking (HF Space → homelab tunnel)
+TS_SOCKS_PROXY = os.environ.get("TS_SOCKS_PROXY", "")
+_CONNECTOR_PROXIES = (
+    {"http": TS_SOCKS_PROXY, "https": TS_SOCKS_PROXY} if TS_SOCKS_PROXY else None
+)
 
 
 def _login_via_connector(email: str, password: str) -> dict | None:
@@ -33,6 +38,7 @@ def _login_via_connector(email: str, password: str) -> dict | None:
         r = requests.post(
             f"{GARMIN_CONNECTOR_URL}/auth",
             json={"email": email, "password": password},
+            proxies=_CONNECTOR_PROXIES,
             timeout=90,  # Playwright login can take time
         )
         if r.status_code == 200:
