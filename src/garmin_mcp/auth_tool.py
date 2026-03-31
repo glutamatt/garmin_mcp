@@ -20,7 +20,7 @@ from garmin_mcp.client_factory import create_client_from_tokens, set_session_tok
 
 logger = logging.getLogger(__name__)
 
-GARMIN_CONNECTOR_URL = os.environ.get("GARMIN_CONNECTOR_URL", "http://localhost:7860")
+GARMIN_CONNECTOR_URL = os.environ.get("GARMIN_CONNECTOR_URL", "http://garmin-connector:7860")
 # SOCKS5 proxy for Tailscale userspace networking (HF Space → homelab tunnel)
 TS_SOCKS_PROXY = os.environ.get("TS_SOCKS_PROXY", "")
 _CONNECTOR_PROXIES = (
