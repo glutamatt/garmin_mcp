@@ -125,6 +125,11 @@ def _patch_di_refresh(garth_client: GarthClient):
                     garth_client.oauth2_token = OAuth2Token(**token)
                     logger.info("DI/IT token refreshed via %s", client_id)
                     return
+                else:
+                    body = r.text[:200] if r.text else ""
+                    logger.warning(
+                        "IT refresh %s returned %d: %s", client_id, r.status_code, body
+                    )
             except Exception as e:
                 logger.warning("IT refresh failed with %s: %s", client_id, e)
         raise Exception("IT token refresh failed with all client IDs")
