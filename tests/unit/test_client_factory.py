@@ -3,7 +3,7 @@ Unit tests for client_factory module.
 
 Tests the display_name/full_name propagation from JWT context
 to the Garmin client, ensuring zero extra API calls per request.
-Also tests DI token detection and the IT refresh patch.
+Also tests DI token detection and the DI refresh patch.
 """
 import time
 
@@ -17,8 +17,8 @@ from garmin_mcp.client_factory import (
     _patch_di_refresh,
     create_client_from_tokens,
     get_client,
-    IT_TOKEN_URL,
-    IT_CLIENT_IDS,
+    DI_TOKEN_URL,
+    DI_CLIENT_IDS,
 )
 
 
@@ -190,7 +190,7 @@ class TestIsDiToken:
 
 
 # ---------------------------------------------------------------------------
-# _patch_di_refresh — IT endpoint token refresh
+# _patch_di_refresh — DI endpoint token refresh
 # ---------------------------------------------------------------------------
 
 
@@ -212,7 +212,7 @@ def _make_oauth2_token(
 
 
 class TestPatchDiRefresh:
-    """Tests for the IT token refresh mechanism patched onto DI garth clients."""
+    """Tests for the DI token refresh mechanism patched onto DI garth clients."""
 
     def test_replaces_refresh_oauth2_method(self):
         """_patch_di_refresh replaces garth's refresh_oauth2."""
@@ -227,7 +227,7 @@ class TestPatchDiRefresh:
 
     @patch("garmin_mcp.client_factory._requests.post")
     def test_calls_it_endpoint_with_refresh_token(self, mock_post):
-        """Refresh calls IT endpoint with correct params."""
+        """Refresh calls DI endpoint with correct params."""
         mock_post.return_value = Mock(
             status_code=200,
             json=Mock(return_value={
@@ -244,11 +244,11 @@ class TestPatchDiRefresh:
         _patch_di_refresh(garth)
         garth.refresh_oauth2()
 
-        # Should call IT endpoint
+        # Should call DI endpoint
         call_args = mock_post.call_args
-        assert IT_TOKEN_URL in call_args.args[0]
+        assert DI_TOKEN_URL in call_args.args[0]
         assert call_args.kwargs["data"]["refresh_token"] == "rt_original"
-        assert call_args.kwargs["data"]["client_id"] == IT_CLIENT_IDS[0]
+        assert call_args.kwargs["data"]["client_id"] == DI_CLIENT_IDS[0]
 
     @patch("garmin_mcp.client_factory._requests.post")
     def test_updates_garth_oauth2_token(self, mock_post):
@@ -278,7 +278,7 @@ class TestPatchDiRefresh:
 
     @patch("garmin_mcp.client_factory._requests.post")
     def test_preserves_old_refresh_token_when_not_returned(self, mock_post):
-        """When IT response omits refresh_token, old one is preserved."""
+        """When DI response omits refresh_token, old one is preserved."""
         mock_post.return_value = Mock(
             status_code=200,
             json=Mock(return_value={
@@ -301,7 +301,7 @@ class TestPatchDiRefresh:
 
     @patch("garmin_mcp.client_factory._requests.post")
     def test_uses_new_refresh_token_when_returned(self, mock_post):
-        """When IT response includes refresh_token, new one is used (rotation)."""
+        """When DI response includes refresh_token, new one is used (rotation)."""
         mock_post.return_value = Mock(
             status_code=200,
             json=Mock(return_value={
@@ -345,11 +345,11 @@ class TestPatchDiRefresh:
         assert mock_post.call_count == 3
         # Each call should use a different client_id
         used_ids = [c.kwargs["data"]["client_id"] for c in mock_post.call_args_list]
-        assert used_ids == list(IT_CLIENT_IDS)
+        assert used_ids == list(DI_CLIENT_IDS)
 
     @patch("garmin_mcp.client_factory._requests.post")
     def test_raises_when_all_client_ids_fail(self, mock_post):
-        """Raises Exception when all IT client IDs fail."""
+        """Raises Exception when all DI client IDs fail."""
         mock_post.return_value = Mock(status_code=401)
 
         garth = Mock()
@@ -357,7 +357,7 @@ class TestPatchDiRefresh:
 
         _patch_di_refresh(garth)
 
-        with pytest.raises(Exception, match="IT token refresh failed with all client IDs"):
+        with pytest.raises(Exception, match="DI token refresh failed with all client IDs"):
             garth.refresh_oauth2()
 
     @patch("garmin_mcp.client_factory._requests.post")

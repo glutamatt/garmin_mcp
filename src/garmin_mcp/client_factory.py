@@ -23,6 +23,7 @@ Token types:
   Detected by empty oauth_token in OAuth1.
 """
 
+import base64
 import logging
 import time
 
@@ -73,13 +74,24 @@ def _get_session_tokens(ctx: Context) -> str | None:
     return ctx.get_state(GARMIN_TOKENS_KEY)
 
 
-IT_TOKEN_URL = "https://services.garmin.com/api/oauth/token"
-IT_CLIENT_IDS = (
-    "GARMIN_CONNECT_MOBILE_ANDROID_2025Q2",
-    "GARMIN_CONNECT_MOBILE_ANDROID_2024Q4",
-    "GARMIN_CONNECT_MOBILE_ANDROID",
+DI_TOKEN_URL = "https://diauth.garmin.com/di-oauth2-service/oauth/token"
+DI_CLIENT_IDS = (
+    "GARMIN_CONNECT_MOBILE_ANDROID_DI_2025Q2",
+    "GARMIN_CONNECT_MOBILE_ANDROID_DI_2024Q4",
+    "GARMIN_CONNECT_MOBILE_ANDROID_DI",
 )
-IT_HEADERS = {"User-Agent": "GCM-Android-5.23"}
+DI_HEADERS = {
+    "User-Agent": "GCM-Android-5.23",
+    "X-Garmin-Client-Platform": "Android",
+    "X-App-Ver": "10861",
+    "X-Lang": "en",
+    "Content-Type": "application/x-www-form-urlencoded",
+}
+
+
+def _basic_auth(client_id: str) -> str:
+    """Garmin DI endpoint requires Basic auth with client_id and empty secret."""
+    return "Basic " + base64.b64encode(f"{client_id}:".encode()).decode()
 
 
 def _is_di_token(garth_client: GarthClient) -> bool:
@@ -90,21 +102,28 @@ def _is_di_token(garth_client: GarthClient) -> bool:
 
 def _patch_di_refresh(garth_client: GarthClient):
     """
-    Replace garth's OAuth1-based refresh with IT token refresh.
+    Replace garth's OAuth1-based refresh with DI token refresh.
 
     DI-sourced tokens have empty OAuth1 fields, so garth's default
     refresh_oauth2() would fail with AssertionError. This patches it
-    to use the IT refresh endpoint instead.
+    to use the DI refresh endpoint (diauth.garmin.com) instead.
+
+    Note: Garmin rotates the refresh token on every use — the caller
+    MUST propagate the updated garth.dumps() back to the client.
     """
 
     def _refresh():
         old_token = garth_client.oauth2_token
-        for client_id in IT_CLIENT_IDS:
+        for client_id in DI_CLIENT_IDS:
             try:
                 r = _requests.post(
-                    f"{IT_TOKEN_URL}?grant_type=refresh_token",
-                    headers=IT_HEADERS,
+                    DI_TOKEN_URL,
+                    headers={
+                        **DI_HEADERS,
+                        "Authorization": _basic_auth(client_id),
+                    },
                     data={
+                        "grant_type": "refresh_token",
                         "client_id": client_id,
                         "refresh_token": old_token.refresh_token,
                     },
@@ -123,16 +142,16 @@ def _patch_di_refresh(garth_client: GarthClient):
                         token.get("refresh_token_expires_in", 7776000)
                     )
                     garth_client.oauth2_token = OAuth2Token(**token)
-                    logger.info("DI/IT token refreshed via %s", client_id)
+                    logger.info("DI token refreshed via %s", client_id)
                     return
                 else:
                     body = r.text[:200] if r.text else ""
                     logger.warning(
-                        "IT refresh %s returned %d: %s", client_id, r.status_code, body
+                        "DI refresh %s returned %d: %s", client_id, r.status_code, body
                     )
             except Exception as e:
-                logger.warning("IT refresh failed with %s: %s", client_id, e)
-        raise Exception("IT token refresh failed with all client IDs")
+                logger.warning("DI refresh failed with %s: %s", client_id, e)
+        raise Exception("DI token refresh failed with all client IDs")
 
     garth_client.refresh_oauth2 = _refresh
 
