@@ -25,7 +25,6 @@ from garmin_mcp.cli.output import filter_fields, find_missing_fields, format_out
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-
 def _client(ctx):
     """Get Garmin client from click context (lazy creation)."""
     c = ctx.obj.get("client")
@@ -1097,7 +1096,7 @@ def _hoist_global_flags(args: list[str]) -> list[str]:
 
 
 def execute(command: str, token: str, display_name: str = None, tmp_dir: str = None) -> dict:
-    """Execute a CLI command string, return {stdout, stderr, exit_code}.
+    """Execute a CLI command string, return {stdout, stderr, exit_code, refreshed_token?}.
 
     Used by the /cli HTTP endpoint and tests.
 
@@ -1105,6 +1104,10 @@ def execute(command: str, token: str, display_name: str = None, tmp_dir: str = N
     Commands are parsed by Click, not by a shell — no shell expansion occurs.
     Global flags (--fields, --format, --output, --dry-run) are hoisted to the front
     regardless of where the AI places them in the command.
+
+    If garth refreshed the OAuth2 token during execution, `refreshed_token` is set
+    to the new base64-encoded token blob. The caller (server.py) should propagate
+    this back to the client so it can update its stored JWT.
     """
     import shlex
     import inspect
@@ -1125,6 +1128,16 @@ def execute(command: str, token: str, display_name: str = None, tmp_dir: str = N
         args += ["--display-name", display_name]
     if tmp_dir:
         args += ["--tmp-dir", tmp_dir]
+
+    # Pre-create the garth client so we hold a local reference for token
+    # comparison after execution. _client(ctx) will find it in ctx.obj["client"]
+    # and skip lazy creation. This avoids a module-level global (race condition).
+    # May fail with invalid tokens (e.g. --dry-run with fake token) — that's fine,
+    # _client(ctx) will create it lazily if needed.
+    try:
+        client = create_client_from_tokens(token, display_name)
+    except Exception:
+        client = None
 
     # Extract --json value BEFORE shlex.split — shlex strips quotes from JSON,
     # turning {"key":"val"} into {key:val} which is invalid.
@@ -1173,7 +1186,9 @@ def execute(command: str, token: str, display_name: str = None, tmp_dir: str = N
         cmd_args += ["--json", json_value]
     args += cmd_args
 
-    result = runner.invoke(garmin, args, catch_exceptions=True)
+    # Pass pre-created client via obj so _client(ctx) reuses it
+    obj = {"client": client} if client else {}
+    result = runner.invoke(garmin, args, obj=obj, catch_exceptions=True)
     stdout = result.output or ""
     stderr = ""
     if hasattr(result, "stderr") and result.stderr:
@@ -1184,8 +1199,22 @@ def execute(command: str, token: str, display_name: str = None, tmp_dir: str = N
         for line in stderr.strip().splitlines():
             stdout = stdout.replace(line + "\n", "", 1)
 
-    return {
+    # Detect if garth refreshed tokens during execution (thread-safe: local ref)
+    refreshed_token = None
+    if client:
+        try:
+            new_token = client.garth.dumps()
+            if new_token != token:
+                refreshed_token = new_token
+        except Exception:
+            pass
+
+    resp = {
         "stdout": stdout,
         "stderr": stderr,
         "exit_code": result.exit_code,
     }
+    if refreshed_token:
+        resp["refreshed_token"] = refreshed_token
+
+    return resp
