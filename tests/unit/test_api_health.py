@@ -218,9 +218,11 @@ class TestGetCoachingSnapshot:
         result = api.get_coaching_snapshot(client, "2024-01-15")
         assert result["date"] == "2024-01-15"
         assert result["stats"]["total_steps"] == 5000
-        # None fields should be stripped by clean_nones
-        assert "sleep" not in result
-        assert "hrv" not in result
+        # Unavailable sections should be explicitly marked, not silently dropped
+        assert result["sleep"] == {"unavailable": True}
+        assert result["hrv"] == {"unavailable": True}
+        assert result["training_readiness"] == {"unavailable": True}
+        assert result["body_battery"] == {"unavailable": True}
 
 
 # ── get_spo2 ─────────────────────────────────────────────────────────────────

@@ -11,16 +11,21 @@ from garmin_mcp.utils import clean_nones
 
 
 def get_coaching_snapshot(client: Garmin, date: str) -> dict:
-    """One-call daily overview: stats + sleep + readiness + body battery + HRV."""
+    """One-call daily overview: stats + sleep + readiness + body battery + HRV.
+
+    Sections that fail or return no data are included as {"unavailable": true}
+    so consumers can distinguish missing data from zero values.
+    """
     raw = client.get_coaching_snapshot(date)
-    return clean_nones({
+    _unavailable = {"unavailable": True}
+    return {
         "date": date,
-        "stats": _curate_stats(raw.get("stats")) if raw.get("stats") else None,
-        "sleep": _curate_sleep(raw.get("sleep")) if raw.get("sleep") else None,
-        "training_readiness": _curate_readiness(raw.get("training_readiness")) if raw.get("training_readiness") else None,
-        "body_battery": _curate_body_battery_summary(raw.get("body_battery")) if raw.get("body_battery") else None,
-        "hrv": _curate_hrv(raw.get("hrv")) if raw.get("hrv") else None,
-    })
+        "stats": _curate_stats(raw.get("stats")) if raw.get("stats") else _unavailable,
+        "sleep": _curate_sleep(raw.get("sleep")) if raw.get("sleep") else _unavailable,
+        "training_readiness": _curate_readiness(raw.get("training_readiness")) if raw.get("training_readiness") else _unavailable,
+        "body_battery": _curate_body_battery_summary(raw.get("body_battery")) if raw.get("body_battery") else _unavailable,
+        "hrv": _curate_hrv(raw.get("hrv")) if raw.get("hrv") else _unavailable,
+    }
 
 
 def get_stats(client: Garmin, date: str) -> dict:

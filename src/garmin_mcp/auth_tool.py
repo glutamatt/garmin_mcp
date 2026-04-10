@@ -51,14 +51,13 @@ def _login_via_connector(email: str, password: str) -> dict | None:
                         "/userprofile-service/socialProfile"
                     )
                     if profile:
-                        raw_display = profile.get("displayName", "")
+                        # displayName is used in Garmin API URL paths — MUST be the raw value,
+                        # even when it's a UUID. fullName ("Mathieu Morlon") causes 403.
+                        display_name = profile.get("displayName", "")
                         full_name = (
                             profile.get("userProfileFullName")
                             or profile.get("fullName")
                         )
-                        # displayName can be a GUID — prefer fullName
-                        is_guid = len(raw_display) == 36 and raw_display.count("-") == 4
-                        display_name = full_name or raw_display if is_guid else raw_display
                     else:
                         display_name = None
                         full_name = None
