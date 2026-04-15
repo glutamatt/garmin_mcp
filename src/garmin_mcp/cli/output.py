@@ -1,7 +1,36 @@
-"""Output formatting: field filtering + JSON/table rendering."""
+"""Output formatting: field filtering + JSON/table rendering + CSV writer."""
 
+import csv
 import json
 from garmin_mcp.utils import format_duration, format_distance, format_pace
+
+
+def write_csv_file(path: str, rows: list[dict]) -> dict:
+    """Write a list-of-dicts as CSV. Header = union of keys (first-seen order).
+
+    Empty rows → writes an empty file with no header (caller reports that).
+    Returns {"path", "rows", "columns"} metadata for echo/telemetry.
+    """
+    if not rows:
+        # touch empty file so downstream readers see it exists
+        open(path, "w").close()
+        return {"path": path, "rows": 0, "columns": 0}
+
+    fieldnames: list[str] = []
+    seen: set[str] = set()
+    for r in rows:
+        for k in r.keys():
+            if k not in seen:
+                seen.add(k)
+                fieldnames.append(k)
+
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for r in rows:
+            writer.writerow(r)
+
+    return {"path": path, "rows": len(rows), "columns": len(fieldnames)}
 
 
 def find_missing_fields(data, fields: list[str]) -> list[str]:

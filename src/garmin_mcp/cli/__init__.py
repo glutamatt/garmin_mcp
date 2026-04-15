@@ -11,7 +11,7 @@ Usage:
 
 import json
 import os
-from datetime import date as _date
+from datetime import date as _date, timedelta as _timedelta
 
 import click
 
@@ -20,7 +20,12 @@ def _today():
     return _date.today().isoformat()
 
 from garmin_mcp.client_factory import create_client_from_tokens
-from garmin_mcp.cli.output import filter_fields, find_missing_fields, format_output
+from garmin_mcp.cli.output import (
+    filter_fields,
+    find_missing_fields,
+    format_output,
+    write_csv_file,
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -561,6 +566,186 @@ def training_personal_records(ctx):
     from garmin_mcp.api import training as api
 
     _run(ctx, lambda: api.get_personal_record(_client(ctx)))
+
+
+# ── History (long-term time-series) ──────────────────────────────────────────
+
+
+@garmin.group("history")
+@click.pass_context
+def history(ctx):
+    """Long-term history (365d default) → CSV on disk for pandas analysis.
+
+    \b
+    Time-series commands: each writes max-precision, max-fields CSV to the
+    session sandbox and prints the filename. No inline data in stdout —
+    read the file with `pd.read_csv()` and group/filter in pandas.
+
+    \b
+    When to use `history` vs `health`/`training`:
+      - `health sleep [date]` / `training hrv [date]`  → single-day snapshot
+      - `history sleep` / `history heart-rate`          → multi-day trend (CSV)
+
+    \b
+    Subcommands: running, cycling, sleep, heart-rate, vo2max, race-predictions
+    (HRV columns live in `history sleep` — avgOvernightHrv, hrv7dAverage, hrvStatus.)
+    """
+    pass
+
+
+def _history_window(days: int, end: str | None) -> tuple[str, str]:
+    """Compute (start, end) for a history command. Default: 365 days ending today."""
+    from garmin_mcp.api.history import default_window
+
+    if end is None:
+        return default_window(days)
+    end_d = _date.fromisoformat(end)
+    start_d = end_d - _timedelta(days=days)
+    return start_d.isoformat(), end_d.isoformat()
+
+
+def _write_history_csv(ctx, rows: list[dict], default_name: str, window: tuple[str, str]):
+    """Write rows to CSV in session sandbox. Filename = --output if set, else default."""
+    sandbox = _session_sandbox(ctx)
+    output_name = ctx.obj.get("output") or default_name
+    safe_path = _sanitize_path(output_name, sandbox)
+    os.makedirs(os.path.dirname(safe_path) or sandbox, exist_ok=True)
+    meta = write_csv_file(safe_path, rows)
+    rel = os.path.relpath(safe_path, sandbox)
+    start, end = window
+    click.echo(
+        f"{rel} — {meta['rows']} rows × {meta['columns']} columns "
+        f"[{start} → {end}]"
+    )
+
+
+_AGGREGATIONS = ("daily", "weekly", "monthly", "yearly", "lifetime")
+
+
+@history.command("running")
+@click.option("--days", default=365, type=int, help="Days back from end (default 365)")
+@click.option("--end", default=None, help="End date YYYY-MM-DD (default today)")
+@click.option(
+    "--agg",
+    default="weekly",
+    type=click.Choice(_AGGREGATIONS),
+    help="Aggregation bucket (default weekly — matches Garmin UI)",
+)
+@click.pass_context
+def history_running(ctx, days, end, agg):
+    """Running "Reports" — aggregated metrics per period.
+
+    \b
+    One row per period. Columns: countOfActivities + each metric flattened
+    to _count/_min/_max/_avg/_sum (distance_sum, avgHr_avg, avgRunCadence_avg…).
+    Units are Garmin-internal: distance/elevation in cm, duration in ms, speed in m/s.
+    """
+    from garmin_mcp.api import history as api
+
+    window = _history_window(days, end)
+    rows = api.get_sport_stats(_client(ctx), "running", *window, aggregation=agg)
+    _write_history_csv(ctx, rows, "history_running.csv", window)
+
+
+@history.command("cycling")
+@click.option("--days", default=365, type=int, help="Days back from end (default 365)")
+@click.option("--end", default=None, help="End date YYYY-MM-DD (default today)")
+@click.option(
+    "--agg",
+    default="weekly",
+    type=click.Choice(_AGGREGATIONS),
+    help="Aggregation bucket (default weekly — matches Garmin UI)",
+)
+@click.pass_context
+def history_cycling(ctx, days, end, agg):
+    """Cycling "Reports" — aggregated metrics per period.
+
+    \b
+    One row per period. Columns: countOfActivities + each metric flattened
+    to _count/_min/_max/_avg/_sum (distance_sum, avgHr_avg, avgBikeCadence_avg,
+    avgPower_avg…). Units are Garmin-internal (see `history running`).
+    """
+    from garmin_mcp.api import history as api
+
+    window = _history_window(days, end)
+    rows = api.get_sport_stats(_client(ctx), "cycling", *window, aggregation=agg)
+    _write_history_csv(ctx, rows, "history_cycling.csv", window)
+
+
+@history.command("sleep")
+@click.option("--days", default=365, type=int, help="Days back from end (default 365)")
+@click.option("--end", default=None, help="End date YYYY-MM-DD (default today)")
+@click.pass_context
+def history_sleep(ctx, days, end):
+    """Daily sleep: score, phases, RHR, HRV, SpO2, respiration, bedtime, wake time."""
+    from garmin_mcp.api import history as api
+
+    window = _history_window(days, end)
+    rows = api.get_sleep(_client(ctx), *window)
+    _write_history_csv(ctx, rows, "history_sleep.csv", window)
+
+
+@history.command("heart-rate")
+@click.option("--days", default=365, type=int, help="Days back from end (default 365)")
+@click.option("--end", default=None, help="End date YYYY-MM-DD (default today)")
+@click.option(
+    "--agg",
+    default="daily",
+    type=click.Choice(["daily", "weekly"]),
+    help="Aggregation bucket (default daily — max precision, 28d chunks)",
+)
+@click.pass_context
+def history_heart_rate(ctx, days, end, agg):
+    """Heart rate trend — resting HR + wellness min/max.
+
+    \b
+    Daily rows: date, restingHR, wellnessMaxAvgHR, wellnessMinAvgHR.
+    Weekly rows: date (week start), avgRestingHR, wellnessMaxAvgHR, wellnessMinAvgHR.
+    All values in bpm (raw Garmin field names).
+    """
+    from garmin_mcp.api import history as api
+
+    window = _history_window(days, end)
+    rows = api.get_heart_rate(_client(ctx), *window, aggregation=agg)
+    _write_history_csv(ctx, rows, "history_heart_rate.csv", window)
+
+
+@history.command("vo2max")
+@click.option("--days", default=365, type=int, help="Days back from end (default 365)")
+@click.option("--end", default=None, help="End date YYYY-MM-DD (default today)")
+@click.option(
+    "--agg",
+    default="daily",
+    type=click.Choice(["daily", "weekly", "monthly"]),
+    help="Aggregation bucket (default daily — max precision)",
+)
+@click.pass_context
+def history_vo2max(ctx, days, end, agg):
+    """VO2max trend for running + cycling.
+
+    \b
+    One row per period per sport (rows only present when that sport had data).
+    Fields: date, sport, vo2MaxValue, vo2MaxPreciseValue, fitnessAge,
+    fitnessAgeDescription, maxMetCategory. 2 API calls (one per sport).
+    """
+    from garmin_mcp.api import history as api
+
+    window = _history_window(days, end)
+    rows = api.get_vo2max(_client(ctx), *window, aggregation=agg)
+    _write_history_csv(ctx, rows, "history_vo2max.csv", window)
+
+
+@history.command("race-predictions")
+@click.option("--days", default=365, type=int, help="Days back from end (default 365)")
+@click.option("--end", default=None, help="End date YYYY-MM-DD (default today)")
+@click.pass_context
+def history_race_predictions(ctx, days, end):
+    """Daily race time predictions: 5K / 10K / half / marathon (seconds)."""
+    from garmin_mcp.api import history as api
+
+    window = _history_window(days, end)
+    rows = api.get_race_predictions(_client(ctx), *window)
+    _write_history_csv(ctx, rows, "history_race_predictions.csv", window)
 
 
 # ── Workouts ─────────────────────────────────────────────────────────────────
