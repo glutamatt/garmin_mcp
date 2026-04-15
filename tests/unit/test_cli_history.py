@@ -137,14 +137,19 @@ def _invoke(runner, mock_client, tmp_path, *cmd_args):
 
 
 class TestHistoryRunning:
-    def test_writes_default_filename(self, tmp_path, mock_client):
+    def test_writes_default_filename_includes_agg(self, tmp_path, mock_client):
+        """Default filename now includes --agg so weekly+monthly don't overwrite."""
         result = _invoke(_runner(), mock_client, tmp_path, "running", "--days", "7", "--end", "2026-04-15")
         assert result.exit_code == 0, result.output + (result.stderr or "")
-        assert "history_running.csv" in result.output
+        # Default agg for running is weekly → filename history_running_weekly.csv
+        assert "history_running_weekly.csv" in result.output
         assert "2 rows" in result.output
         assert "[2026-04-08 → 2026-04-15]" in result.output
+        # Units legend is echoed so Apex sees cm/ms/kJ at call time
+        assert "units:" in result.output
+        assert "cm" in result.output and "ms" in result.output
 
-        path = tmp_path / "history_running.csv"
+        path = tmp_path / "history_running_weekly.csv"
         assert path.exists()
         fields, rows = _read_csv(str(path))
         assert "date" in fields
@@ -152,6 +157,13 @@ class TestHistoryRunning:
         assert "distance_sum" in fields
         assert "avgHr_avg" in fields
         assert {r["date"] for r in rows} == {"2026-04-06", "2026-04-13"}
+
+    def test_weekly_and_monthly_do_not_overwrite(self, tmp_path, mock_client):
+        """Running weekly + monthly produce distinct files (Apex's #2 complaint)."""
+        _invoke(_runner(), mock_client, tmp_path, "running", "--agg", "weekly", "--days", "7", "--end", "2026-04-15")
+        _invoke(_runner(), mock_client, tmp_path, "running", "--agg", "monthly", "--days", "7", "--end", "2026-04-15")
+        assert (tmp_path / "history_running_weekly.csv").exists()
+        assert (tmp_path / "history_running_monthly.csv").exists()
 
     def test_agg_flag_passes_through(self, tmp_path, mock_client):
         result = _invoke(
@@ -178,7 +190,7 @@ class TestHistoryCycling:
         assert p["activityType"] == "cycling"
         assert "avgBikeCadence" in p["metric"]
         assert len(p["metric"]) == 35  # same verbatim list for every sport
-        path = tmp_path / "history_cycling.csv"
+        path = tmp_path / "history_cycling_weekly.csv"
         assert path.exists()
 
 
@@ -201,7 +213,7 @@ class TestHistoryOutputOverride:
         assert result.exit_code == 0, result.output
         assert "my_runs.csv" in result.output
         assert (tmp_path / "my_runs.csv").exists()
-        assert not (tmp_path / "history_running.csv").exists()
+        assert not (tmp_path / "history_running_weekly.csv").exists()
 
 
 class TestHistorySleep:
@@ -230,9 +242,9 @@ class TestHistoryHeartRate:
             _runner(), mock_client, tmp_path, "heart-rate", "--days", "2", "--end", "2026-04-15"
         )
         assert result.exit_code == 0, result.output
-        path = tmp_path / "history_heart_rate.csv"
+        path = tmp_path / "history_heart_rate_daily.csv"
         fields, rows = _read_csv(str(path))
-        # Raw Garmin field names
+        # Canonical schema: these columns ALWAYS present (even if server omits them)
         assert "restingHR" in fields
         assert "wellnessMaxAvgHR" in fields
         assert "wellnessMinAvgHR" in fields
@@ -244,7 +256,7 @@ class TestHistoryHeartRate:
             "--days", "30", "--end", "2026-04-15",
         )
         assert result.exit_code == 0, result.output
-        path = tmp_path / "history_heart_rate.csv"
+        path = tmp_path / "history_heart_rate_weekly.csv"
         fields, rows = _read_csv(str(path))
         assert "avgRestingHR" in fields  # weekly-specific field
         # Single call, no chunking
@@ -257,7 +269,7 @@ class TestHistoryVo2Max:
     def test_writes_csv(self, tmp_path, mock_client):
         result = _invoke(_runner(), mock_client, tmp_path, "vo2max", "--days", "30", "--end", "2026-04-15")
         assert result.exit_code == 0, result.output
-        path = tmp_path / "history_vo2max.csv"
+        path = tmp_path / "history_vo2max_daily.csv"
         fields, rows = _read_csv(str(path))
         assert "vo2MaxPreciseValue" in fields
         assert "sport" in fields
@@ -311,7 +323,7 @@ class TestHistoryEmpty:
         )
         assert result.exit_code == 0, result.output
         assert "0 rows" in result.output
-        path = tmp_path / "history_running.csv"
+        path = tmp_path / "history_running_weekly.csv"
         assert path.exists()
         assert path.read_text() == ""  # empty file
 

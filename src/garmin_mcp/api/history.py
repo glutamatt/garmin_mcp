@@ -306,6 +306,13 @@ _HEART_RATE_DAILY_MAX_WINDOW = 28
 # Weekly endpoint accepts up to 52 weeks per call (100 fails).
 _HEART_RATE_WEEKLY_MAX_WEEKS = 52
 
+# Canonical column sets — ensure schema stability across runs even when the
+# server omits optional fields (e.g. `abnormalHRAlertCount` only appears for
+# users with alerts configured). Rows are seeded with None for these fields
+# so the CSV header stays consistent window-to-window.
+_HR_DAILY_CANONICAL = ("date", "restingHR", "wellnessMaxAvgHR", "wellnessMinAvgHR")
+_HR_WEEKLY_CANONICAL = ("date", "avgRestingHR", "wellnessMaxAvgHR", "wellnessMinAvgHR")
+
 
 def get_heart_rate(
     client: Garmin,
@@ -345,7 +352,12 @@ def get_heart_rate(
             if not isinstance(entry, dict):
                 continue
             values = entry.get("values") or {}
-            rows.append({"date": entry.get("calendarDate"), **values})
+            row = {"date": entry.get("calendarDate"), **values}
+            # Seed canonical keys so the CSV schema is stable even when the
+            # server omits optional fields on some rows/windows.
+            for k in _HR_WEEKLY_CANONICAL:
+                row.setdefault(k, None)
+            rows.append(row)
         rows.sort(key=lambda r: str(r.get("date") or ""))
         return rows
 
@@ -371,7 +383,11 @@ def get_heart_rate(
                 if not isinstance(entry, dict):
                     continue
                 values = entry.get("values") or {}
-                rows.append({"date": entry.get("calendarDate"), **values})
+                row = {"date": entry.get("calendarDate"), **values}
+                # Seed canonical keys for schema stability (see _HR_DAILY_CANONICAL).
+                for k in _HR_DAILY_CANONICAL:
+                    row.setdefault(k, None)
+                rows.append(row)
 
     rows.sort(key=lambda r: str(r.get("date") or ""))
     seen: set[str] = set()
@@ -444,7 +460,19 @@ def get_vo2max(
 def get_race_predictions(
     client: Garmin, start_date: str, end_date: str
 ) -> list[dict]:
-    """One row per day: 5K / 10K / half-marathon / marathon predicted times (seconds)."""
+    """One row per day: 5K / 10K / half-marathon / marathon predicted times (seconds).
+
+    Garmin caps this endpoint at 365 days — pre-flight check raises a clear
+    ValueError before the HTTP call, instead of letting the server 400 silently.
+    """
+    s = datetime.strptime(start_date, "%Y-%m-%d").date()
+    e = datetime.strptime(end_date, "%Y-%m-%d").date()
+    days = (e - s).days
+    if days > 365:
+        raise ValueError(
+            f"race-predictions is capped at 365 days by Garmin server "
+            f"(requested {days}). Use --days 365 or less."
+        )
     raw = client.get_race_predictions(
         startdate=start_date, enddate=end_date, _type="daily"
     )

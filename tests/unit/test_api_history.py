@@ -407,6 +407,36 @@ class TestGetHeartRate:
         rows = api.get_heart_rate(client, "2026-03-01", "2026-04-15")
         assert len(rows) > 0
 
+    def test_daily_canonical_schema_when_server_omits_fields(self):
+        """Server sometimes omits optional fields (e.g. abnormalHRAlertCount).
+        Canonical fields must always be present (as None if missing)."""
+        client = Mock()
+        # Response with MISSING wellnessMaxAvgHR + wellnessMinAvgHR for one row
+        client.connectapi.return_value = [
+            {"calendarDate": "2026-04-13", "values": {"restingHR": 57}},  # only restingHR
+            {"calendarDate": "2026-04-14", "values": {"restingHR": 58, "wellnessMaxAvgHR": 160, "wellnessMinAvgHR": 55}},
+        ]
+        rows = api.get_heart_rate(client, "2026-04-13", "2026-04-14")
+        # Every row has every canonical key (even None)
+        for r in rows:
+            for k in api._HR_DAILY_CANONICAL:
+                assert k in r, f"canonical field {k!r} missing from {r}"
+        # First row has None for the omitted fields
+        assert rows[0]["wellnessMaxAvgHR"] is None
+        assert rows[0]["wellnessMinAvgHR"] is None
+        # Second row has the actual values
+        assert rows[1]["wellnessMaxAvgHR"] == 160
+
+    def test_weekly_canonical_schema_when_server_omits_fields(self):
+        client = Mock()
+        client.connectapi.return_value = [
+            {"calendarDate": "2026-04-09", "values": {"avgRestingHR": 59}},
+        ]
+        rows = api.get_heart_rate(client, "2026-04-01", "2026-04-15", aggregation="weekly")
+        for r in rows:
+            for k in api._HR_WEEKLY_CANONICAL:
+                assert k in r
+
 
 # ── VO2 max (ranged /maxmet/ endpoint, per-sport) ────────────────────────────
 
@@ -563,6 +593,21 @@ class TestGetRacePredictions:
         client = Mock()
         client.get_race_predictions.return_value = None
         assert api.get_race_predictions(client, "2026-04-01", "2026-04-15") == []
+
+    def test_rejects_over_365_days_with_clear_error(self):
+        """Pre-flight check fires before the HTTP call — no silent 400."""
+        client = Mock()
+        with pytest.raises(ValueError, match="365 days"):
+            api.get_race_predictions(client, "2024-04-01", "2026-04-15")  # ~2 years
+        # HTTP never called — we fail fast
+        client.get_race_predictions.assert_not_called()
+
+    def test_accepts_exactly_365_days(self):
+        """Boundary: 365 days inclusive is allowed."""
+        client = Mock()
+        client.get_race_predictions.return_value = []
+        api.get_race_predictions(client, "2025-04-15", "2026-04-15")
+        client.get_race_predictions.assert_called_once()
 
 
 # ── Default window ───────────────────────────────────────────────────────────

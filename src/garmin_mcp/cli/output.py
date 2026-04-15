@@ -5,17 +5,35 @@ import json
 from garmin_mcp.utils import format_duration, format_distance, format_pace
 
 
-def write_csv_file(path: str, rows: list[dict]) -> dict:
+def _has_signal(values) -> bool:
+    """True if at least one value is non-null AND non-zero (== column carries data)."""
+    for v in values:
+        if v is None or v == "":
+            continue
+        if isinstance(v, (int, float)) and v == 0:
+            continue
+        return True
+    return False
+
+
+def write_csv_file(
+    path: str,
+    rows: list[dict],
+    *,
+    drop_empty: bool = True,
+) -> dict:
     """Write a list-of-dicts as CSV. Header = union of keys (first-seen order).
 
     Empty rows → writes an empty file with no header (caller reports that).
-    Returns {"path", "rows", "columns"} metadata for echo/telemetry.
+    `drop_empty=True` (default) drops columns where every value is null/0/empty —
+    purges noise like `maxWheelchairCadence_*` in running data or unmeasured metrics.
+    Returns {"path", "rows", "columns", "dropped"} metadata for echo/telemetry.
     """
     if not rows:
-        # touch empty file so downstream readers see it exists
         open(path, "w").close()
-        return {"path": path, "rows": 0, "columns": 0}
+        return {"path": path, "rows": 0, "columns": 0, "dropped": 0}
 
+    # Union of keys in first-seen order
     fieldnames: list[str] = []
     seen: set[str] = set()
     for r in rows:
@@ -24,13 +42,19 @@ def write_csv_file(path: str, rows: list[dict]) -> dict:
                 seen.add(k)
                 fieldnames.append(k)
 
+    dropped = 0
+    if drop_empty:
+        kept = [f for f in fieldnames if _has_signal(r.get(f) for r in rows)]
+        dropped = len(fieldnames) - len(kept)
+        fieldnames = kept
+
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         for r in rows:
             writer.writerow(r)
 
-    return {"path": path, "rows": len(rows), "columns": len(fieldnames)}
+    return {"path": path, "rows": len(rows), "columns": len(fieldnames), "dropped": dropped}
 
 
 def find_missing_fields(data, fields: list[str]) -> list[str]:
