@@ -272,6 +272,34 @@ def describe(ctx, command_path):
     _out(ctx, {"commands": commands})
 
 
+@garmin.command("help")
+@click.argument("command_path", nargs=-1)
+@click.pass_context
+def help_cmd(ctx, command_path):
+    """Show human-readable help for a command (alias for `<cmd> --help`).
+
+    \b
+    garmin help                        Root help (same as `garmin --help`)
+    garmin help history                Group help (same as `garmin history --help`)
+    garmin help history sleep          Command help (same as `garmin history sleep --help`)
+
+    \b
+    Use `describe` instead when you want structured JSON for programmatic
+    introspection; use `help` for human-readable text.
+    """
+    # Walk down from root, building a parent ctx chain so the Usage line
+    # shows the full command path (e.g. "garmin history sleep"), not "help sleep".
+    parent = click.Context(garmin, info_name="garmin")
+    current = garmin
+    for part in command_path:
+        if not (isinstance(current, click.Group) and part in current.commands):
+            raise click.ClickException(f"Unknown command: {' '.join(command_path)}")
+        current = current.commands[part]
+        parent = click.Context(current, info_name=part, parent=parent)
+    # `parent` is now the ctx of the target itself; print its help
+    click.echo(current.get_help(parent))
+
+
 # ── Activities ───────────────────────────────────────────────────────────────
 
 

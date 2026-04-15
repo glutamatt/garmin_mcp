@@ -529,6 +529,40 @@ class TestDescribe:
         assert result.exit_code != 0
 
 
+class TestHelp:
+    """`garmin help [command...]` — human-readable help alias for --help."""
+
+    def test_help_root(self):
+        r = _runner().invoke(garmin, ["help"], catch_exceptions=False)
+        assert r.exit_code == 0
+        assert "Usage: garmin [OPTIONS] COMMAND" in r.output
+        assert "Garmin Connect CLI" in r.output
+
+    def test_help_group(self):
+        r = _runner().invoke(garmin, ["help", "history"], catch_exceptions=False)
+        assert r.exit_code == 0
+        assert "Usage: garmin history [OPTIONS] COMMAND" in r.output
+        # Must NOT include "help [COMMAND_PATH]" — that was a ctx-chaining bug
+        assert "help [COMMAND_PATH]" not in r.output
+
+    def test_help_nested_command(self):
+        r = _runner().invoke(garmin, ["help", "history", "sleep"], catch_exceptions=False)
+        assert r.exit_code == 0
+        assert "Usage: garmin history sleep [OPTIONS]" in r.output
+        assert "--days" in r.output
+
+    def test_help_unknown_command(self):
+        r = _runner().invoke(garmin, ["help", "bogus"], catch_exceptions=True)
+        assert r.exit_code != 0
+        assert "Unknown command" in (r.output + getattr(r, "stderr", ""))
+
+    def test_dash_dash_help_still_works(self):
+        """Click built-in --help must still work (help is additive, not replacing)."""
+        r = _runner().invoke(garmin, ["history", "sleep", "--help"], catch_exceptions=False)
+        assert r.exit_code == 0
+        assert "Usage: garmin history sleep" in r.output
+
+
 class TestStdoutStderrSeparation:
     """Verify stderr warnings don't leak into stdout (Click 8.3+ dedup)."""
 
