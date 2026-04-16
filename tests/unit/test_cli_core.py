@@ -4,13 +4,18 @@ import inspect
 import json
 import os
 
+import click
 import pytest
 from click.testing import CliRunner
 
+from unittest.mock import Mock, patch
+
 from garmin_mcp.cli import (
     _sanitize_path,
+    _session_sandbox,
     _validate_command,
     _hoist_global_flags,
+    _describe_shape,
     garmin,
     execute,
     SANDBOX_DIR,
@@ -139,6 +144,36 @@ class TestSanitizePath:
         result = _sanitize_path("/home/user/data.json")
         assert result == os.path.join(SANDBOX_DIR, "data.json")
 
+    def test_session_sandbox(self):
+        """Files are sandboxed under session tmp_dir."""
+        result = _sanitize_path("data.json", "/tmp/s/abc123")
+        assert result == "/tmp/s/abc123/data.json"
+
+    def test_session_sandbox_traversal(self):
+        """Traversal from session sandbox still stays sandboxed."""
+        result = _sanitize_path("/tmp/s/abc123/../../etc/passwd", "/tmp/s/abc123")
+        assert result.startswith("/tmp/s/abc123")
+        assert "etc" not in result
+
+
+class TestSessionSandbox:
+    def test_with_tmp_dir(self):
+        ctx = click.Context(garmin, obj={"_tmp_dir": "/tmp/s/abc123"})
+        assert _session_sandbox(ctx) == "/tmp/s/abc123"
+
+    def test_without_tmp_dir(self):
+        ctx = click.Context(garmin, obj={})
+        assert _session_sandbox(ctx) == SANDBOX_DIR
+
+    def test_rejects_non_tmp_dir(self):
+        """tmp_dir outside /tmp/ falls back to SANDBOX_DIR."""
+        ctx = click.Context(garmin, obj={"_tmp_dir": "/home/evil"})
+        assert _session_sandbox(ctx) == SANDBOX_DIR
+
+    def test_none_tmp_dir(self):
+        ctx = click.Context(garmin, obj={"_tmp_dir": None})
+        assert _session_sandbox(ctx) == SANDBOX_DIR
+
 
 class TestExecuteValidation:
     def test_rejects_shell_injection(self):
@@ -216,6 +251,20 @@ class TestDryRun:
         assert data["action"] == "delete_workout"
         assert data["workout_id"] == 12345
 
+    def test_dry_run_schedule(self):
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "workouts", "schedule", "12345", "--date", "2024-03-15",
+        ], catch_exceptions=True)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["dry_run"] is True
+        assert data["action"] == "schedule_workout"
+        assert data["workout_id"] == 12345
+        assert data["date"] == "2024-03-15"
+
     def test_dry_run_add_weight(self):
         runner = _runner()
         result = runner.invoke(garmin, [
@@ -240,6 +289,208 @@ class TestDryRun:
         # This will fail because fake token can't create a client,
         # but the point is it DOESN'T short-circuit with dry_run preview
         assert result.exit_code != 0  # No client, so errors
+
+    def test_dry_run_warns_unknown_keys(self):
+        """--dry-run should surface unknown key warnings."""
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "workouts", "create",
+            "--json", json.dumps({
+                "workoutName": "Test",
+                "sport": "running",
+                "bogusField": 42,
+                "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "endConditionValue": 600}],
+            }),
+        ], catch_exceptions=True)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["dry_run"] is True
+        assert "warnings" in data
+        assert any("bogusField" in w for w in data["warnings"])
+
+    def test_dry_run_warns_empty_steps(self):
+        """--dry-run should warn about workouts with no steps."""
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "workouts", "create",
+            "--json", json.dumps({"workoutName": "Empty", "sport": "running"}),
+        ], catch_exceptions=True)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert any("no steps" in w for w in data.get("warnings", []))
+
+    def test_dry_run_no_warnings_for_valid_workout(self):
+        """Valid workout should have no warnings in dry-run."""
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "workouts", "create",
+            "--json", json.dumps({
+                "workoutName": "Good Workout",
+                "sport": "running",
+                "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "endConditionValue": 600}],
+            }),
+        ], catch_exceptions=True)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "warnings" not in data
+
+
+class TestInputFile:
+    """Test --input flag for reading workout JSON from files."""
+
+    def test_create_from_input_file(self, tmp_path):
+        """--input reads workout JSON from a file."""
+        workout = {"workoutName": "From File", "sport": "running", "steps": []}
+        f = tmp_path / "workout.json"
+        f.write_text(json.dumps(workout))
+
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "--tmp-dir", str(tmp_path),
+            "workouts", "create",
+            "--input", str(f),
+        ], catch_exceptions=True)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["dry_run"] is True
+        assert data["name"] == "From File"
+
+    def test_update_from_input_file(self, tmp_path):
+        """--input works for update too."""
+        workout = {"workoutName": "Updated From File", "steps": []}
+        f = tmp_path / "workout.json"
+        f.write_text(json.dumps(workout))
+
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "--tmp-dir", str(tmp_path),
+            "workouts", "update", "999",
+            "--input", str(f),
+        ], catch_exceptions=True)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["dry_run"] is True
+        assert data["name"] == "Updated From File"
+        assert data["workout_id"] == 999
+
+    def test_input_and_json_mutually_exclusive(self, tmp_path):
+        """--input + --json together should error."""
+        f = tmp_path / "workout.json"
+        f.write_text("{}")
+
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "--tmp-dir", str(tmp_path),
+            "workouts", "create",
+            "--json", "{}",
+            "--input", str(f),
+        ], catch_exceptions=True)
+        assert result.exit_code != 0
+        assert "not both" in result.output.lower() or "not both" in (getattr(result, 'stderr', '') or '').lower()
+
+    def test_neither_input_nor_json_errors(self):
+        """No --input and no --json should error."""
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "workouts", "create",
+        ], catch_exceptions=True)
+        assert result.exit_code != 0
+
+    def test_input_file_not_found(self, tmp_path):
+        """--input with missing file should error clearly."""
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "--tmp-dir", str(tmp_path),
+            "workouts", "create",
+            "--input", str(tmp_path / "nonexistent.json"),
+        ], catch_exceptions=True)
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower() or "not found" in (getattr(result, 'stderr', '') or '').lower()
+
+    def test_input_invalid_json(self, tmp_path):
+        """--input with bad JSON should error clearly."""
+        f = tmp_path / "bad.json"
+        f.write_text("not valid json {{{")
+
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "--tmp-dir", str(tmp_path),
+            "workouts", "create",
+            "--input", str(f),
+        ], catch_exceptions=True)
+        assert result.exit_code != 0
+        assert "invalid json" in result.output.lower() or "invalid json" in (getattr(result, 'stderr', '') or '').lower()
+
+    def test_input_file_sandboxed(self, tmp_path):
+        """--input outside sandbox should be rejected or sandboxed."""
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "--tmp-dir", str(tmp_path),
+            "workouts", "create",
+            "--input", "/etc/passwd",
+        ], catch_exceptions=True)
+        assert result.exit_code != 0
+
+    def test_round_trip_output_then_input(self, tmp_path):
+        """--output saves JSON, --input reads it back (round-trip)."""
+        from unittest.mock import Mock, patch
+
+        # Mock a workout get that writes to file
+        workout_data = {
+            "workoutName": "Round Trip",
+            "sport": "running",
+            "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "endConditionValue": 300}],
+        }
+        out_file = tmp_path / "exported.json"
+        out_file.write_text(json.dumps(workout_data))
+
+        # Now create from that file
+        runner = _runner()
+        result = runner.invoke(garmin, [
+            "--token", "fake",
+            "--dry-run",
+            "--tmp-dir", str(tmp_path),
+            "workouts", "create",
+            "--input", str(out_file),
+        ], catch_exceptions=True)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["name"] == "Round Trip"
+
+    def test_input_via_execute(self, tmp_path):
+        """--input works through the execute() function too."""
+        workout = {"workoutName": "Via Execute", "steps": []}
+        f = tmp_path / "workout.json"
+        f.write_text(json.dumps(workout))
+
+        result = execute(
+            f"--dry-run workouts create --input {f}",
+            "fake",
+            tmp_dir=str(tmp_path),
+        )
+        assert result["exit_code"] == 0
+        data = json.loads(result["stdout"])
+        assert data["name"] == "Via Execute"
 
 
 class TestDescribe:
@@ -276,3 +527,151 @@ class TestDescribe:
         runner = _runner()
         result = runner.invoke(garmin, ["describe", "nonexistent"], catch_exceptions=True)
         assert result.exit_code != 0
+
+
+class TestHelp:
+    """`garmin help [command...]` — human-readable help alias for --help."""
+
+    def test_help_root(self):
+        r = _runner().invoke(garmin, ["help"], catch_exceptions=False)
+        assert r.exit_code == 0
+        assert "Usage: garmin [OPTIONS] COMMAND" in r.output
+        assert "Garmin Connect CLI" in r.output
+
+    def test_help_group(self):
+        r = _runner().invoke(garmin, ["help", "history"], catch_exceptions=False)
+        assert r.exit_code == 0
+        assert "Usage: garmin history [OPTIONS] COMMAND" in r.output
+        # Must NOT include "help [COMMAND_PATH]" — that was a ctx-chaining bug
+        assert "help [COMMAND_PATH]" not in r.output
+
+    def test_help_nested_command(self):
+        r = _runner().invoke(garmin, ["help", "history", "sleep"], catch_exceptions=False)
+        assert r.exit_code == 0
+        assert "Usage: garmin history sleep [OPTIONS]" in r.output
+        assert "--days" in r.output
+
+    def test_help_unknown_command(self):
+        r = _runner().invoke(garmin, ["help", "bogus"], catch_exceptions=True)
+        assert r.exit_code != 0
+        assert "Unknown command" in (r.output + getattr(r, "stderr", ""))
+
+    def test_dash_dash_help_still_works(self):
+        """Click built-in --help must still work (help is additive, not replacing)."""
+        r = _runner().invoke(garmin, ["history", "sleep", "--help"], catch_exceptions=False)
+        assert r.exit_code == 0
+        assert "Usage: garmin history sleep" in r.output
+
+
+class TestStdoutStderrSeparation:
+    """Verify stderr warnings don't leak into stdout (Click 8.3+ dedup)."""
+
+    def _mock_client(self, activities):
+        client = Mock()
+        client.get_activities_by_date.return_value = activities
+        return client
+
+    def test_warning_only_in_stderr(self):
+        """Unknown --fields warning should appear in stderr only, not stdout."""
+        client = self._mock_client([
+            {"activityId": 1, "activityName": "Run", "activityType": {"typeKey": "running"}},
+        ])
+        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
+            result = execute(
+                "activities list --from 2024-01-01 --to 2024-01-07 --fields id,name,BOGUS",
+                "fake_token",
+            )
+        assert result["exit_code"] == 0
+        assert "BOGUS" in result["stderr"]
+        assert "BOGUS" not in result["stdout"]
+
+    def test_stdout_clean_when_no_warnings(self):
+        """No warnings → stderr empty, stdout has data."""
+        client = self._mock_client([
+            {"activityId": 1, "activityName": "Run", "activityType": {"typeKey": "running"}},
+        ])
+        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
+            result = execute(
+                "activities list --from 2024-01-01 --to 2024-01-07 --fields id,name",
+                "fake_token",
+            )
+        assert result["exit_code"] == 0
+        assert result["stderr"] == ""
+        data = json.loads(result["stdout"])
+        assert "activities" in data
+
+
+class TestOutputShapePreview:
+    """Verify --output shows structural preview instead of just filename."""
+
+    def _mock_client(self, activities):
+        client = Mock()
+        client.get_activities_by_date.return_value = activities
+        return client
+
+    def test_output_shows_shape(self):
+        """--output message should show JSON structure preview."""
+        client = self._mock_client([
+            {"activityId": 1, "activityName": "Run", "activityType": {"typeKey": "running"}},
+            {"activityId": 2, "activityName": "Walk", "activityType": {"typeKey": "walking"}},
+        ])
+        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
+            result = execute(
+                "activities list --from 2024-01-01 --to 2024-01-07 --fields id,name --output out.json",
+                "fake_token",
+                tmp_dir="/tmp",
+            )
+        assert result["exit_code"] == 0
+        assert "activities" in result["stdout"]
+        assert "...2 items" in result["stdout"]
+        assert "written to out.json" in result["stdout"]
+
+    def test_output_shape_with_warning_not_duplicated(self):
+        """--output with unknown fields: warning in stderr only, shape in stdout."""
+        client = self._mock_client([
+            {"activityId": 1, "activityName": "Run", "activityType": {"typeKey": "running"}},
+        ])
+        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
+            result = execute(
+                "activities list --from 2024-01-01 --to 2024-01-07 --fields id,BOGUS --output out.json",
+                "fake_token",
+                tmp_dir="/tmp",
+            )
+        assert result["exit_code"] == 0
+        assert "BOGUS" in result["stderr"]
+        assert "BOGUS" not in result["stdout"]
+        assert "written to out.json" in result["stdout"]
+        assert "activities" in result["stdout"]
+
+
+class TestDescribeShape:
+    """Unit tests for _describe_shape helper."""
+
+    def test_list(self):
+        assert _describe_shape([{"id": 1}, {"id": 2}]) == "[...2 items]"
+
+    def test_empty_list(self):
+        assert _describe_shape([]) == "[...0 items]"
+
+    def test_dict_with_nested_list(self):
+        data = {"count": 3, "activities": [{"id": 1}, {"id": 2}, {"id": 3}]}
+        shape = _describe_shape(data)
+        assert '"count": 3' in shape
+        assert '"activities": [...3 items]' in shape
+
+    def test_dict_with_scalar_values(self):
+        data = {"status": "ok", "count": 5}
+        shape = _describe_shape(data)
+        assert '"status": "ok"' in shape
+        assert '"count": 5' in shape
+
+    def test_dict_with_nested_dict(self):
+        data = {"stats": {"hr": 60}, "sleep": {"score": 85}}
+        shape = _describe_shape(data)
+        assert '"stats": ...' in shape
+        assert '"sleep": ...' in shape
+
+    def test_long_string_truncated(self):
+        data = {"description": "a" * 50}
+        shape = _describe_shape(data)
+        assert '"description": ...' in shape

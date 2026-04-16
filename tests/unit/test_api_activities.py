@@ -62,6 +62,79 @@ class TestGetActivities:
         client.get_activities.assert_called_with(0, 100)
 
 
+class TestGraphQLEnrichment:
+    def test_enriches_training_load_when_no_fields_filter(self, client):
+        """GraphQL enrichment adds training_load when fields=None (no filter)."""
+        client.get_activities_by_date.return_value = [SAMPLE_RAW_ACTIVITY]
+        client.display_name = "test-user"
+        client.query_garmin_graphql.return_value = {
+            "data": {
+                "activitiesScalar": {
+                    "activityList": [
+                        {"activityId": 12345, "activityTrainingLoad": 142.5}
+                    ]
+                }
+            }
+        }
+        result = api.get_activities(client, "2024-01-01", "2024-01-15")
+        assert result["activities"][0]["training_load"] == 142.5
+        client.query_garmin_graphql.assert_called_once()
+
+    def test_enriches_when_training_load_in_fields(self, client):
+        """GraphQL call made when training_load is in requested fields."""
+        client.get_activities_by_date.return_value = [SAMPLE_RAW_ACTIVITY]
+        client.display_name = "test-user"
+        client.query_garmin_graphql.return_value = {
+            "data": {
+                "activitiesScalar": {
+                    "activityList": [
+                        {"activityId": 12345, "activityTrainingLoad": 100.0}
+                    ]
+                }
+            }
+        }
+        result = api.get_activities(
+            client, "2024-01-01", "2024-01-15",
+            fields=["id", "training_load"],
+        )
+        assert result["activities"][0]["training_load"] == 100.0
+
+    def test_skips_graphql_when_field_not_requested(self, client):
+        """No GraphQL call when training_load is not in requested fields."""
+        client.get_activities_by_date.return_value = [SAMPLE_RAW_ACTIVITY]
+        result = api.get_activities(
+            client, "2024-01-01", "2024-01-15",
+            fields=["id", "name", "distance_meters"],
+        )
+        assert "training_load" not in result["activities"][0]
+        client.query_garmin_graphql.assert_not_called()
+
+    def test_graphql_failure_doesnt_crash(self, client):
+        """GraphQL errors are silently ignored."""
+        client.get_activities_by_date.return_value = [SAMPLE_RAW_ACTIVITY]
+        client.display_name = "test-user"
+        client.query_garmin_graphql.side_effect = Exception("GraphQL down")
+        result = api.get_activities(client, "2024-01-01", "2024-01-15")
+        assert result["count"] == 1
+        assert "training_load" not in result["activities"][0]
+
+    def test_pagination_mode_enriches(self, client):
+        """Pagination mode also enriches via GraphQL."""
+        client.get_activities.return_value = [SAMPLE_RAW_ACTIVITY]
+        client.display_name = "test-user"
+        client.query_garmin_graphql.return_value = {
+            "data": {
+                "activitiesScalar": {
+                    "activityList": [
+                        {"activityId": 12345, "activityTrainingLoad": 88.0}
+                    ]
+                }
+            }
+        }
+        result = api.get_activities(client, start=0, limit=5)
+        assert result["activities"][0]["training_load"] == 88.0
+
+
 class TestGetActivity:
     def test_curates_detail(self, client):
         client.get_activity.return_value = {

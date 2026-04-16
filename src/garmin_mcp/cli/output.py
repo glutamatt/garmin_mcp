@@ -1,7 +1,84 @@
-"""Output formatting: field filtering + JSON/table rendering."""
+"""Output formatting: field filtering + JSON/table rendering + CSV writer."""
 
+import csv
 import json
 from garmin_mcp.utils import format_duration, format_distance, format_pace
+
+
+def _has_signal(values) -> bool:
+    """True if at least one value is non-null AND non-zero (== column carries data)."""
+    for v in values:
+        if v is None or v == "":
+            continue
+        if isinstance(v, (int, float)) and v == 0:
+            continue
+        return True
+    return False
+
+
+def write_csv_file(
+    path: str,
+    rows: list[dict],
+    *,
+    drop_empty: bool = True,
+) -> dict:
+    """Write a list-of-dicts as CSV. Header = union of keys (first-seen order).
+
+    Empty rows → writes an empty file with no header (caller reports that).
+    `drop_empty=True` (default) drops columns where every value is null/0/empty —
+    purges noise like `maxWheelchairCadence_*` in running data or unmeasured metrics.
+    Returns {"path", "rows", "columns", "dropped"} metadata for echo/telemetry.
+    """
+    if not rows:
+        open(path, "w").close()
+        return {"path": path, "rows": 0, "columns": 0, "dropped": 0}
+
+    # Union of keys in first-seen order
+    fieldnames: list[str] = []
+    seen: set[str] = set()
+    for r in rows:
+        for k in r.keys():
+            if k not in seen:
+                seen.add(k)
+                fieldnames.append(k)
+
+    dropped = 0
+    if drop_empty:
+        kept = [f for f in fieldnames if _has_signal(r.get(f) for r in rows)]
+        dropped = len(fieldnames) - len(kept)
+        fieldnames = kept
+
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for r in rows:
+            writer.writerow(r)
+
+    return {"path": path, "rows": len(rows), "columns": len(fieldnames), "dropped": dropped}
+
+
+def find_missing_fields(data, fields: list[str]) -> list[str]:
+    """Return requested fields not present in ANY item (handles nullable fields stripped by clean_nones)."""
+    all_keys: set[str] = set()
+    items = []
+    if isinstance(data, list):
+        items = [d for d in data if isinstance(d, dict)]
+    elif isinstance(data, dict):
+        for v in data.values():
+            if isinstance(v, list) and v and isinstance(v[0], dict):
+                items = v
+                break
+        if not items and data:
+            items = [data]
+    for item in items:
+        all_keys.update(item.keys())
+    if not all_keys:
+        return []
+    return [f for f in fields if f not in all_keys]
+
+
+# Always included in --fields output regardless of user selection
+_ALWAYS_FIELDS = {"type"}
 
 
 def filter_fields(data, fields: list[str]):
@@ -12,6 +89,7 @@ def filter_fields(data, fields: list[str]):
     - Dict with list-of-dicts values → filter list items, keep scalar metadata
     - Flat dict → filter keys directly
     """
+    fields = list(set(fields) | _ALWAYS_FIELDS)
     if isinstance(data, list):
         return [_filter_dict(item, fields) for item in data if isinstance(item, dict)]
 

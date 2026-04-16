@@ -15,10 +15,12 @@ dependencies = [
     "python-dotenv>=1.1.0",
     "garminconnect",
     "requests==2.32.3",
+    "requests[socks]",
     "fastmcp>=2.3.0",
     "garth>=0.5.17,<0.6.0",
     "pydantic>=2.0",
     "click>=8.0",
+    "fitparse>=1.2.0",
 ]
 
 [project.scripts]

@@ -30,10 +30,6 @@ RUN sed -i '/\[tool.uv.sources\]/,$d' pyproject.toml && \
     uv pip install /app/python-garminconnect && \
     uv pip install .
 
-# Copy test files (optional, for testing in container)
-COPY garmin_mcp/tests/ ./tests/
-COPY garmin_mcp/pytest.ini ./
-
 # Create directory for Garmin tokens
 RUN mkdir -p /root/.garminconnect && \
     chmod 700 /root/.garminconnect

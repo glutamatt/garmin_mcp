@@ -198,6 +198,23 @@ class TestDeleteWorkout:
         assert result["unscheduled_count"] == 1
 
 
+class TestScheduleWorkout:
+    def test_success(self, client):
+        client.schedule_workout.return_value = {"workoutScheduleId": 99}
+        result = api.schedule_workout(client, 42, "2024-01-20")
+        assert result["status"] == "scheduled"
+        assert result["workout_id"] == 42
+        assert result["date"] == "2024-01-20"
+        assert result["schedule_id"] == 99
+        client.schedule_workout.assert_called_once_with(42, "2024-01-20")
+
+    def test_non_dict_response(self, client):
+        client.schedule_workout.return_value = True
+        result = api.schedule_workout(client, 42, "2024-01-20")
+        assert result["status"] == "scheduled"
+        assert "schedule_id" not in result
+
+
 class TestUnscheduleWorkout:
     def test_success(self, client):
         client.unschedule_workout.return_value = True

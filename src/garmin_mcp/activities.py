@@ -23,11 +23,16 @@ def register_tools(app):
         activity_type: str = "",
         start: int = 0,
         limit: int = 20,
+        include_hr_zones: bool = False,
     ) -> str:
         """Get activities by date range OR pagination.
 
         For date-based: provide start_date + end_date (+ optional activity_type filter).
         For pagination: provide start index + limit (newest first).
+
+        Each activity includes training_effect, training_load (EPOC), power, VO2max, and inline HR zones (z1-z5).
+        Set include_hr_zones=true to fetch detailed zone data via extra API calls
+        (only for activities missing inline zones).
 
         Args:
             start_date: Start date in YYYY-MM-DD format (date range mode)
@@ -35,10 +40,11 @@ def register_tools(app):
             activity_type: Optional filter (e.g., 'running', 'cycling')
             start: Starting index for pagination (default 0)
             limit: Max activities to return (default 20, max 100)
+            include_hr_zones: Include time-in-zone breakdown per activity (default false)
         """
         try:
             return json.dumps(
-                api.get_activities(get_client(ctx), start_date, end_date, activity_type, start, limit),
+                api.get_activities(get_client(ctx), start_date, end_date, activity_type, start, limit, include_hr_zones),
                 indent=2,
             )
         except Exception as e:

@@ -28,6 +28,26 @@ SAMPLE_RAW = {
     "calories": 500,
 }
 
+SAMPLE_RAW_FULL = {
+    **SAMPLE_RAW,
+    # Training effect (list endpoint key names)
+    "aerobicTrainingEffect": 3.1,
+    "anaerobicTrainingEffect": 0.5,
+    "trainingEffectLabel": "AEROBIC_BASE",
+    # Power (list endpoint key names)
+    "avgPower": 238,
+    "normPower": 246,
+    # HR zones inline (list endpoint)
+    "hrTimeInZone_1": 149.0,
+    "hrTimeInZone_2": 2049.7,
+    "hrTimeInZone_3": 232.0,
+    "hrTimeInZone_4": 0.0,
+    "hrTimeInZone_5": 0.0,
+    # VO2max & body battery
+    "vO2MaxValue": 51.0,
+    "differenceBodyBattery": -8,
+}
+
 
 @pytest.fixture
 def app(mock_garmin_client):
@@ -80,6 +100,93 @@ async def test_get_activities_no_data(app, mock_garmin_client):
     data = _parse(result)
 
     assert "error" in data
+
+
+# ── get_activities — enriched fields (training effect, power, HR zones) ──────
+
+
+@pytest.mark.asyncio
+async def test_get_activities_training_fields(app, mock_garmin_client):
+    """Training effect, power, HR zones, VO2max from list endpoint."""
+    mock_garmin_client.get_activities_by_date.return_value = [SAMPLE_RAW_FULL]
+
+    result = await app.call_tool(
+        "get_activities",
+        {"start_date": "2024-01-01", "end_date": "2024-01-15"},
+    )
+    data = _parse(result)
+    act = data["activities"][0]
+
+    # Training effect (list uses aerobicTrainingEffect key)
+    assert act["training_effect"] == 3.1
+    assert act["anaerobic_training_effect"] == 0.5
+    assert act["training_effect_label"] == "AEROBIC_BASE"
+    # Power (list uses avgPower/normPower keys)
+    assert act["avg_power_watts"] == 238
+    assert act["normalized_power_watts"] == 246
+    # HR zones inline
+    assert act["hr_zones_seconds"] == {"z1": 149, "z2": 2050, "z3": 232}
+    # Zero zones should not appear (clean_nones strips them after rounding)
+    assert "z4" not in act["hr_zones_seconds"]
+    assert "z5" not in act["hr_zones_seconds"]
+    # VO2max & body battery
+    assert act["vo2max"] == 51.0
+    assert act["body_battery_impact"] == -8
+
+
+@pytest.mark.asyncio
+async def test_get_activities_hr_zones_zero_excluded(app, mock_garmin_client):
+    """HR zones with value 0.0 should not appear in output."""
+    raw = {**SAMPLE_RAW, "hrTimeInZone_1": 600.0, "hrTimeInZone_2": 0.0}
+    mock_garmin_client.get_activities.return_value = [raw]
+
+    result = await app.call_tool("get_activities", {"start": 0, "limit": 1})
+    data = _parse(result)
+    zones = data["activities"][0]["hr_zones_seconds"]
+
+    assert zones == {"z1": 600}
+
+
+@pytest.mark.asyncio
+async def test_get_activities_no_hr_zones(app, mock_garmin_client):
+    """Activities without HR zone data should not have hr_zones_seconds key."""
+    mock_garmin_client.get_activities.return_value = [SAMPLE_RAW]
+
+    result = await app.call_tool("get_activities", {"start": 0, "limit": 1})
+    data = _parse(result)
+
+    assert "hr_zones_seconds" not in data["activities"][0]
+
+
+# ── get_activity — detail with RPE ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_activity_with_rpe(app, mock_garmin_client):
+    """Detail endpoint includes perceived_effort and workout_feel."""
+    mock_garmin_client.get_activity.return_value = {
+        "activityId": 12345,
+        "activityName": "Morning Run",
+        "activityTypeDTO": {"typeKey": "running"},
+        "summaryDTO": {
+            "duration": 3000.0,
+            "distance": 10000.0,
+            "averageHR": 150,
+            "trainingEffect": 3.5,
+            "activityTrainingLoad": 85,
+            "directWorkoutRpe": 7,
+            "directWorkoutFeel": 75,
+        },
+        "metadataDTO": {},
+    }
+    mock_garmin_client.get_activity_weather.return_value = None
+
+    result = await app.call_tool("get_activity", {"activity_id": 12345})
+    data = _parse(result)
+
+    assert data["perceived_effort"] == 7
+    assert data["workout_feel"] == 75
+    assert data["training_load"] == 85
 
 
 # ── get_activity ──────────────────────────────────────────────────────────────
@@ -185,6 +292,80 @@ async def test_get_activity_types(app, mock_garmin_client):
 
     assert data["count"] == 2
     assert data["activity_types"][0]["type_key"] == "running"
+
+
+# ── include_hr_zones — enrichment skips inline zones ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_include_hr_zones_skips_inline(app, mock_garmin_client):
+    """include_hr_zones=True should NOT overwrite activities that already have inline zones."""
+    mock_garmin_client.get_activities_by_date.return_value = [SAMPLE_RAW_FULL]
+    # If _enrich_hr_zones were called, it would set zones from this mock:
+    mock_garmin_client.get_activity_hr_in_timezones.return_value = [
+        {"zoneNumber": 1, "secsInZone": 9999, "zoneLowBoundary": 100},
+    ]
+
+    result = await app.call_tool(
+        "get_activities",
+        {"start_date": "2024-01-01", "end_date": "2024-01-15", "include_hr_zones": True},
+    )
+    data = _parse(result)
+    zones = data["activities"][0]["hr_zones_seconds"]
+
+    # Should keep inline zones (z1=149, z2=2050, z3=232), NOT the mock (z1=9999)
+    assert zones["z1"] == 149
+    assert zones["z2"] == 2050
+    # API should NOT have been called since inline zones exist
+    mock_garmin_client.get_activity_hr_in_timezones.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_include_hr_zones_enriches_missing(app, mock_garmin_client):
+    """include_hr_zones=True should fetch zones for activities WITHOUT inline zones."""
+    mock_garmin_client.get_activities_by_date.return_value = [SAMPLE_RAW]
+    mock_garmin_client.get_activity_hr_in_timezones.return_value = [
+        {"zoneNumber": 1, "secsInZone": 600, "zoneLowBoundary": 100},
+        {"zoneNumber": 2, "secsInZone": 900, "zoneLowBoundary": 120},
+    ]
+
+    result = await app.call_tool(
+        "get_activities",
+        {"start_date": "2024-01-01", "end_date": "2024-01-15", "include_hr_zones": True},
+    )
+    data = _parse(result)
+    zones = data["activities"][0]["hr_zones_seconds"]
+
+    assert zones == {"z1": 600, "z2": 900}
+    mock_garmin_client.get_activity_hr_in_timezones.assert_called_once_with(12345)
+
+
+# ── _first_not_none edge cases ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_training_effect_zero_preserved(app, mock_garmin_client):
+    """training_effect=0.0 (falsy but valid) must be preserved, not replaced."""
+    raw = {**SAMPLE_RAW, "aerobicTrainingEffect": 0.0}
+    mock_garmin_client.get_activities.return_value = [raw]
+
+    result = await app.call_tool("get_activities", {"start": 0, "limit": 1})
+    data = _parse(result)
+
+    assert data["activities"][0]["training_effect"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_power_fallback_keys(app, mock_garmin_client):
+    """avg_power_watts uses avgPower (list key), falls back to averagePower (detail key)."""
+    # Only detail-style key
+    raw = {**SAMPLE_RAW, "averagePower": 220}
+    mock_garmin_client.get_activities.return_value = [raw]
+
+    result = await app.call_tool("get_activities", {"start": 0, "limit": 1})
+    data = _parse(result)
+
+    assert data["activities"][0]["avg_power_watts"] == 220
 
 
 # ── exception handling ────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 """
-Integration tests for workouts module MCP tools (8 tools).
+Integration tests for workouts module MCP tools (9 tools).
 
 Tests the thin tool wrappers via FastMCP call_tool with mocked Garmin client.
 """
@@ -119,6 +119,23 @@ async def test_delete_workout(app, mock_garmin_client):
     data = _parse(result)
 
     assert data["status"] == "deleted"
+
+
+# ── schedule_workout ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_schedule_workout(app, mock_garmin_client):
+    mock_garmin_client.schedule_workout.return_value = {"workoutScheduleId": 99}
+
+    result = await app.call_tool("schedule_workout", {"workout_id": 42, "date": "2024-01-20"})
+    data = _parse(result)
+
+    assert data["status"] == "scheduled"
+    assert data["workout_id"] == 42
+    assert data["date"] == "2024-01-20"
+    assert data["schedule_id"] == 99
+    mock_garmin_client.schedule_workout.assert_called_once_with(42, "2024-01-20")
 
 
 # ── unschedule_workout ────────────────────────────────────────────────────────

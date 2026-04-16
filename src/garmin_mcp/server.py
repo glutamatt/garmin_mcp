@@ -62,6 +62,7 @@ def create_app() -> FastMCP:
         command = body.get("command", "")
         token = body.get("token", "")
         display_name = body.get("display_name")
+        tmp_dir = body.get("tmp_dir")
 
         if not token:
             return JSONResponse(
@@ -69,7 +70,11 @@ def create_app() -> FastMCP:
                 status_code=401,
             )
 
-        result = execute(command, token, display_name)
-        return JSONResponse(result)
+        result = execute(command, token, display_name, tmp_dir)
+        refreshed_token = result.pop("refreshed_token", None)
+        response = JSONResponse(result)
+        if refreshed_token:
+            response.headers["X-Refreshed-Token"] = refreshed_token
+        return response
 
     return app

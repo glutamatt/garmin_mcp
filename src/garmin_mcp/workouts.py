@@ -2,7 +2,7 @@
 Workout tools — MCP registration layer.
 
 Thin wrappers: get_client → api call → json.dumps.
-8 tools (was 12 in workouts.py).
+9 tools (was 12 in workouts.py).
 """
 
 import json
@@ -60,7 +60,7 @@ def register_tools(app):
         """Create a new workout and optionally schedule it on a date.
 
         If date is provided: creates + schedules in one atomic step (replaces old upload + schedule flow).
-        If no date: creates in library only — use reschedule_workout later to add to calendar.
+        If no date: creates in library only — use schedule_workout later to add to calendar.
 
         Accepts simplified format: {workoutName, sport: "running", steps: [{stepOrder, stepType, endCondition, endConditionValue, ...}]}
 
@@ -110,6 +110,22 @@ def register_tools(app):
         """
         try:
             return json.dumps(api.delete_workout(get_client(ctx), workout_id), indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)}, indent=2)
+
+    @app.tool()
+    async def schedule_workout(workout_id: int, date: str, ctx: Context) -> str:
+        """Schedule an existing workout from the library onto a calendar date.
+
+        Use get_workouts to find workout IDs. For newly created workouts, prefer
+        passing the date directly to create_workout instead.
+
+        Args:
+            workout_id: ID of the workout to schedule (from get_workouts).
+            date: Date to schedule in YYYY-MM-DD format.
+        """
+        try:
+            return json.dumps(api.schedule_workout(get_client(ctx), workout_id, date), indent=2)
         except Exception as e:
             return json.dumps({"error": str(e)}, indent=2)
 
