@@ -415,46 +415,62 @@ def geographic(ctx):
 
 @geographic.command("activity")
 @click.argument("activity_id", type=int)
-@click.option(
-    "--format",
-    "fmt",
-    type=click.Choice(["tsv", "llm", "json"]),
-    default="tsv",
-    help="Output format on disk (default tsv)",
-)
 @click.pass_context
-def geographic_activity(ctx, activity_id, fmt):
+def geographic_activity(ctx, activity_id):
     """Geographic narrative of a Garmin activity (parcours, terrain).
 
     \b
-    Same shape as `activities download` : the file lands on disk in the
-    session sandbox, the response is metadata only (path, columns, rows,
-    separator). Keeps the agent's context light ; `pd.read_csv(path,
-    sep='\\t', comment='#')` opens the file in one line.
+    Same shape as `activities download` : the TSV file lands on disk in
+    the session sandbox, the response is metadata only (path, columns,
+    rows, separator). `pd.read_csv(path, sep='\\t', comment='#')` opens
+    it in one line. Agent context stays light.
+
+    \b
+    TSV columns (10) :
+      t_start    h:mm:ss elapsed since the run start
+      dist_km    cumulative distance (km from start) at span begin
+      rel        within | along  — see semantics below
+      type       admin | polygon | line | poi | route
+      name       OSM display name (lowercased for noms communs : "forêt",
+                 "chemin piéton" ; preserved for noms propres)
+      duration   h:mm:ss span length
+      span_km    distance covered along the trace in this span
+      d_plus     elevation gain (m) — empty when below 10 m noise threshold
+      d_minus    elevation loss (m) — empty when below 10 m
+      min_dist_m minimum distance from trace to feature (always 0 for `within`)
+
+    \b
+    Relation semantics :
+      within     trace point geometrically INSIDE the feature. Only
+                 meaningful for areas : `admin` (commune) and `polygon`
+                 (parc, forêt, étang, stade…). Lines/POIs/routes have no
+                 inside.
+      along      trace passes NEAR the feature within a per-type proximity
+                 cap. Applies to all 4 non-admin types :
+                   polygon → trace skirts the EDGE of the polygon
+                            (e.g. running along a forest boundary)
+                   line    → trace overlaps the linear feature
+                            (rue, piste cyclable, sentier…)
+                   poi     → trace passes within ~20 m of a point landmark
+                   route   → trace overlaps a named route (GR, VIF…)
+                 `min_dist_m` is the closest the trace got — 0 means right
+                 on the geometry, larger means "loose proximity".
 
     \b
     Pipeline (transparent to the agent):
       1. download the activity's FIT from Garmin Connect (in-memory)
       2. POST as multipart to geo-runner /api/analyze
-      3. write the narrative to <sandbox>/geographic_<id>.<ext>
+      3. write the TSV to <sandbox>/geographic_<id>.tsv
       4. return metadata about the file
-
-    \b
-    Output formats:
-      tsv   - tab-separated narrative, pandas + Sheets/Excel friendly (default)
-      llm   - coach-preset prose narrative, one span per line
-      json  - full DTO with summary + trace + spans + timings
 
     \b
     Examples:
       geographic activity 22627191073
-      geographic activity 22627191073 --format llm
-      geographic activity 22627191073 --format json
     """
     from garmin_mcp.api import geographic as api
 
     _run(ctx, lambda: api.analyze_activity(
-        _client(ctx), activity_id, fmt, _session_sandbox(ctx),
+        _client(ctx), activity_id, _session_sandbox(ctx),
     ))
 
 
@@ -1450,64 +1466,30 @@ def _validate_command(command: str) -> str:
 _GLOBAL_FLAGS_WITH_VALUE = ("--format", "--fields", "--output")
 _GLOBAL_FLAGS_BOOLEAN = ("--dry-run",)
 
-# Some subcommands declare LOCAL options that shadow a global flag of the
-# same name (ex: `geographic activity --format tsv|llm|json` vs the root's
-# `--format json|table`). When the user invokes one of those subcommands,
-# the listed options must stay in place — Click will then route them to
-# the local definition. Otherwise the hoister would push them to the root
-# group and Click would reject them as invalid global values.
-#
-# Keep this short — register a subcommand here only if it really shadows a
-# global flag with incompatible semantics.
-_LOCAL_OPTS_BY_SUBCMD = {
-    ("geographic", "activity"): {"--format"},
-}
-
-
-def _local_opts_for(args: list[str]) -> set[str]:
-    """Return the set of options that the matching subcommand handles
-    locally (and that the hoister must therefore NOT pull to the root)."""
-    nonflag = [a for a in args if not a.startswith("-")]
-    for path, opts in _LOCAL_OPTS_BY_SUBCMD.items():
-        if tuple(nonflag[: len(path)]) == path:
-            return opts
-    return set()
-
-
 def _hoist_global_flags(args: list[str]) -> list[str]:
     """Move global flags from anywhere in args to the front.
 
-    Click requires group-level options before the subcommand. AI agents
-    consistently put them after. This fixes it transparently — except when
-    the resolved subcommand declares a local option of the same name (see
-    `_LOCAL_OPTS_BY_SUBCMD`), in which case the option stays in place.
+    Click requires group-level options before the subcommand.
+    AI agents consistently put them after. This fixes it transparently.
     """
-    local_opts = _local_opts_for(args)
     global_args = []
     rest = []
     i = 0
     while i < len(args):
         arg = args[i]
-        # Strip = form for matching ("--format=tsv" → "--format")
-        flag_name = arg.split("=", 1)[0]
-        is_local_shadowed = flag_name in local_opts
-
         if arg in _GLOBAL_FLAGS_WITH_VALUE:
-            target = rest if is_local_shadowed else global_args
-            target.append(arg)
+            global_args.append(arg)
             if i + 1 < len(args):
-                target.append(args[i + 1])
+                global_args.append(args[i + 1])
                 i += 2
             else:
                 i += 1
         elif arg in _GLOBAL_FLAGS_BOOLEAN:
-            target = rest if is_local_shadowed else global_args
-            target.append(arg)
+            global_args.append(arg)
             i += 1
-        elif any(flag_name == f for f in _GLOBAL_FLAGS_WITH_VALUE) and "=" in arg:
-            # --fields=id,name / --format=tsv style
-            target = rest if is_local_shadowed else global_args
-            target.append(arg)
+        elif any(arg.startswith(f + "=") for f in _GLOBAL_FLAGS_WITH_VALUE):
+            # Handle --fields=id,name style
+            global_args.append(arg)
             i += 1
         else:
             rest.append(arg)
