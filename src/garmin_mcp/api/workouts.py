@@ -65,6 +65,10 @@ class WorkoutStep(BaseModel):
     zoneNumber: Optional[int] = Field(default=None, description="Zone number: HR zones 1-5, power zones 1-7")
     targetValueOne: Optional[float] = Field(default=None, description="For pace.zone: FASTER pace in m/s")
     targetValueTwo: Optional[float] = Field(default=None, description="For pace.zone: SLOWER pace in m/s")
+    description: Optional[str] = Field(
+        default=None,
+        description="Free-text per-step note (Garmin Connect 'note textuel'). Shown to the runner on the watch."
+    )
 
 
 class RepeatGroup(BaseModel):
@@ -194,6 +198,13 @@ def _preprocess_step(step: dict) -> dict:
 
     if 'zoneNumber' in step:
         result['zoneNumber'] = step['zoneNumber']
+
+    # Per-step free-text note (Garmin Connect "note textuel"). Surface
+    # field name : `description` — same as Garmin's wire format on the
+    # workout-service PUT (cf. HAR capture). Empty/None values are skipped
+    # so we don't override server-side behavior with a null.
+    if step.get('description') is not None:
+        result['description'] = step['description']
 
     if 'numberOfIterations' in step:
         result['numberOfIterations'] = step['numberOfIterations']
@@ -512,7 +523,7 @@ _KNOWN_WORKOUT_KEYS = {
 _KNOWN_STEP_KEYS = {
     'type', 'stepId', 'stepOrder', 'stepType', 'endCondition', 'endConditionType',
     'endConditionValue', 'targetType', 'targetValueOne', 'targetValueTwo',
-    'targetValueHigh', 'targetValueLow', 'zoneNumber',
+    'targetValueHigh', 'targetValueLow', 'zoneNumber', 'description',
     'numberOfIterations', 'workoutSteps', 'childStepId',
     'strokeType', 'equipmentType', 'skipLastRestStep', 'smartRepeat',
 }
