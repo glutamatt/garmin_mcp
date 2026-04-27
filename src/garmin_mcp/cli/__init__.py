@@ -1450,31 +1450,64 @@ def _validate_command(command: str) -> str:
 _GLOBAL_FLAGS_WITH_VALUE = ("--format", "--fields", "--output")
 _GLOBAL_FLAGS_BOOLEAN = ("--dry-run",)
 
+# Some subcommands declare LOCAL options that shadow a global flag of the
+# same name (ex: `geographic activity --format tsv|llm|json` vs the root's
+# `--format json|table`). When the user invokes one of those subcommands,
+# the listed options must stay in place — Click will then route them to
+# the local definition. Otherwise the hoister would push them to the root
+# group and Click would reject them as invalid global values.
+#
+# Keep this short — register a subcommand here only if it really shadows a
+# global flag with incompatible semantics.
+_LOCAL_OPTS_BY_SUBCMD = {
+    ("geographic", "activity"): {"--format"},
+}
+
+
+def _local_opts_for(args: list[str]) -> set[str]:
+    """Return the set of options that the matching subcommand handles
+    locally (and that the hoister must therefore NOT pull to the root)."""
+    nonflag = [a for a in args if not a.startswith("-")]
+    for path, opts in _LOCAL_OPTS_BY_SUBCMD.items():
+        if tuple(nonflag[: len(path)]) == path:
+            return opts
+    return set()
+
 
 def _hoist_global_flags(args: list[str]) -> list[str]:
     """Move global flags from anywhere in args to the front.
 
-    Click requires group-level options before the subcommand.
-    AI agents consistently put them after. This fixes it transparently.
+    Click requires group-level options before the subcommand. AI agents
+    consistently put them after. This fixes it transparently — except when
+    the resolved subcommand declares a local option of the same name (see
+    `_LOCAL_OPTS_BY_SUBCMD`), in which case the option stays in place.
     """
+    local_opts = _local_opts_for(args)
     global_args = []
     rest = []
     i = 0
     while i < len(args):
         arg = args[i]
+        # Strip = form for matching ("--format=tsv" → "--format")
+        flag_name = arg.split("=", 1)[0]
+        is_local_shadowed = flag_name in local_opts
+
         if arg in _GLOBAL_FLAGS_WITH_VALUE:
-            global_args.append(arg)
+            target = rest if is_local_shadowed else global_args
+            target.append(arg)
             if i + 1 < len(args):
-                global_args.append(args[i + 1])
+                target.append(args[i + 1])
                 i += 2
             else:
                 i += 1
         elif arg in _GLOBAL_FLAGS_BOOLEAN:
-            global_args.append(arg)
+            target = rest if is_local_shadowed else global_args
+            target.append(arg)
             i += 1
-        elif any(arg.startswith(f + "=") for f in _GLOBAL_FLAGS_WITH_VALUE):
-            # Handle --fields=id,name style
-            global_args.append(arg)
+        elif any(flag_name == f for f in _GLOBAL_FLAGS_WITH_VALUE) and "=" in arg:
+            # --fields=id,name / --format=tsv style
+            target = rest if is_local_shadowed else global_args
+            target.append(arg)
             i += 1
         else:
             rest.append(arg)
