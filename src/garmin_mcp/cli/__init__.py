@@ -418,58 +418,44 @@ def geographic(ctx):
 @click.option(
     "--format",
     "fmt",
-    type=click.Choice(["llm", "tsv", "json"]),
-    default="llm",
-    help="Output format (default llm)",
+    type=click.Choice(["tsv", "llm", "json"]),
+    default="tsv",
+    help="Output format on disk (default tsv)",
 )
 @click.pass_context
 def geographic_activity(ctx, activity_id, fmt):
     """Geographic narrative of a Garmin activity (parcours, terrain).
 
     \b
+    Same shape as `activities download` : the file lands on disk in the
+    session sandbox, the response is metadata only (path, columns, rows,
+    separator). Keeps the agent's context light ; `pd.read_csv(path,
+    sep='\\t', comment='#')` opens the file in one line.
+
+    \b
     Pipeline (transparent to the agent):
       1. download the activity's FIT from Garmin Connect (in-memory)
-      2. POST it as multipart to geo-runner /api/analyze
-      3. return the narrative in the requested format
+      2. POST as multipart to geo-runner /api/analyze
+      3. write the narrative to <sandbox>/geographic_<id>.<ext>
+      4. return metadata about the file
 
     \b
     Output formats:
-      llm   - coach-preset narrative, m:ss/h:mm:ss compact (default)
-      tsv   - tab-separated, pandas + Sheets/Excel friendly
+      tsv   - tab-separated narrative, pandas + Sheets/Excel friendly (default)
+      llm   - coach-preset prose narrative, one span per line
       json  - full DTO with summary + trace + spans + timings
 
     \b
     Examples:
       geographic activity 22627191073
-      geographic activity 22627191073 --format tsv --output run.tsv
+      geographic activity 22627191073 --format llm
       geographic activity 22627191073 --format json
     """
     from garmin_mcp.api import geographic as api
 
-    # Bypass `_run`/`_out` — the body returned by geo-runner is already in
-    # the right text shape for the chosen format. No JSON re-encoding, no
-    # field filtering. We still need the same exception-to-ClickException
-    # bridge that `_run` provides.
-    try:
-        text = api.analyze_activity(_client(ctx), activity_id, fmt)
-    except click.ClickException:
-        raise
-    except Exception as e:
-        raise click.ClickException(str(e))
-
-    output_path = ctx.obj.get("output")
-    if output_path:
-        sandbox = _session_sandbox(ctx)
-        safe_path = _sanitize_path(output_path, sandbox)
-        os.makedirs(os.path.dirname(safe_path) or sandbox, exist_ok=True)
-        with open(safe_path, "w") as f:
-            f.write(text)
-        kb = round(len(text.encode("utf-8")) / 1024, 1)
-        click.echo(
-            f"{fmt} narrative ({kb} KB) written to {os.path.basename(safe_path)}"
-        )
-    else:
-        click.echo(text, nl=False)
+    _run(ctx, lambda: api.analyze_activity(
+        _client(ctx), activity_id, fmt, _session_sandbox(ctx),
+    ))
 
 
 # ── Health ───────────────────────────────────────────────────────────────────
