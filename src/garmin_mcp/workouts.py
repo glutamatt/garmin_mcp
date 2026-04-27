@@ -73,6 +73,7 @@ def register_tools(app):
         Step types: warmup, cooldown, interval, recovery, rest, repeat, other.
         End conditions: time (seconds), distance (meters), lap.button.
         Target types: no.target, heart.rate.zone (zoneNumber 1-5), pace.zone (targetValueOne=faster m/s, targetValueTwo=slower m/s), power.zone (zoneNumber 1-7).
+        Per-step note: optional `description` field (string) — Garmin Connect "note textuel", shown on the watch during that step. Use for intent ("Z1 stricte"), sensory cue ("doit causer naturellement"), or pacing reminder. Keep short.
 
         Args:
             workout_data: Workout structure (simplified or full Garmin format).
