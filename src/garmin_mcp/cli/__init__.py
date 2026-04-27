@@ -403,6 +403,75 @@ def activities_download(ctx, activity_id):
     ))
 
 
+# ── Geographic ───────────────────────────────────────────────────────────────
+
+
+@garmin.group()
+@click.pass_context
+def geographic(ctx):
+    """Geographic narrative: parcours, terrain, environnement traversé."""
+    pass
+
+
+@geographic.command("activity")
+@click.argument("activity_id", type=int)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["llm", "tsv", "json"]),
+    default="llm",
+    help="Output format (default llm)",
+)
+@click.pass_context
+def geographic_activity(ctx, activity_id, fmt):
+    """Geographic narrative of a Garmin activity (parcours, terrain).
+
+    \b
+    Pipeline (transparent to the agent):
+      1. download the activity's FIT from Garmin Connect (in-memory)
+      2. POST it as multipart to geo-runner /api/analyze
+      3. return the narrative in the requested format
+
+    \b
+    Output formats:
+      llm   - coach-preset narrative, m:ss/h:mm:ss compact (default)
+      tsv   - tab-separated, pandas + Sheets/Excel friendly
+      json  - full DTO with summary + trace + spans + timings
+
+    \b
+    Examples:
+      geographic activity 22627191073
+      geographic activity 22627191073 --format tsv --output run.tsv
+      geographic activity 22627191073 --format json
+    """
+    from garmin_mcp.api import geographic as api
+
+    # Bypass `_run`/`_out` — the body returned by geo-runner is already in
+    # the right text shape for the chosen format. No JSON re-encoding, no
+    # field filtering. We still need the same exception-to-ClickException
+    # bridge that `_run` provides.
+    try:
+        text = api.analyze_activity(_client(ctx), activity_id, fmt)
+    except click.ClickException:
+        raise
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    output_path = ctx.obj.get("output")
+    if output_path:
+        sandbox = _session_sandbox(ctx)
+        safe_path = _sanitize_path(output_path, sandbox)
+        os.makedirs(os.path.dirname(safe_path) or sandbox, exist_ok=True)
+        with open(safe_path, "w") as f:
+            f.write(text)
+        kb = round(len(text.encode("utf-8")) / 1024, 1)
+        click.echo(
+            f"{fmt} narrative ({kb} KB) written to {os.path.basename(safe_path)}"
+        )
+    else:
+        click.echo(text, nl=False)
+
+
 # ── Health ───────────────────────────────────────────────────────────────────
 
 
