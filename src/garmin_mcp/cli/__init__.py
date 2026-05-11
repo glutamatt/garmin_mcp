@@ -474,6 +474,125 @@ def geographic_activity(ctx, activity_id):
     ))
 
 
+@geographic.group()
+@click.pass_context
+def history(ctx):
+    """Long-term geographic history : auto-indexed per-user route DB.
+
+    \b
+    Every Garmin run gets its geographic spans (parks, streets, POIs,
+    routes) deduped to a single row per (entity, run) and stored in a
+    per-user DuckDB at /tmp/neural-runner/geo-history/<user>.duckdb.
+    The hf-storage-sync sidecar persists it bidirectionally with the
+    HF dataset, so no explicit pull/push is needed.
+
+    \b
+    Subcommands :
+      update   pull-list-download-ingest loop (10 activities / call)
+      query    heatmap (more kinds coming : last_seen, frequency, …)
+    """
+    pass
+
+
+@history.command("update")
+@click.option(
+    "--user-id",
+    envvar="NR_USER_ID",
+    required=True,
+    help="Identity that owns the per-user DB (e.g. `garmin:foo@bar.com`). "
+    "Defaults to NR_USER_ID env.",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=10,
+    help="Max activities ingested per call. Convergence: repeat until "
+    "is_caught_up=true.",
+)
+@click.option(
+    "--geo-runner-url",
+    envvar="GEO_RUNNER_URL",
+    default=None,
+    help="Override geo-runner base URL (default: production HF Space).",
+)
+@click.pass_context
+def history_update(ctx, user_id, limit, geo_runner_url):
+    """Index new runs into the per-user geographic DB.
+
+    \b
+    Lists running activities since max(today - 1y, latest_day_in_db),
+    oldest first, takes the first --limit, downloads each FIT, POSTs
+    them as a single batch to geo-runner /api/history/ingest, and
+    writes the updated DB back. Idempotent : already-ingested runs
+    are skipped via (source, source_activity_id) UNIQUE.
+
+    \b
+    Returns stats : runs_added, runs_skipped, visits_added, errors,
+    start, batch_size, activities_remaining, is_caught_up.
+
+    \b
+    To backfill : call repeatedly until is_caught_up=true.
+    """
+    from garmin_mcp.api import geo_history as api
+
+    _run(ctx, lambda: api.update(
+        _client(ctx), user_id,
+        geo_runner_url=geo_runner_url, limit=limit,
+    ))
+
+
+@history.command("query")
+@click.argument("kind", type=click.Choice(["heatmap"]))
+@click.option(
+    "--user-id",
+    envvar="NR_USER_ID",
+    required=True,
+    help="Identity that owns the per-user DB. Defaults to NR_USER_ID env.",
+)
+@click.option(
+    "--since",
+    default=None,
+    help="ISO date (YYYY-MM-DD). Only runs from this day onward are counted.",
+)
+@click.option(
+    "--entity-types",
+    default=None,
+    help="Comma-separated subset of `polygon,admin,line,poi,route`. "
+    "Default: all types.",
+)
+@click.option(
+    "--geo-runner-url",
+    envvar="GEO_RUNNER_URL",
+    default=None,
+    help="Override geo-runner base URL.",
+)
+@click.pass_context
+def history_query(ctx, kind, user_id, since, entity_types, geo_runner_url):
+    """Run a query against the per-user geographic DB.
+
+    \b
+    Kinds (more coming) :
+      heatmap   one row per visited entity with count, last_day, geometry
+
+    \b
+    Response shape :
+      { "data_as_of": "<ISO timestamp or null>", "results": [...] }
+    """
+    from garmin_mcp.api import geo_history as api
+
+    params: dict = {}
+    if since:
+        params["since"] = since
+    if entity_types:
+        params["entity_types"] = [
+            t.strip() for t in entity_types.split(",") if t.strip()
+        ]
+
+    _run(ctx, lambda: api.query(
+        user_id, kind, params=params, geo_runner_url=geo_runner_url,
+    ))
+
+
 # ── Health ───────────────────────────────────────────────────────────────────
 
 
