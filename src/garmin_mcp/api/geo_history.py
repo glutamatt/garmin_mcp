@@ -56,6 +56,31 @@ def user_db_path(user_id: str) -> str:
     return os.path.join(USER_DB_DIR, f"{sanitize_user_id(user_id)}.duckdb")
 
 
+def current_user_id(client: Garmin) -> str:
+    """Derive the canonical user_id from the authenticated Garmin client.
+
+    Returns ``garmin:<email>`` matching the convention in
+    ``frontend/src/lib/token-store.ts``. The Garmin CLI is auto-scoped to
+    the current user — callers never pass user_id explicitly.
+
+    Order of fallbacks :
+      1. ``client.garth.username`` — set after ``garth.loads()`` rehydrates
+         the OAuth state. This is the email used to log in.
+      2. ``client.garth.profile['userName']`` — same value via the JWT
+         profile dict if username attr is missing.
+    """
+    email = getattr(client.garth, "username", None)
+    if not email:
+        profile = getattr(client.garth, "profile", None) or {}
+        email = profile.get("userName") or profile.get("emailAddress")
+    if not email:
+        raise RuntimeError(
+            "Cannot derive user_id : garth client has no username "
+            "(token may be malformed or not yet hydrated)"
+        )
+    return f"garmin:{email}"
+
+
 # ── Local DB introspection ──────────────────────────────────────────────────
 
 
@@ -157,13 +182,15 @@ def _parse_multipart(body: bytes, boundary: str) -> dict[str, bytes]:
 
 def update(
     client: Garmin,
-    user_id: str,
     geo_runner_url: str | None = None,
     limit: int = BATCH_LIMIT,
 ) -> dict:
     """Pull the user DB locally, list new Garmin activities since the
     convergent floor, download their FITs, batch-ingest into the user DB
     via geo-runner, and write the updated DB back.
+
+    User identity is derived from the authenticated client — the CLI is
+    auto-scoped to the current user.
 
     Convergence : the local DB is the source of truth. ``start`` is
     ``max(today - 1y, latest_day_in_db)``. Repeated calls walk forward
@@ -174,6 +201,7 @@ def update(
     ``is_caught_up``.
     """
     url = geo_runner_url or DEFAULT_GEO_RUNNER_URL
+    user_id = current_user_id(client)
     path = user_db_path(user_id)
     _ensure_user_db(path)
 
@@ -299,17 +327,23 @@ def update(
 
 
 def query(
-    user_id: str,
+    client: Garmin,
     kind: str,
     params: dict | None = None,
     geo_runner_url: str | None = None,
 ) -> dict:
     """POST a query against the user DB and return the response JSON.
 
+    User identity is derived from the authenticated client — the CLI is
+    auto-scoped to the current user. The ``client`` arg is used ONLY to
+    resolve the user_id (no Garmin API calls happen here).
+
     ``kind`` is currently restricted to ``"heatmap"`` ; ``params`` is the
-    optional inner object (``since``, ``entity_types`` for heatmap).
+    optional inner object (``since``, ``until``, ``exclusive``,
+    ``entity_types``).
     """
     url = geo_runner_url or DEFAULT_GEO_RUNNER_URL
+    user_id = current_user_id(client)
     path = user_db_path(user_id)
     _ensure_user_db(path)
 

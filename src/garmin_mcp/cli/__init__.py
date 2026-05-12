@@ -496,13 +496,6 @@ def history(ctx):
 
 @history.command("update")
 @click.option(
-    "--user-id",
-    envvar="NR_USER_ID",
-    required=True,
-    help="Identity that owns the per-user DB (e.g. `garmin:foo@bar.com`). "
-    "Defaults to NR_USER_ID env.",
-)
-@click.option(
     "--limit",
     type=int,
     default=10,
@@ -516,7 +509,7 @@ def history(ctx):
     help="Override geo-runner base URL (default: production HF Space).",
 )
 @click.pass_context
-def history_update(ctx, user_id, limit, geo_runner_url):
+def history_update(ctx, limit, geo_runner_url):
     """Index new runs into the per-user geographic DB.
 
     \b
@@ -536,7 +529,7 @@ def history_update(ctx, user_id, limit, geo_runner_url):
     from garmin_mcp.api import geo_history as api
 
     _run(ctx, lambda: api.update(
-        _client(ctx), user_id,
+        _client(ctx),
         geo_runner_url=geo_runner_url, limit=limit,
     ))
 
@@ -544,15 +537,24 @@ def history_update(ctx, user_id, limit, geo_runner_url):
 @history.command("query")
 @click.argument("kind", type=click.Choice(["heatmap"]))
 @click.option(
-    "--user-id",
-    envvar="NR_USER_ID",
-    required=True,
-    help="Identity that owns the per-user DB. Defaults to NR_USER_ID env.",
-)
-@click.option(
     "--since",
     default=None,
-    help="ISO date (YYYY-MM-DD). Only runs from this day onward are counted.",
+    help="ISO date (YYYY-MM-DD). Combined with --exclusive : runs in window "
+    "(default) OR entities first visited on/after this day (--exclusive).",
+)
+@click.option(
+    "--until",
+    default=None,
+    help="ISO date (YYYY-MM-DD). Combined with --exclusive : runs in window "
+    "(default) OR entities last visited on/before this day (--exclusive).",
+)
+@click.option(
+    "--exclusive",
+    is_flag=True,
+    default=False,
+    help="With --since : new discoveries only. With --until : places stopped "
+    "visiting after this date. Filters on entity first/last visit globally "
+    "instead of just the visit window.",
 )
 @click.option(
     "--entity-types",
@@ -567,7 +569,7 @@ def history_update(ctx, user_id, limit, geo_runner_url):
     help="Override geo-runner base URL.",
 )
 @click.pass_context
-def history_query(ctx, kind, user_id, since, entity_types, geo_runner_url):
+def history_query(ctx, kind, since, until, exclusive, entity_types, geo_runner_url):
     """Run a query against the per-user geographic DB.
 
     \b
@@ -577,19 +579,31 @@ def history_query(ctx, kind, user_id, since, entity_types, geo_runner_url):
     \b
     Response shape :
       { "data_as_of": "<ISO timestamp or null>", "results": [...] }
+
+    \b
+    Examples :
+      geographic history query heatmap
+      geographic history query heatmap --since 2026-01-01
+      geographic history query heatmap --since 2026-05-01 --exclusive    # new discoveries
+      geographic history query heatmap --until 2026-01-01 --exclusive    # abandoned
+      geographic history query heatmap --entity-types polygon,admin
     """
     from garmin_mcp.api import geo_history as api
 
     params: dict = {}
     if since:
         params["since"] = since
+    if until:
+        params["until"] = until
+    if exclusive:
+        params["exclusive"] = True
     if entity_types:
         params["entity_types"] = [
             t.strip() for t in entity_types.split(",") if t.strip()
         ]
 
     _run(ctx, lambda: api.query(
-        user_id, kind, params=params, geo_runner_url=geo_runner_url,
+        _client(ctx), kind, params=params, geo_runner_url=geo_runner_url,
     ))
 
 
