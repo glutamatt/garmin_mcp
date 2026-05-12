@@ -403,6 +403,243 @@ def activities_download(ctx, activity_id):
     ))
 
 
+# ── Geographic ───────────────────────────────────────────────────────────────
+
+
+@garmin.group()
+@click.pass_context
+def geographic(ctx):
+    """Geographic narrative: parcours, terrain, environnement traversé."""
+    pass
+
+
+@geographic.command("activity")
+@click.argument("activity_id", type=int)
+@click.pass_context
+def geographic_activity(ctx, activity_id):
+    """Geographic narrative of a Garmin activity (parcours, terrain).
+
+    \b
+    Same shape as `activities download` : the TSV file lands on disk in
+    the session sandbox, the response is metadata only (path, columns,
+    rows, separator). `pd.read_csv(path, sep='\\t', comment='#')` opens
+    it in one line. Agent context stays light.
+
+    \b
+    TSV columns (10) :
+      t_start    h:mm:ss elapsed since the run start
+      dist_km    cumulative distance (km from start) at span begin
+      rel        within | along  — see semantics below
+      type       admin | polygon | line | poi | route
+      name       OSM display name (lowercased for noms communs : "forêt",
+                 "chemin piéton" ; preserved for noms propres)
+      duration   h:mm:ss span length
+      span_km    distance covered along the trace in this span
+      d_plus     elevation gain (m) — empty when below 10 m noise threshold
+      d_minus    elevation loss (m) — empty when below 10 m
+      min_dist_m minimum distance from trace to feature (always 0 for `within`)
+
+    \b
+    Relation semantics :
+      within     trace point geometrically INSIDE the feature. Only
+                 meaningful for areas : `admin` (commune) and `polygon`
+                 (parc, forêt, étang, stade…). Lines/POIs/routes have no
+                 inside.
+      along      trace passes NEAR the feature within a per-type proximity
+                 cap. Applies to all 4 non-admin types :
+                   polygon → trace skirts the EDGE of the polygon
+                            (e.g. running along a forest boundary)
+                   line    → trace overlaps the linear feature
+                            (rue, piste cyclable, sentier…)
+                   poi     → trace passes within ~20 m of a point landmark
+                   route   → trace overlaps a named route (GR, VIF…)
+                 `min_dist_m` is the closest the trace got — 0 means right
+                 on the geometry, larger means "loose proximity".
+
+    \b
+    Pipeline (transparent to the agent):
+      1. download the activity's FIT from Garmin Connect (in-memory)
+      2. POST as multipart to geo-runner /api/analyze
+      3. write the TSV to <sandbox>/geographic_<id>.tsv
+      4. return metadata about the file
+
+    \b
+    Examples:
+      geographic activity 22627191073
+    """
+    from garmin_mcp.api import geographic as api
+
+    _run(ctx, lambda: api.analyze_activity(
+        _client(ctx), activity_id, _session_sandbox(ctx),
+    ))
+
+
+@geographic.group()
+@click.pass_context
+def history(ctx):
+    """Long-term geographic history : auto-indexed per-user route DB.
+
+    \b
+    Every Garmin run gets its geographic spans (parks, streets, POIs,
+    routes) deduped to a single row per (entity, run) and stored in a
+    per-user DuckDB at /tmp/neural-runner/geo-history/<user>.duckdb.
+    The hf-storage-sync sidecar persists it bidirectionally with the
+    HF dataset, so no explicit pull/push is needed.
+
+    \b
+    Subcommands :
+      update   pull-list-download-ingest loop (10 activities / call)
+      query    heatmap (more kinds coming : last_seen, frequency, …)
+    """
+    pass
+
+
+@history.command("update")
+@click.option(
+    "--limit",
+    type=int,
+    default=10,
+    help="Max activities ingested per call. Convergence: repeat until "
+    "is_caught_up=true.",
+)
+@click.option(
+    "--geo-runner-url",
+    envvar="GEO_RUNNER_URL",
+    default=None,
+    help="Override geo-runner base URL (default: production HF Space).",
+)
+@click.pass_context
+def history_update(ctx, limit, geo_runner_url):
+    """Index new runs into the per-user geographic DB.
+
+    \b
+    Lists running activities since max(today - 1y, latest_day_in_db),
+    oldest first, takes the first --limit, downloads each FIT, POSTs
+    them as a single batch to geo-runner /api/history/ingest, and
+    writes the updated DB back. Idempotent : already-ingested runs
+    are skipped via (source, source_activity_id) UNIQUE.
+
+    \b
+    Returns stats : runs_added, runs_skipped, visits_added, errors,
+    start, batch_size, activities_remaining, is_caught_up.
+
+    \b
+    To backfill : call repeatedly until is_caught_up=true.
+    """
+    from garmin_mcp.api import geo_history as api
+
+    _run(ctx, lambda: api.update(
+        _client(ctx),
+        geo_runner_url=geo_runner_url, limit=limit,
+    ))
+
+
+@history.command("query")
+@click.argument("kind", type=click.Choice(["heatmap"]))
+@click.option(
+    "--since",
+    default=None,
+    help="ISO date (YYYY-MM-DD). Combined with --exclusive : runs in window "
+    "(default) OR entities first visited on/after this day (--exclusive).",
+)
+@click.option(
+    "--until",
+    default=None,
+    help="ISO date (YYYY-MM-DD). Combined with --exclusive : runs in window "
+    "(default) OR entities last visited on/before this day (--exclusive).",
+)
+@click.option(
+    "--exclusive",
+    is_flag=True,
+    default=False,
+    help="With --since : new discoveries only. With --until : places stopped "
+    "visiting after this date. Filters on entity first/last visit globally "
+    "instead of just the visit window.",
+)
+@click.option(
+    "--entity-types",
+    default=None,
+    help="Comma-separated subset of `polygon,admin,line,poi,route`. "
+    "Default: all types.",
+)
+@click.option(
+    "--include-anonymous",
+    is_flag=True,
+    default=False,
+    help="Keep entities with synthetic OSM displays like `(Forêt)` or "
+    "`(chemin piéton) / Parc X` — features without a real OSM name. "
+    "Default drops them : useful on the map UI, noise in narrative.",
+)
+@click.option(
+    "--geo-runner-url",
+    envvar="GEO_RUNNER_URL",
+    default=None,
+    help="Override geo-runner base URL.",
+)
+@click.pass_context
+def history_query(ctx, kind, since, until, exclusive, entity_types,
+                  include_anonymous, geo_runner_url):
+    """Run a query against the per-user geographic DB.
+
+    \b
+    Kinds (more coming) :
+      heatmap   one row per visited entity with count, last_day, entity_id
+
+    \b
+    Always writes a TSV to the session sandbox (NO geometry — same shape
+    as `activities download`). Filename encodes ALL filter params so
+    successive queries with different params NEVER overwrite each other
+    silently. (To redirect the JSON response to a file, use the global
+    `garmin --output PATH ...`.)
+
+    \b
+    Response = tiny metadata dict :
+      path, size_kb, columns, rows, data_as_of, params,
+      counts_by_type      → {admin: N, polygon: N, line: N, poi: N, route: N}
+      top_5_overall       → highest-count entities, all types combined
+      top_per_type        → top 3 per entity_type (so small categories stay visible)
+    Read the file with `pd.read_csv(path, sep="\\t", comment="#")` when
+    more than the top previews are needed. For visual rendering of
+    geometries, use the web UI at geo-runner /history.
+
+    \b
+    Filter semantics (combine --since/--until with --exclusive) :
+      --since X                  "qu'ai-je parcouru depuis X" (visits in window)
+      --since X --exclusive      "lieux jamais visités avant X" (new discoveries)
+      --until X                  "qu'ai-je parcouru jusqu'à X"
+      --until X --exclusive      "lieux que je ne fréquente plus depuis X" (abandoned)
+
+    \b
+    Examples :
+      geographic history query heatmap
+      geographic history query heatmap --since 2026-01-01
+      geographic history query heatmap --since 2026-05-01 --exclusive
+      geographic history query heatmap --until 2026-01-01 --exclusive
+      geographic history query heatmap --entity-types polygon,admin
+      geographic history query heatmap --include-anonymous
+    """
+    from garmin_mcp.api import geo_history as api
+
+    params: dict = {}
+    if since:
+        params["since"] = since
+    if until:
+        params["until"] = until
+    if exclusive:
+        params["exclusive"] = True
+    if entity_types:
+        params["entity_types"] = [
+            t.strip() for t in entity_types.split(",") if t.strip()
+        ]
+
+    _run(ctx, lambda: api.query_to_tsv(
+        _client(ctx), kind, params=params,
+        sandbox=_session_sandbox(ctx),
+        geo_runner_url=geo_runner_url,
+        include_anonymous=include_anonymous,
+    ))
+
+
 # ── Health ───────────────────────────────────────────────────────────────────
 
 
@@ -1394,7 +1631,6 @@ def _validate_command(command: str) -> str:
 # but Click requires them before the subcommand. We hoist them automatically.
 _GLOBAL_FLAGS_WITH_VALUE = ("--format", "--fields", "--output")
 _GLOBAL_FLAGS_BOOLEAN = ("--dry-run",)
-
 
 def _hoist_global_flags(args: list[str]) -> list[str]:
     """Move global flags from anywhere in args to the front.
