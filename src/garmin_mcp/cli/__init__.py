@@ -563,12 +563,12 @@ def history_update(ctx, limit, geo_runner_url):
     "Default: all types.",
 )
 @click.option(
-    "--inline",
+    "--include-anonymous",
     is_flag=True,
     default=False,
-    help="Return the raw JSON (incl. full geometries) on stdout instead of "
-    "writing TSV to disk. WARNING : a heatmap can run to 3k+ entities each "
-    "with a GeoJSON blob — easily 1M+ tokens. Only use for scripting.",
+    help="Keep entities with synthetic OSM displays like `(Forêt)` or "
+    "`(chemin piéton) / Parc X` — features without a real OSM name. "
+    "Default drops them : useful on the map UI, noise in narrative.",
 )
 @click.option(
     "--geo-runner-url",
@@ -577,23 +577,22 @@ def history_update(ctx, limit, geo_runner_url):
     help="Override geo-runner base URL.",
 )
 @click.pass_context
-def history_query(ctx, kind, since, until, exclusive, entity_types, inline, geo_runner_url):
+def history_query(ctx, kind, since, until, exclusive, entity_types,
+                  include_anonymous, geo_runner_url):
     """Run a query against the per-user geographic DB.
 
     \b
     Kinds (more coming) :
-      heatmap   one row per visited entity with count, last_day, geometry
+      heatmap   one row per visited entity with count, last_day
 
     \b
-    Default output : a TSV file in the session sandbox with columns
-      count, last_day, entity_type, relation, display
-    (NO geometry — same shape as `activities download`). The response is
-    a metadata dict (path, columns, rows, top_5) — agent context stays
-    light. Read the file with `pd.read_csv(path, sep="\\t", comment="#")`.
-
-    \b
-    Use --inline for full JSON with geometries (only useful for visual
-    rendering / direct piping — NOT for agent consumption).
+    Always writes a TSV to the session sandbox (NO geometry — same shape
+    as `activities download`). Response is a tiny metadata dict (path,
+    columns, rows, top_5). Read the file with
+      pd.read_csv(path, sep="\\t", comment="#")
+    when more than top_5 is needed. For visual rendering of geometries,
+    use the web UI at geo-runner /history (it hits the HTTP endpoint
+    directly, with full GeoJSON).
 
     \b
     Examples :
@@ -602,7 +601,7 @@ def history_query(ctx, kind, since, until, exclusive, entity_types, inline, geo_
       geographic history query heatmap --since 2026-05-01 --exclusive    # new discoveries
       geographic history query heatmap --until 2026-01-01 --exclusive    # abandoned
       geographic history query heatmap --entity-types polygon,admin
-      geographic history query heatmap --inline                         # raw JSON, careful
+      geographic history query heatmap --include-anonymous              # also `(Forêt)` etc.
     """
     from garmin_mcp.api import geo_history as api
 
@@ -618,16 +617,12 @@ def history_query(ctx, kind, since, until, exclusive, entity_types, inline, geo_
             t.strip() for t in entity_types.split(",") if t.strip()
         ]
 
-    if inline:
-        _run(ctx, lambda: api.query(
-            _client(ctx), kind, params=params, geo_runner_url=geo_runner_url,
-        ))
-    else:
-        _run(ctx, lambda: api.query_to_tsv(
-            _client(ctx), kind, params=params,
-            sandbox=_session_sandbox(ctx),
-            geo_runner_url=geo_runner_url,
-        ))
+    _run(ctx, lambda: api.query_to_tsv(
+        _client(ctx), kind, params=params,
+        sandbox=_session_sandbox(ctx),
+        geo_runner_url=geo_runner_url,
+        include_anonymous=include_anonymous,
+    ))
 
 
 # ── Health ───────────────────────────────────────────────────────────────────

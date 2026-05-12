@@ -332,13 +332,18 @@ def query_to_tsv(
     params: dict | None = None,
     sandbox: str = "/tmp/garmin",
     geo_runner_url: str | None = None,
+    include_anonymous: bool = False,
 ) -> dict:
-    """Run a heatmap query and write the (geometry-stripped) results to a TSV
-    file in the session sandbox. Returns a metadata dict — same shape as
-    ``geographic activity`` so Apex's context stays light. Use ``query()``
-    (or the CLI ``--inline`` flag) to get the full JSON with geometries.
+    """Run a heatmap query and write the (geometry-stripped, optionally
+    anonymous-stripped) results to a TSV file in the session sandbox.
+    Returns a metadata dict — same shape as ``geographic activity`` so
+    Apex's context stays light.
     """
-    resp = query(client, kind, params=params, geo_runner_url=geo_runner_url)
+    resp = query(
+        client, kind, params=params, geo_runner_url=geo_runner_url,
+        include_anonymous=include_anonymous,
+        with_geometry=False,
+    )
     results = resp.get("results") or []
     data_as_of = resp.get("data_as_of") or "never"
 
@@ -400,6 +405,8 @@ def query(
     kind: str,
     params: dict | None = None,
     geo_runner_url: str | None = None,
+    include_anonymous: bool = False,
+    with_geometry: bool = False,
 ) -> dict:
     """POST a query against the user DB and return the response JSON.
 
@@ -410,6 +417,18 @@ def query(
     ``kind`` is currently restricted to ``"heatmap"`` ; ``params`` is the
     optional inner object (``since``, ``until``, ``exclusive``,
     ``entity_types``).
+
+    Post-processing :
+      - ``include_anonymous=False`` (default) drops results whose ``display``
+        starts with ``"("`` — the synthetic fallback for OSM features
+        without a ``name`` tag (``(Forêt)``, ``(chemin piéton)``, etc.,
+        and their parent-enriched variants). Keeps the output focused on
+        named places.
+      - ``with_geometry=False`` (default) strips the ``geometry`` field from
+        every result. A single heatmap response can be 3k+ entities × a
+        polygon GeoJSON each ≈ 1.7M tokens — fatal for agent context.
+        Only flip to True for direct rendering (the web UI hits the HTTP
+        endpoint directly, not this helper).
     """
     url = geo_runner_url or DEFAULT_GEO_RUNNER_URL
     user_id = current_user_id(client)
@@ -445,4 +464,16 @@ def query(
             err = resp.text[:300]
         raise RuntimeError(f"geo-runner query {resp.status_code}: {err}")
 
-    return resp.json()
+    data = resp.json()
+    results = data.get("results") or []
+    if not include_anonymous:
+        # Drop synthetic-display entries — OSM features without a `name` tag
+        # get a `(type)` fallback or `(type) / Parent`. Useful in the map UI,
+        # noise in agent context.
+        results = [r for r in results if not (r.get("display") or "").startswith("(")]
+    if not with_geometry:
+        # Strip the per-row GeoJSON blob. A heatmap with 3k+ entities easily
+        # crosses 1M tokens of geometries — fatal for the agent's context.
+        results = [{k: v for k, v in r.items() if k != "geometry"} for r in results]
+    data["results"] = results
+    return data
