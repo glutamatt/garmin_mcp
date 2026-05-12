@@ -571,12 +571,6 @@ def history_update(ctx, limit, geo_runner_url):
     "Default drops them : useful on the map UI, noise in narrative.",
 )
 @click.option(
-    "--output", "output_path",
-    default=None,
-    help="Override the auto-derived TSV filename. Relative paths land in "
-    "the session sandbox.",
-)
-@click.option(
     "--geo-runner-url",
     envvar="GEO_RUNNER_URL",
     default=None,
@@ -584,7 +578,7 @@ def history_update(ctx, limit, geo_runner_url):
 )
 @click.pass_context
 def history_query(ctx, kind, since, until, exclusive, entity_types,
-                  include_anonymous, output_path, geo_runner_url):
+                  include_anonymous, geo_runner_url):
     """Run a query against the per-user geographic DB.
 
     \b
@@ -593,9 +587,10 @@ def history_query(ctx, kind, since, until, exclusive, entity_types,
 
     \b
     Always writes a TSV to the session sandbox (NO geometry — same shape
-    as `activities download`). Filename encodes the filters so successive
-    queries with different params NEVER overwrite each other silently.
-    Use --output to force a specific name.
+    as `activities download`). Filename encodes ALL filter params so
+    successive queries with different params NEVER overwrite each other
+    silently. (To redirect the JSON response to a file, use the global
+    `garmin --output PATH ...`.)
 
     \b
     Response = tiny metadata dict :
@@ -622,7 +617,6 @@ def history_query(ctx, kind, since, until, exclusive, entity_types,
       geographic history query heatmap --until 2026-01-01 --exclusive
       geographic history query heatmap --entity-types polygon,admin
       geographic history query heatmap --include-anonymous
-      geographic history query heatmap --output last-week-routes.tsv --entity-types route
     """
     from garmin_mcp.api import geo_history as api
 
@@ -643,7 +637,6 @@ def history_query(ctx, kind, since, until, exclusive, entity_types,
         sandbox=_session_sandbox(ctx),
         geo_runner_url=geo_runner_url,
         include_anonymous=include_anonymous,
-        output_path=output_path,
     ))
 
 

@@ -353,7 +353,6 @@ def query_to_tsv(
     sandbox: str = "/tmp/garmin",
     geo_runner_url: str | None = None,
     include_anonymous: bool = False,
-    output_path: str | None = None,
 ) -> dict:
     """Run a heatmap query and write the (geometry-stripped, optionally
     anonymous-stripped) results to a TSV file. Returns a metadata dict —
@@ -361,7 +360,7 @@ def query_to_tsv(
 
     Filename encodes ALL discriminating params (since/until/exclusive/
     entity_types/include_anonymous) so concurrent or successive queries
-    never silently clobber each other. ``output_path`` overrides this.
+    never silently clobber each other.
     """
     params = params or {}
     resp = query(
@@ -373,10 +372,7 @@ def query_to_tsv(
     data_as_of = resp.get("data_as_of") or "never"
 
     os.makedirs(sandbox, exist_ok=True)
-    if output_path:
-        path = output_path if os.path.isabs(output_path) else os.path.join(sandbox, output_path)
-    else:
-        path = os.path.join(sandbox, _query_filename(kind, params, include_anonymous))
+    path = os.path.join(sandbox, _query_filename(kind, params, include_anonymous))
 
     columns = ["count", "last_day", "entity_type", "relation", "entity_id", "display"]
     with open(path, "w", encoding="utf-8") as f:
