@@ -571,6 +571,12 @@ def history_update(ctx, limit, geo_runner_url):
     "Default drops them : useful on the map UI, noise in narrative.",
 )
 @click.option(
+    "--output", "output_path",
+    default=None,
+    help="Override the auto-derived TSV filename. Relative paths land in "
+    "the session sandbox.",
+)
+@click.option(
     "--geo-runner-url",
     envvar="GEO_RUNNER_URL",
     default=None,
@@ -578,30 +584,45 @@ def history_update(ctx, limit, geo_runner_url):
 )
 @click.pass_context
 def history_query(ctx, kind, since, until, exclusive, entity_types,
-                  include_anonymous, geo_runner_url):
+                  include_anonymous, output_path, geo_runner_url):
     """Run a query against the per-user geographic DB.
 
     \b
     Kinds (more coming) :
-      heatmap   one row per visited entity with count, last_day
+      heatmap   one row per visited entity with count, last_day, entity_id
 
     \b
     Always writes a TSV to the session sandbox (NO geometry — same shape
-    as `activities download`). Response is a tiny metadata dict (path,
-    columns, rows, top_5). Read the file with
-      pd.read_csv(path, sep="\\t", comment="#")
-    when more than top_5 is needed. For visual rendering of geometries,
-    use the web UI at geo-runner /history (it hits the HTTP endpoint
-    directly, with full GeoJSON).
+    as `activities download`). Filename encodes the filters so successive
+    queries with different params NEVER overwrite each other silently.
+    Use --output to force a specific name.
+
+    \b
+    Response = tiny metadata dict :
+      path, size_kb, columns, rows, data_as_of, params,
+      counts_by_type      → {admin: N, polygon: N, line: N, poi: N, route: N}
+      top_5_overall       → highest-count entities, all types combined
+      top_per_type        → top 3 per entity_type (so small categories stay visible)
+    Read the file with `pd.read_csv(path, sep="\\t", comment="#")` when
+    more than the top previews are needed. For visual rendering of
+    geometries, use the web UI at geo-runner /history.
+
+    \b
+    Filter semantics (combine --since/--until with --exclusive) :
+      --since X                  "qu'ai-je parcouru depuis X" (visits in window)
+      --since X --exclusive      "lieux jamais visités avant X" (new discoveries)
+      --until X                  "qu'ai-je parcouru jusqu'à X"
+      --until X --exclusive      "lieux que je ne fréquente plus depuis X" (abandoned)
 
     \b
     Examples :
       geographic history query heatmap
       geographic history query heatmap --since 2026-01-01
-      geographic history query heatmap --since 2026-05-01 --exclusive    # new discoveries
-      geographic history query heatmap --until 2026-01-01 --exclusive    # abandoned
+      geographic history query heatmap --since 2026-05-01 --exclusive
+      geographic history query heatmap --until 2026-01-01 --exclusive
       geographic history query heatmap --entity-types polygon,admin
-      geographic history query heatmap --include-anonymous              # also `(Forêt)` etc.
+      geographic history query heatmap --include-anonymous
+      geographic history query heatmap --output last-week-routes.tsv --entity-types route
     """
     from garmin_mcp.api import geo_history as api
 
@@ -622,6 +643,7 @@ def history_query(ctx, kind, since, until, exclusive, entity_types,
         sandbox=_session_sandbox(ctx),
         geo_runner_url=geo_runner_url,
         include_anonymous=include_anonymous,
+        output_path=output_path,
     ))
 
 

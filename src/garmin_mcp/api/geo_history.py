@@ -326,6 +326,26 @@ def update(
 # ── Query ───────────────────────────────────────────────────────────────────
 
 
+def _query_filename(kind: str, params: dict, include_anonymous: bool) -> str:
+    """Encode ALL discriminating params into the filename so successive
+    queries with different filters DON'T overwrite each other silently.
+    """
+    bits = [kind]
+    if params.get("since"):
+        bits.append(f"from{params['since']}")
+        if params.get("exclusive"):
+            bits.append("excl")
+    if params.get("until"):
+        bits.append(f"to{params['until']}")
+        if params.get("exclusive") and "excl" not in bits:
+            bits.append("excl")
+    if params.get("entity_types"):
+        bits.append("types-" + ",".join(sorted(params["entity_types"])))
+    if include_anonymous:
+        bits.append("anon")
+    return "geographic_history_" + "_".join(bits) + ".tsv"
+
+
 def query_to_tsv(
     client: Garmin,
     kind: str,
@@ -333,12 +353,17 @@ def query_to_tsv(
     sandbox: str = "/tmp/garmin",
     geo_runner_url: str | None = None,
     include_anonymous: bool = False,
+    output_path: str | None = None,
 ) -> dict:
     """Run a heatmap query and write the (geometry-stripped, optionally
-    anonymous-stripped) results to a TSV file in the session sandbox.
-    Returns a metadata dict — same shape as ``geographic activity`` so
-    Apex's context stays light.
+    anonymous-stripped) results to a TSV file. Returns a metadata dict —
+    same shape as ``geographic activity`` so Apex's context stays light.
+
+    Filename encodes ALL discriminating params (since/until/exclusive/
+    entity_types/include_anonymous) so concurrent or successive queries
+    never silently clobber each other. ``output_path`` overrides this.
     """
+    params = params or {}
     resp = query(
         client, kind, params=params, geo_runner_url=geo_runner_url,
         include_anonymous=include_anonymous,
@@ -348,32 +373,55 @@ def query_to_tsv(
     data_as_of = resp.get("data_as_of") or "never"
 
     os.makedirs(sandbox, exist_ok=True)
-    suffix = f"_{kind}"
-    if params:
-        bits = []
-        if params.get("since"):
-            bits.append(f"from{params['since']}")
-        if params.get("until"):
-            bits.append(f"to{params['until']}")
-        if params.get("exclusive"):
-            bits.append("excl")
-        if bits:
-            suffix += "_" + "_".join(bits)
-    path = os.path.join(sandbox, f"geographic_history{suffix}.tsv")
+    if output_path:
+        path = output_path if os.path.isabs(output_path) else os.path.join(sandbox, output_path)
+    else:
+        path = os.path.join(sandbox, _query_filename(kind, params, include_anonymous))
 
-    columns = ["count", "last_day", "entity_type", "relation", "display"]
+    columns = ["count", "last_day", "entity_type", "relation", "entity_id", "display"]
     with open(path, "w", encoding="utf-8") as f:
-        param_summary = " ".join(f"{k}={v}" for k, v in (params or {}).items()) or "(no filters)"
+        param_summary = " ".join(f"{k}={v}" for k, v in params.items()) or "(no filters)"
+        anon = "+anon" if include_anonymous else "(named only)"
         f.write(
-            f"# {kind} · {len(results)} entities · "
+            f"# {kind} · {len(results)} entities · {anon} · "
             f"data_as_of {data_as_of} · {param_summary}\n"
         )
         f.write("\t".join(columns) + "\n")
         for r in results:
             f.write(
                 f"{r['count']}\t{r['last_day']}\t"
-                f"{r['entity_type']}\t{r['relation']}\t{r['display']}\n"
+                f"{r['entity_type']}\t{r['relation']}\t"
+                f"{r.get('id', '')}\t{r['display']}\n"
             )
+
+    return _build_meta(path, kind, params, results, resp, include_anonymous, columns)
+
+
+def _build_meta(path: str, kind: str, params: dict, results: list,
+                resp: dict, include_anonymous: bool, columns: list[str]) -> dict:
+    """Assemble the lightweight response Apex sees. Includes :
+      - top_5_overall : highest-count entities all categories combined.
+      - top_per_type  : top 3 per entity_type so small categories stay visible
+                       (avoids "0 routes visible → coureur urbain" false
+                       conclusion when routes have counts in the 1-5 range).
+      - counts_by_type: row counts per entity_type — agent sees the breadth.
+    """
+    counts_by_type: dict[str, int] = {}
+    per_type: dict[str, list[dict]] = {}
+    for r in results:
+        et = r["entity_type"]
+        counts_by_type[et] = counts_by_type.get(et, 0) + 1
+        per_type.setdefault(et, []).append(r)
+
+    def lite(r: dict) -> dict:
+        return {
+            "count": r["count"],
+            "display": r["display"],
+            "entity_id": r.get("id", ""),
+            "entity_type": r["entity_type"],
+            "relation": r["relation"],
+            "last_day": r["last_day"],
+        }
 
     return {
         "kind": kind,
@@ -384,19 +432,18 @@ def query_to_tsv(
         "columns": columns,
         "rows": len(results),
         "data_as_of": resp.get("data_as_of"),
-        "params": params or {},
-        # Top-5 preview so Apex can answer light questions without reading
-        # the file. Sorted by count desc (the server already returns them so).
-        "top_5": [
-            {
-                "count": r["count"],
-                "display": r["display"],
-                "entity_type": r["entity_type"],
-                "relation": r["relation"],
-                "last_day": r["last_day"],
-            }
-            for r in results[:5]
-        ],
+        "params": params,
+        "include_anonymous": include_anonymous,
+        # Aggregate breadth signal — lets Apex notice categories with
+        # small per-entity counts that would be hidden in top_5_overall.
+        "counts_by_type": counts_by_type,
+        # Overall top — broad winners, possibly all from one or two types.
+        "top_5_overall": [lite(r) for r in results[:5]],
+        # Per-type top so no category disappears.
+        "top_per_type": {
+            et: [lite(r) for r in items[:3]]
+            for et, items in per_type.items()
+        },
     }
 
 
