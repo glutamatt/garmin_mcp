@@ -563,13 +563,21 @@ def history_update(ctx, limit, geo_runner_url):
     "Default: all types.",
 )
 @click.option(
+    "--inline",
+    is_flag=True,
+    default=False,
+    help="Return the raw JSON (incl. full geometries) on stdout instead of "
+    "writing TSV to disk. WARNING : a heatmap can run to 3k+ entities each "
+    "with a GeoJSON blob — easily 1M+ tokens. Only use for scripting.",
+)
+@click.option(
     "--geo-runner-url",
     envvar="GEO_RUNNER_URL",
     default=None,
     help="Override geo-runner base URL.",
 )
 @click.pass_context
-def history_query(ctx, kind, since, until, exclusive, entity_types, geo_runner_url):
+def history_query(ctx, kind, since, until, exclusive, entity_types, inline, geo_runner_url):
     """Run a query against the per-user geographic DB.
 
     \b
@@ -577,8 +585,15 @@ def history_query(ctx, kind, since, until, exclusive, entity_types, geo_runner_u
       heatmap   one row per visited entity with count, last_day, geometry
 
     \b
-    Response shape :
-      { "data_as_of": "<ISO timestamp or null>", "results": [...] }
+    Default output : a TSV file in the session sandbox with columns
+      count, last_day, entity_type, relation, display
+    (NO geometry — same shape as `activities download`). The response is
+    a metadata dict (path, columns, rows, top_5) — agent context stays
+    light. Read the file with `pd.read_csv(path, sep="\\t", comment="#")`.
+
+    \b
+    Use --inline for full JSON with geometries (only useful for visual
+    rendering / direct piping — NOT for agent consumption).
 
     \b
     Examples :
@@ -587,6 +602,7 @@ def history_query(ctx, kind, since, until, exclusive, entity_types, geo_runner_u
       geographic history query heatmap --since 2026-05-01 --exclusive    # new discoveries
       geographic history query heatmap --until 2026-01-01 --exclusive    # abandoned
       geographic history query heatmap --entity-types polygon,admin
+      geographic history query heatmap --inline                         # raw JSON, careful
     """
     from garmin_mcp.api import geo_history as api
 
@@ -602,9 +618,16 @@ def history_query(ctx, kind, since, until, exclusive, entity_types, geo_runner_u
             t.strip() for t in entity_types.split(",") if t.strip()
         ]
 
-    _run(ctx, lambda: api.query(
-        _client(ctx), kind, params=params, geo_runner_url=geo_runner_url,
-    ))
+    if inline:
+        _run(ctx, lambda: api.query(
+            _client(ctx), kind, params=params, geo_runner_url=geo_runner_url,
+        ))
+    else:
+        _run(ctx, lambda: api.query_to_tsv(
+            _client(ctx), kind, params=params,
+            sandbox=_session_sandbox(ctx),
+            geo_runner_url=geo_runner_url,
+        ))
 
 
 # ── Health ───────────────────────────────────────────────────────────────────

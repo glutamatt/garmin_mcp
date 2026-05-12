@@ -326,6 +326,75 @@ def update(
 # ── Query ───────────────────────────────────────────────────────────────────
 
 
+def query_to_tsv(
+    client: Garmin,
+    kind: str,
+    params: dict | None = None,
+    sandbox: str = "/tmp/garmin",
+    geo_runner_url: str | None = None,
+) -> dict:
+    """Run a heatmap query and write the (geometry-stripped) results to a TSV
+    file in the session sandbox. Returns a metadata dict — same shape as
+    ``geographic activity`` so Apex's context stays light. Use ``query()``
+    (or the CLI ``--inline`` flag) to get the full JSON with geometries.
+    """
+    resp = query(client, kind, params=params, geo_runner_url=geo_runner_url)
+    results = resp.get("results") or []
+    data_as_of = resp.get("data_as_of") or "never"
+
+    os.makedirs(sandbox, exist_ok=True)
+    suffix = f"_{kind}"
+    if params:
+        bits = []
+        if params.get("since"):
+            bits.append(f"from{params['since']}")
+        if params.get("until"):
+            bits.append(f"to{params['until']}")
+        if params.get("exclusive"):
+            bits.append("excl")
+        if bits:
+            suffix += "_" + "_".join(bits)
+    path = os.path.join(sandbox, f"geographic_history{suffix}.tsv")
+
+    columns = ["count", "last_day", "entity_type", "relation", "display"]
+    with open(path, "w", encoding="utf-8") as f:
+        param_summary = " ".join(f"{k}={v}" for k, v in (params or {}).items()) or "(no filters)"
+        f.write(
+            f"# {kind} · {len(results)} entities · "
+            f"data_as_of {data_as_of} · {param_summary}\n"
+        )
+        f.write("\t".join(columns) + "\n")
+        for r in results:
+            f.write(
+                f"{r['count']}\t{r['last_day']}\t"
+                f"{r['entity_type']}\t{r['relation']}\t{r['display']}\n"
+            )
+
+    return {
+        "kind": kind,
+        "format": "tsv",
+        "path": path,
+        "size_kb": round(os.path.getsize(path) / 1024, 1),
+        "separator": "\\t",
+        "columns": columns,
+        "rows": len(results),
+        "data_as_of": resp.get("data_as_of"),
+        "params": params or {},
+        # Top-5 preview so Apex can answer light questions without reading
+        # the file. Sorted by count desc (the server already returns them so).
+        "top_5": [
+            {
+                "count": r["count"],
+                "display": r["display"],
+                "entity_type": r["entity_type"],
+                "relation": r["relation"],
+                "last_day": r["last_day"],
+            }
+            for r in results[:5]
+        ],
+    }
+
+
 def query(
     client: Garmin,
     kind: str,
