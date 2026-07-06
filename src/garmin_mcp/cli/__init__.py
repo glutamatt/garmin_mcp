@@ -1333,39 +1333,18 @@ def gear(ctx):
 
 
 @gear.command("list")
-@click.argument("user_profile_id")
 @click.pass_context
-def gear_list(ctx, user_profile_id):
-    """List all gear with usage stats."""
-    from garmin_mcp.utils import clean_nones
+def gear_list(ctx):
+    """List gear (shoes, bikes) with real usage. Auto-scoped to you.
 
-    client = _client(ctx)
-    gear_data = client.get_gear(user_profile_id)
-    if not gear_data:
-        _out(ctx, {"error": "No gear found."})
-        return
-    curated = {
-        "count": len(gear_data),
-        "gear": [
-            clean_nones({
-                "uuid": g.get("uuid"),
-                "display_name": g.get("displayName"),
-                "model_name": g.get("modelName"),
-                "brand_name": g.get("brandName"),
-                "gear_type": g.get("gearTypePk"),
-                "maximum_distance_meters": g.get("maximumDistanceMeter"),
-                "current_distance_meters": (
-                    g.get("gearStatusDTOList", [{}])[0].get("totalDistanceInMeters")
-                    if g.get("gearStatusDTOList")
-                    else None
-                ),
-                "date_begun": g.get("dateBegun"),
-                "date_retired": g.get("dateRetired"),
-            })
-            for g in gear_data
-        ],
-    }
-    _out(ctx, curated)
+    \b
+    Per gear: name, type, status, distance_km, activity_count,
+    max_distance_km, wear_pct (distance/max × 100 ⇒ 100 = replace),
+    date_retired (only if retired), uuid.
+    """
+    from garmin_mcp.api import gear as api
+
+    _run(ctx, lambda: api.get_gear(_client(ctx)))
 
 
 @gear.command("add")
