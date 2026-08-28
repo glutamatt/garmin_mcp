@@ -209,6 +209,29 @@ def garmin(ctx, fmt, fields, output_path, dry_run, token, display_name, tmp_dir)
 # ── Describe (schema introspection for agents) ──────────────────────────────
 
 
+_DRY_RUN_EPILOG = (
+    "Mutation — supports the global --dry-run flag, accepted ANYWHERE in the command "
+    "(e.g. `workouts create --input w.json --dry-run`): validates the input and prints a "
+    "preview without calling the Garmin API. It is a root-level flag, so it is not listed "
+    "under Options above — it works regardless."
+)
+
+
+class MutationCommand(click.Command):
+    """A command that writes to Garmin Connect.
+
+    Advertises the root-level ``--dry-run`` flag in ``help`` (epilog) and ``describe``
+    (``supports_dry_run`` + synthetic param). Without this, agents introspecting
+    ``help workouts create`` concluded the flag did not exist and skipped validation.
+    """
+
+    mutation = True
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("epilog", _DRY_RUN_EPILOG)
+        super().__init__(*args, **kwargs)
+
+
 def _collect_commands(group, prefix=""):
     """Recursively collect all commands with their params."""
     result = []
@@ -237,6 +260,14 @@ def _collect_commands(group, prefix=""):
                         "required": p.required,
                     })
             entry = {"command": full_name, "help": cmd.get_short_help_str(limit=120)}
+            if getattr(cmd, "mutation", False):
+                entry["supports_dry_run"] = True
+                params.append({
+                    "name": "--dry-run",
+                    "type": "flag",
+                    "required": False,
+                    "help": "Global flag (any position): validate + preview without calling the API",
+                })
             if params:
                 entry["params"] = params
             result.append(entry)
@@ -244,15 +275,18 @@ def _collect_commands(group, prefix=""):
 
 
 @garmin.command("describe")
-@click.argument("command_path", required=False, default=None)
+@click.argument("command_path", nargs=-1)
 @click.pass_context
 def describe(ctx, command_path):
     """Describe available commands and parameters (for agent introspection).
 
     \b
-    garmin describe              List all commands
-    garmin describe activities   List commands in a group
+    garmin describe                   List all commands
+    garmin describe activities        List commands in a group
+    garmin describe workouts create   One command (words or a single quoted string)
     """
+    # Accept both `describe workouts create` and `describe "workouts create"`
+    command_path = " ".join(command_path).strip()
     target = garmin
     prefix = ""
     if command_path:
@@ -1172,7 +1206,7 @@ def workouts_scheduled(ctx, start_date, end_date):
     _run(ctx, lambda: api.get_scheduled_workouts(_client(ctx), start_date, end_date))
 
 
-@workouts.command("create")
+@workouts.command("create", cls=MutationCommand)
 @click.option("--json", "workout_json", default=None, help="Workout JSON definition (inline string)")
 @click.option("--input", "input_file", default=None, help="Read workout JSON from file (sandboxed)")
 @click.option("--date", default=None, help="Schedule date YYYY-MM-DD (optional)")
@@ -1201,7 +1235,7 @@ def workouts_create(ctx, workout_json, input_file, date):
     _run(ctx, lambda: api.create_workout(_client(ctx), workout_data, date), dry_run_preview=preview)
 
 
-@workouts.command("update")
+@workouts.command("update", cls=MutationCommand)
 @click.argument("workout_id", type=int)
 @click.option("--json", "workout_json", default=None, help="New workout JSON definition (inline string)")
 @click.option("--input", "input_file", default=None, help="Read workout JSON from file (sandboxed)")
@@ -1229,7 +1263,7 @@ def workouts_update(ctx, workout_id, workout_json, input_file):
     _run(ctx, lambda: api.update_workout(_client(ctx), workout_id, workout_data), dry_run_preview=preview)
 
 
-@workouts.command("delete")
+@workouts.command("delete", cls=MutationCommand)
 @click.argument("workout_id", type=int)
 @click.pass_context
 def workouts_delete(ctx, workout_id):
@@ -1240,7 +1274,7 @@ def workouts_delete(ctx, workout_id):
     _run(ctx, lambda: api.delete_workout(_client(ctx), workout_id), dry_run_preview=preview)
 
 
-@workouts.command("unschedule")
+@workouts.command("unschedule", cls=MutationCommand)
 @click.argument("schedule_id", type=int)
 @click.pass_context
 def workouts_unschedule(ctx, schedule_id):
@@ -1251,7 +1285,7 @@ def workouts_unschedule(ctx, schedule_id):
     _run(ctx, lambda: api.unschedule_workout(_client(ctx), schedule_id), dry_run_preview=preview)
 
 
-@workouts.command("reschedule")
+@workouts.command("reschedule", cls=MutationCommand)
 @click.argument("schedule_id", type=int)
 @click.option("--date", required=True, help="New date YYYY-MM-DD")
 @click.pass_context
@@ -1263,7 +1297,7 @@ def workouts_reschedule(ctx, schedule_id, date):
     _run(ctx, lambda: api.reschedule_workout(_client(ctx), schedule_id, date), dry_run_preview=preview)
 
 
-@workouts.command("schedule")
+@workouts.command("schedule", cls=MutationCommand)
 @click.argument("workout_id", type=int)
 @click.option("--date", required=True, help="Schedule date YYYY-MM-DD")
 @click.pass_context
@@ -1347,7 +1381,7 @@ def gear_list(ctx):
     _run(ctx, lambda: api.get_gear(_client(ctx)))
 
 
-@gear.command("add")
+@gear.command("add", cls=MutationCommand)
 @click.argument("activity_id", type=int)
 @click.argument("gear_uuid")
 @click.pass_context
@@ -1360,7 +1394,7 @@ def gear_add(ctx, activity_id, gear_uuid):
     _run(ctx, _do, dry_run_preview=preview)
 
 
-@gear.command("remove")
+@gear.command("remove", cls=MutationCommand)
 @click.argument("activity_id", type=int)
 @click.argument("gear_uuid")
 @click.pass_context
@@ -1430,7 +1464,7 @@ def body_weigh_ins(ctx, start_date, end_date):
     _out(ctx, curated)
 
 
-@body.command("add-weight")
+@body.command("add-weight", cls=MutationCommand)
 @click.argument("weight", type=float)
 @click.option("--unit", default="kg", type=click.Choice(["kg", "lb"]))
 @click.option("--date-timestamp", default=None, help="Local timestamp YYYY-MM-DDThh:mm:ss")
@@ -1457,7 +1491,7 @@ def body_add_weight(ctx, weight, unit, date_timestamp, gmt_timestamp):
     _run(ctx, _do, dry_run_preview=preview)
 
 
-@body.command("delete-weight")
+@body.command("delete-weight", cls=MutationCommand)
 @click.argument("date")
 @click.option("--all/--no-all", "delete_all", default=True)
 @click.pass_context

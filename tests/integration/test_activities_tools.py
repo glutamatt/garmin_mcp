@@ -174,7 +174,7 @@ async def test_get_activity_with_rpe(app, mock_garmin_client):
             "averageHR": 150,
             "trainingEffect": 3.5,
             "activityTrainingLoad": 85,
-            "directWorkoutRpe": 7,
+            "directWorkoutRpe": 70,  # Garmin stores RPE ×10 (0-100); API exposes Foster CR10 (0-10)
             "directWorkoutFeel": 75,
         },
         "metadataDTO": {},

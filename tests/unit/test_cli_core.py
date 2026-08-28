@@ -11,6 +11,8 @@ from click.testing import CliRunner
 from unittest.mock import Mock, patch
 
 from garmin_mcp.cli import (
+    MutationCommand,
+    _collect_commands,
     _sanitize_path,
     _session_sandbox,
     _validate_command,
@@ -675,3 +677,81 @@ class TestDescribeShape:
         data = {"description": "a" * 50}
         shape = _describe_shape(data)
         assert '"description": ...' in shape
+
+
+class TestDryRunDiscoverability:
+    """Agents introspect `help <cmd>` / `describe <cmd>` — --dry-run must be visible there.
+
+    Regression: on 2026-08-28 the workout-builder subagent read `help workouts create`,
+    saw no --dry-run under Options, and refused to validate ("flag does not exist").
+    """
+
+    MUTATIONS = [
+        "workouts create", "workouts update", "workouts delete", "workouts schedule",
+        "workouts unschedule", "workouts reschedule",
+        "gear add", "gear remove",
+        "body add-weight", "body delete-weight",
+    ]
+
+    def _cmd(self, path):
+        target = garmin
+        for part in path.split():
+            target = target.commands[part]
+        return target
+
+    def test_every_dry_run_capable_command_is_a_mutation_command(self):
+        """Any command whose source uses dry_run_preview must be tagged (keeps the list honest)."""
+        import inspect as _inspect
+        for path in self.MUTATIONS:
+            cmd = self._cmd(path)
+            assert isinstance(cmd, MutationCommand), f"{path} must use cls=MutationCommand"
+            assert "dry_run_preview" in _inspect.getsource(cmd.callback), path
+
+    def test_no_untagged_mutation_left_behind(self):
+        """Walk the whole tree: dry_run_preview in source ⇔ MutationCommand."""
+        import inspect as _inspect
+        for entry in _collect_commands(garmin):
+            cmd = self._cmd(entry["command"])
+            uses_dry_run = "dry_run_preview" in _inspect.getsource(cmd.callback)
+            assert uses_dry_run == isinstance(cmd, MutationCommand), entry["command"]
+
+    def test_help_mentions_dry_run_on_mutations(self):
+        r = _runner()
+        for path in self.MUTATIONS:
+            res = r.invoke(garmin, ["help", *path.split()])
+            assert res.exit_code == 0, res.output
+            assert "--dry-run" in res.output, f"help {path} must advertise --dry-run"
+            assert "ANYWHERE" in res.output
+
+    def test_help_does_not_mention_dry_run_on_reads(self):
+        r = _runner()
+        res = r.invoke(garmin, ["help", "workouts", "list"])
+        assert res.exit_code == 0
+        assert "--dry-run" not in res.output
+
+    def test_describe_accepts_words_and_quoted_path(self):
+        """`describe workouts create` (what agents type via execute()) must equal `describe "workouts create"`."""
+        r = _runner()
+        words = r.invoke(garmin, ["describe", "workouts", "create"])
+        quoted = r.invoke(garmin, ["describe", "workouts create"])
+        assert words.exit_code == 0, words.output + words.stderr
+        assert json.loads(words.output) == json.loads(quoted.output)
+        assert json.loads(words.output)["commands"][0]["command"] == "workouts create"
+
+    def test_describe_via_execute(self):
+        res = execute("describe workouts create", "ZmFrZQ==")
+        assert res["exit_code"] == 0, res["stderr"]
+        assert json.loads(res["stdout"])["commands"][0]["supports_dry_run"] is True
+
+    def test_describe_flags_mutations(self):
+        r = _runner()
+        res = r.invoke(garmin, ["describe", "workouts create"])
+        assert res.exit_code == 0, res.output
+        [entry] = json.loads(res.output)["commands"]
+        assert entry["supports_dry_run"] is True
+        assert any(p["name"] == "--dry-run" for p in entry["params"])
+
+        res = r.invoke(garmin, ["describe", "workouts list"])
+        [entry] = json.loads(res.output)["commands"]
+        assert "supports_dry_run" not in entry
+        assert not any(p["name"] == "--dry-run" for p in entry.get("params", []))
