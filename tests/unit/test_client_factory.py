@@ -17,6 +17,7 @@ from garmin_mcp.client_factory import (
     _patch_di_refresh,
     create_client_from_tokens,
     get_client,
+    GarminTokenError,
     DI_TOKEN_URL,
     DI_CLIENT_IDS,
 )
@@ -113,6 +114,31 @@ class TestCreateClientFromTokens:
         create_client_from_tokens("fake_b64_tokens", "user", "name")
 
         client.garth.loads.assert_called_once_with("fake_b64_tokens")
+
+    @pytest.mark.parametrize("token", [
+        "dev-fake-token",     # valid base64, not UTF-8 (the local eval's fake token)
+        "not base64 at all!",
+        "e30=",               # base64 of "{}": JSON, but not garth tokens
+        "",
+    ])
+    def test_unreadable_token_gives_clear_message(self, token):
+        with pytest.raises(GarminTokenError, match="Garmin is not available in this session") as exc:
+            create_client_from_tokens(token)
+        assert "codec" not in str(exc.value)
+        assert exc.value.__cause__ is not None  # raw cause kept for debugging
+
+    def test_cli_output_has_only_the_clear_message(self):
+        # The CLI returns stderr to the model: no raw decode error may leak there.
+        from garmin_mcp.cli import execute
+        result = execute("activities list --from 2026-03-01 --to 2026-03-20", "dev-fake-token")
+        assert result["exit_code"] == 1
+        assert "Garmin is not available in this session" in result["stderr"]
+        assert "codec" not in result["stderr"] + result["stdout"]
+
+    def test_unreadable_token_error_is_a_value_error(self):
+        # Callers that catch ValueError (e.g. "Not authenticated") keep working.
+        with pytest.raises(ValueError):
+            create_client_from_tokens("dev-fake-token")
 
 
 class TestGetClient:
