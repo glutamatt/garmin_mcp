@@ -37,6 +37,16 @@ logger = logging.getLogger(__name__)
 
 GARMIN_TOKENS_KEY = "garmin_tokens"
 
+UNREADABLE_TOKEN_MESSAGE = (
+    "Garmin is not available in this session: the Garmin login token is unreadable "
+    "(missing, expired or corrupted). Every Garmin command will fail the same way until "
+    "the athlete reconnects Garmin — do not retry, answer without Garmin data."
+)
+
+
+class GarminTokenError(ValueError):
+    """The sport_platform_token cannot be decoded into garth tokens."""
+
 
 def _get_meta_context(ctx: Context) -> dict | None:
     """Extract _meta.context dict from request context, or None."""
@@ -174,9 +184,18 @@ def create_client_from_tokens(
 
     Returns:
         Authenticated Garmin client instance
+
+    Raises:
+        GarminTokenError: If the token cannot be decoded (clear message for the model)
     """
     client = Garmin()
-    client.garth.loads(tokens_b64)
+    try:
+        client.garth.loads(tokens_b64)
+    except (ValueError, TypeError, KeyError, IndexError) as e:
+        # Bad base64 / not UTF-8 / not JSON / wrong shape. The raw error
+        # ("'utf-8' codec can't decode byte 0xeb…") tells the model nothing useful,
+        # and CLI logs reach the model through stderr: the cause stays on __cause__ only.
+        raise GarminTokenError(UNREADABLE_TOKEN_MESSAGE) from e
 
     # DI-sourced tokens: patch refresh to use IT endpoint instead of OAuth1
     if _is_di_token(client.garth):
