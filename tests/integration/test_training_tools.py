@@ -51,7 +51,7 @@ async def test_get_max_metrics_no_data(app, mock_garmin_client):
     result = await app.call_tool("get_max_metrics", {"date": "2024-01-15"})
     data = _parse(result)
 
-    assert "error" in data
+    assert data == {"date": "2024-01-15", "available": False, "reason": "no_data"}
 
 
 # ── get_hrv_data ──────────────────────────────────────────────────────────────
@@ -177,7 +177,7 @@ async def test_get_race_predictions_no_data(app, mock_garmin_client):
     result = await app.call_tool("get_race_predictions", {})
     data = _parse(result)
 
-    assert "error" in data
+    assert data == {"available": False, "reason": "no_data"}
 
 
 # ── get_goals ─────────────────────────────────────────────────────────────────
@@ -201,7 +201,7 @@ async def test_get_goals_no_data(app, mock_garmin_client):
     result = await app.call_tool("get_goals", {})
     data = _parse(result)
 
-    assert "error" in data
+    assert data == []
 
 
 # ── get_personal_record ───────────────────────────────────────────────────────

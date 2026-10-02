@@ -4,6 +4,7 @@ import json
 import pytest
 from unittest.mock import Mock
 from garmin_mcp.api import workouts as api
+from garmin_mcp.api.contract import GarminWriteError, NotFound
 
 
 @pytest.fixture
@@ -127,10 +128,26 @@ class TestGetWorkouts:
         assert result["workouts"][0]["id"] == 1
         assert result["workouts"][0]["sport"] == "running"
 
-    def test_no_data(self, client):
+    def test_no_data_is_an_empty_list(self, client):
         client.get_workouts.return_value = None
-        result = api.get_workouts(client)
-        assert "error" in result
+        assert api.get_workouts(client) == {"count": 0, "workouts": []}
+
+
+class TestGetWorkoutById:
+    def test_no_workout_is_not_found(self, client):
+        client.get_workout_by_id.return_value = None
+        with pytest.raises(NotFound, match="123"):
+            api.get_workout_by_id(client, 123)
+
+
+class TestGetScheduledWorkouts:
+    def test_empty_range_is_an_empty_list(self, client):
+        client.get_scheduled_workouts_for_range.return_value = []
+        assert api.get_scheduled_workouts(client, "2024-01-01", "2024-01-31") == {
+            "count": 0,
+            "date_range": {"start": "2024-01-01", "end": "2024-01-31"},
+            "scheduled_workouts": [],
+        }
 
 
 class TestCreateWorkout:
@@ -163,19 +180,26 @@ class TestCreateWorkout:
         assert result["schedule_id"] == 99
         assert result["scheduled_date"] == "2024-01-20"
 
-    def test_schedule_failure_doesnt_lose_workout(self, client):
+    def test_schedule_failure_fails_and_gives_the_workout_id(self, client):
+        """The workout exists: the error says so, to schedule it, not create it twice."""
         client.upload_workout.return_value = {"workoutId": 42, "workoutName": "Test"}
         client.schedule_workout.side_effect = Exception("Scheduling failed")
 
-        result = api.create_workout(client, {
-            "workoutName": "Test",
-            "sport": "running",
-            "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "lap.button"}],
-        }, date="2024-01-20")
+        with pytest.raises(GarminWriteError) as raised:
+            api.create_workout(client, {
+                "workoutName": "Test",
+                "sport": "running",
+                "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "lap.button"}],
+            }, date="2024-01-20")
 
-        # Workout was created even though scheduling failed
-        assert result["workout_id"] == 42
-        assert "schedule_error" in result
+        message = str(raised.value)
+        assert "Workout 42 was created" in message
+        assert "workouts schedule 42 --date 2024-01-20" in message
+
+    def test_no_workout_id_fails(self, client):
+        client.upload_workout.return_value = {}
+        with pytest.raises(GarminWriteError, match="no workout ID"):
+            api.create_workout(client, {"workoutName": "Test", "steps": []})
 
 
 class TestDeleteWorkout:
@@ -196,6 +220,20 @@ class TestDeleteWorkout:
         result = api.delete_workout(client, 42)
         assert result["status"] == "deleted"
         assert result["unscheduled_count"] == 1
+
+    def test_failure(self, client):
+        client.get_scheduled_workouts_for_range.return_value = []
+        client.delete_workout.return_value = False
+        with pytest.raises(GarminWriteError, match="did not delete workout 42"):
+            api.delete_workout(client, 42)
+
+
+class TestUpdateWorkout:
+    def test_no_workout_is_not_found(self, client):
+        client.get_workout_by_id.return_value = None
+        with pytest.raises(NotFound, match="42"):
+            api.update_workout(client, 42, {"workoutName": "Test", "steps": []})
+        client.garth.put.assert_not_called()
 
 
 class TestScheduleWorkout:
@@ -223,8 +261,8 @@ class TestUnscheduleWorkout:
 
     def test_failure(self, client):
         client.unschedule_workout.return_value = False
-        result = api.unschedule_workout(client, 99)
-        assert result["status"] == "failed"
+        with pytest.raises(GarminWriteError, match="did not unschedule 99"):
+            api.unschedule_workout(client, 99)
 
 
 class TestRescheduleWorkout:
@@ -242,3 +280,27 @@ class TestRescheduleWorkout:
         assert result["new_schedule_id"] == 100
         client.unschedule_workout.assert_called_once_with(99)
         client.schedule_workout.assert_called_once_with(42, "2024-01-25")
+
+    def test_unknown_schedule_is_not_found(self, client):
+        client.get_scheduled_workouts_for_range.return_value = []
+        with pytest.raises(NotFound, match="99"):
+            api.reschedule_workout(client, 99, "2024-01-25")
+        client.unschedule_workout.assert_not_called()
+
+    def test_unschedule_failure_moves_nothing(self, client):
+        client.get_scheduled_workouts_for_range.return_value = [
+            {"scheduledWorkoutId": 99, "workoutId": 42}
+        ]
+        client.unschedule_workout.return_value = False
+        with pytest.raises(GarminWriteError, match="nothing was moved"):
+            api.reschedule_workout(client, 99, "2024-01-25")
+        client.schedule_workout.assert_not_called()
+
+    def test_schedule_failure_says_how_to_put_it_back(self, client):
+        client.get_scheduled_workouts_for_range.return_value = [
+            {"scheduledWorkoutId": 99, "workoutId": 42}
+        ]
+        client.unschedule_workout.return_value = True
+        client.schedule_workout.side_effect = Exception("boom")
+        with pytest.raises(GarminWriteError, match="workouts schedule 42 --date 2024-01-25"):
+            api.reschedule_workout(client, 99, "2024-01-25")

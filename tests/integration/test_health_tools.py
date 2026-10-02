@@ -28,22 +28,25 @@ def app(mock_garmin_client):
 
 @pytest.mark.asyncio
 async def test_get_coaching_snapshot(app, mock_garmin_client):
-    mock_garmin_client.get_coaching_snapshot.return_value = {
-        "date": "2024-01-15",
-        "stats": {"calendarDate": "2024-01-15", "totalSteps": 8000, "restingHeartRate": 55},
-        "sleep": {
-            "dailySleepDTO": {
-                "sleepTimeSeconds": 28800,
-                "sleepScores": {"overall": {"value": 85}},
-                "deepSleepSeconds": 7200,
-                "lightSleepSeconds": 14400,
-                "remSleepSeconds": 7200,
-                "awakeSleepSeconds": 0,
-            }
-        },
-        "training_readiness": [{"calendarDate": "2024-01-15", "score": 65, "level": "MODERATE"}],
-        "body_battery": [{"date": "2024-01-15", "charged": 40, "drained": 25}],
-        "hrv": {"hrvSummary": {"lastNightAvg": 45, "weeklyAvg": 48, "status": "BALANCED"}},
+    mock_garmin_client.get_user_summary.return_value = {
+        "calendarDate": "2024-01-15", "totalSteps": 8000, "restingHeartRate": 55,
+    }
+    mock_garmin_client.get_sleep_data.return_value = {
+        "dailySleepDTO": {
+            "sleepTimeSeconds": 28800,
+            "sleepScores": {"overall": {"value": 85}},
+            "deepSleepSeconds": 7200,
+            "lightSleepSeconds": 14400,
+            "remSleepSeconds": 7200,
+            "awakeSleepSeconds": 0,
+        }
+    }
+    mock_garmin_client.get_training_readiness.return_value = [
+        {"calendarDate": "2024-01-15", "score": 65, "level": "MODERATE"}
+    ]
+    mock_garmin_client.get_body_battery.return_value = [{"date": "2024-01-15", "charged": 40, "drained": 25}]
+    mock_garmin_client.get_hrv_data.return_value = {
+        "hrvSummary": {"lastNightAvg": 45, "weeklyAvg": 48, "status": "BALANCED"},
     }
 
     result = await app.call_tool("get_coaching_snapshot", {"date": "2024-01-15"})
@@ -52,7 +55,7 @@ async def test_get_coaching_snapshot(app, mock_garmin_client):
     assert data["date"] == "2024-01-15"
     assert data["stats"]["total_steps"] == 8000
     assert data["sleep"]["sleep_score"] == 85
-    mock_garmin_client.get_coaching_snapshot.assert_called_once_with("2024-01-15")
+    mock_garmin_client.get_user_summary.assert_called_once_with("2024-01-15")
 
 
 # ── get_stats ─────────────────────────────────────────────────────────────────
@@ -84,7 +87,7 @@ async def test_get_stats_no_data(app, mock_garmin_client):
     result = await app.call_tool("get_stats", {"date": "2024-01-15"})
     data = _parse(result)
 
-    assert "error" in data
+    assert data == {"date": "2024-01-15", "available": False, "reason": "no_data"}
 
 
 # ── get_sleep ─────────────────────────────────────────────────────────────────
@@ -123,7 +126,7 @@ async def test_get_sleep_no_data(app, mock_garmin_client):
     result = await app.call_tool("get_sleep", {"date": "2024-01-15"})
     data = _parse(result)
 
-    assert "error" in data
+    assert data == {"date": "2024-01-15", "available": False, "reason": "no_data"}
 
 
 # ── get_stress ────────────────────────────────────────────────────────────────

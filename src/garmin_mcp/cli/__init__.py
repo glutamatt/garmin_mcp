@@ -19,6 +19,7 @@ import click
 def _today():
     return _date.today().isoformat()
 
+from garmin_mcp.api.contract import GarminError, InvalidInput, as_garmin_error, is_unavailable
 from garmin_mcp.client_factory import create_client_from_tokens
 from garmin_mcp.cli.output import (
     filter_fields,
@@ -63,7 +64,7 @@ def _sanitize_path(raw_path: str, sandbox: str = SANDBOX_DIR) -> str:
     if not resolved.startswith(sandbox):
         basename = os.path.basename(resolved)
         if not basename:
-            raise click.ClickException(f"Invalid path: {raw_path}")
+            raise _fail(InvalidInput(f"Invalid path: {raw_path}"))
         resolved = os.path.join(sandbox, basename)
     return resolved
 
@@ -73,12 +74,30 @@ def _read_input_file(ctx, path: str) -> dict:
     sandbox = _session_sandbox(ctx)
     safe_path = _sanitize_path(path, sandbox)
     if not os.path.isfile(safe_path):
-        raise click.ClickException(f"File not found: {path}")
+        raise _fail(InvalidInput(f"File not found: {path}"))
     with open(safe_path, "r") as f:
         try:
             return json.load(f)
         except json.JSONDecodeError as e:
-            raise click.ClickException(f"Invalid JSON in {path}: {e}")
+            raise _fail(InvalidInput(f"Invalid JSON in {path}: {e}"))
+
+
+def _read_workout_input(ctx, workout_json: str | None, input_file: str | None) -> dict:
+    """The workout of `--json` (inline) or `--input` (file): exactly one of them."""
+    if input_file and workout_json:
+        raise click.UsageError("Use --json or --input, not both")
+    if not input_file and not workout_json:
+        raise click.UsageError("Provide --json or --input")
+    if input_file:
+        workout = _read_input_file(ctx, input_file)
+    else:
+        try:
+            workout = json.loads(workout_json)
+        except json.JSONDecodeError as e:
+            raise _fail(InvalidInput(f"Invalid JSON in --json: {e}"))
+    if not isinstance(workout, dict):
+        raise _fail(InvalidInput(f"The workout must be a JSON object, got {type(workout).__name__}"))
+    return workout
 
 
 def _describe_shape(data) -> str:
@@ -104,12 +123,17 @@ def _describe_shape(data) -> str:
 
 
 def _out(ctx, data):
-    """Apply field filtering, format, and output."""
+    """Apply field filtering, format, and output.
+
+    Only answers get here: a failure is a CLI error (`_call`), so `--fields`
+    and `--output` never apply to it. `--fields` does not apply to an
+    unavailable answer either: it would remove the reason.
+    """
     fields = ctx.obj.get("fields")
     fmt = ctx.obj.get("format", "json")
     output_path = ctx.obj.get("output")
 
-    if fields:
+    if fields and not is_unavailable(data):
         missing = find_missing_fields(data, fields)
         if missing:
             click.echo(f"Warning: unknown fields ignored: {', '.join(missing)}", err=True)
@@ -128,6 +152,23 @@ def _out(ctx, data):
         click.echo(text)
 
 
+def _fail(error: GarminError) -> click.ClickException:
+    """The CLI error for a failure: its message on stderr, exit 1 (2 for invalid input)."""
+    failure = click.ClickException(str(error))
+    failure.exit_code = error.exit_code
+    return failure
+
+
+def _call(fn):
+    """fn()'s answer. Any exception becomes a CLI error (see `api/contract.py`)."""
+    try:
+        return fn()
+    except click.ClickException:
+        raise
+    except Exception as e:
+        raise _fail(as_garmin_error(e)) from e
+
+
 def _run(ctx, fn, *, dry_run_preview: dict | None = None):
     """Execute fn(), handle errors, output result.
 
@@ -137,13 +178,7 @@ def _run(ctx, fn, *, dry_run_preview: dict | None = None):
     if ctx.obj.get("dry_run") and dry_run_preview is not None:
         _out(ctx, {"dry_run": True, **dry_run_preview})
         return
-    try:
-        data = fn()
-    except click.ClickException:
-        raise
-    except Exception as e:
-        raise click.ClickException(str(e))
-    _out(ctx, data)
+    _out(ctx, _call(fn))
 
 
 # ── Main group ───────────────────────────────────────────────────────────────
@@ -192,6 +227,13 @@ def garmin(ctx, fmt, fields, output_path, dry_run, token, display_name, tmp_dir)
 
     \b
     Date format: YYYY-MM-DD everywhere.
+
+    \b
+    Exit codes:
+      0  an answer: maybe empty (count 0), or {"available": false, "reason": ...}
+      1  failure (not found, Garmin unavailable, rate limit, change not applied)
+      2  invalid input
+    Errors go to stderr only.
     """
     ctx.ensure_object(dict)
     ctx.obj.setdefault("format", fmt)
@@ -295,7 +337,7 @@ def describe(ctx, command_path):
                 target = target.commands[part]
                 prefix = f"{prefix} {part}".strip() if prefix else part
             else:
-                raise click.ClickException(f"Unknown command: {command_path}")
+                raise click.UsageError(f"Unknown command: {command_path}")
 
     if isinstance(target, click.Group):
         commands = _collect_commands(target, prefix)
@@ -327,7 +369,7 @@ def help_cmd(ctx, command_path):
     current = garmin
     for part in command_path:
         if not (isinstance(current, click.Group) and part in current.commands):
-            raise click.ClickException(f"Unknown command: {' '.join(command_path)}")
+            raise click.UsageError(f"Unknown command: {' '.join(command_path)}")
         current = current.commands[part]
         parent = click.Context(current, info_name=part, parent=parent)
     # `parent` is now the ctx of the target itself; print its help
@@ -932,13 +974,10 @@ def _write_history_csv(
     Echoes unit legend when provided so Apex sees Garmin's internal units
     (cm/ms/kJ/etc.) at the same moment as the filename.
 
-    Catches ValueError from pre-flight checks (e.g. race-predictions 365d cap)
-    and re-raises as ClickException for clean CLI error messages.
+    A failure of `fn()` is a CLI error, like in `_run` (a pre-flight check such
+    as the race-predictions 365-day cap is invalid input: exit 2).
     """
-    try:
-        rows = fn()
-    except ValueError as e:
-        raise click.ClickException(str(e))
+    rows = _call(fn)
 
     sandbox = _session_sandbox(ctx)
     default_name = (
@@ -1222,12 +1261,7 @@ def workouts_create(ctx, workout_json, input_file, date):
     """
     from garmin_mcp.api import workouts as api
 
-    if input_file and workout_json:
-        raise click.ClickException("Use --json or --input, not both")
-    if not input_file and not workout_json:
-        raise click.ClickException("Provide --json or --input")
-
-    workout_data = _read_input_file(ctx, input_file) if input_file else json.loads(workout_json)
+    workout_data = _read_workout_input(ctx, workout_json, input_file)
     warnings = api.validate_workout_keys(workout_data)
     preview = {"action": "create_workout", "name": workout_data.get("workoutName"), "date": date}
     if warnings:
@@ -1250,12 +1284,7 @@ def workouts_update(ctx, workout_id, workout_json, input_file):
     """
     from garmin_mcp.api import workouts as api
 
-    if input_file and workout_json:
-        raise click.ClickException("Use --json or --input, not both")
-    if not input_file and not workout_json:
-        raise click.ClickException("Provide --json or --input")
-
-    workout_data = _read_input_file(ctx, input_file) if input_file else json.loads(workout_json)
+    workout_data = _read_workout_input(ctx, workout_json, input_file)
     warnings = api.validate_workout_keys(workout_data)
     preview = {"action": "update_workout", "workout_id": workout_id, "name": workout_data.get("workoutName")}
     if warnings:
@@ -1325,8 +1354,7 @@ def profile_name(ctx):
     """Get user's display name."""
     from garmin_mcp.api import profile as api
 
-    name = api.get_full_name(_client(ctx))
-    click.echo(name)
+    click.echo(_call(lambda: api.get_full_name(_client(ctx))))
 
 
 @profile.command("info")
@@ -1423,45 +1451,38 @@ def body(ctx):
 @click.pass_context
 def body_weigh_ins(ctx, start_date, end_date):
     """Get weight measurements between dates."""
-    client = _client(ctx)
-    raw = client.get_weigh_ins(start_date, end_date)
-    if not raw:
-        _out(ctx, {"error": f"No weight data between {start_date} and {end_date}"})
-        return
-
-    entries = []
-    if isinstance(raw, dict):
-        for day in raw.get("dailyWeightSummaries", []):
-            entries.extend(day.get("allWeightMetrics", []))
-        if not entries and "weight" in raw:
-            entries = [raw]
-    elif isinstance(raw, list):
-        entries = raw
-
-    if not entries:
-        _out(ctx, {"error": f"No weight data between {start_date} and {end_date}"})
-        return
-
     from garmin_mcp.utils import clean_nones
 
-    curated = {
-        "count": len(entries),
-        "date_range": {"start": start_date, "end": end_date},
-        "measurements": [
-            clean_nones({
-                "date": w.get("date") or w.get("calendarDate"),
-                "weight_grams": w.get("weight"),
-                "bmi": w.get("bmi"),
-                "body_fat_percent": w.get("bodyFat"),
-                "body_water_percent": w.get("bodyWater"),
-                "bone_mass_grams": w.get("boneMass"),
-                "muscle_mass_grams": w.get("muscleMass"),
-                "source_type": w.get("sourceType"),
-            })
-            for w in entries
-        ],
-    }
-    _out(ctx, curated)
+    def _fetch():
+        raw = _client(ctx).get_weigh_ins(start_date, end_date)
+        entries = []
+        if isinstance(raw, dict):
+            for day in raw.get("dailyWeightSummaries", []):
+                entries.extend(day.get("allWeightMetrics", []))
+            if not entries and "weight" in raw:
+                entries = [raw]
+        elif isinstance(raw, list):
+            entries = raw
+
+        return {
+            "count": len(entries),
+            "date_range": {"start": start_date, "end": end_date},
+            "measurements": [
+                clean_nones({
+                    "date": w.get("date") or w.get("calendarDate"),
+                    "weight_grams": w.get("weight"),
+                    "bmi": w.get("bmi"),
+                    "body_fat_percent": w.get("bodyFat"),
+                    "body_water_percent": w.get("bodyWater"),
+                    "bone_mass_grams": w.get("boneMass"),
+                    "muscle_mass_grams": w.get("muscleMass"),
+                    "source_type": w.get("sourceType"),
+                })
+                for w in entries
+            ],
+        }
+
+    _run(ctx, _fetch)
 
 
 @body.command("add-weight", cls=MutationCommand)
@@ -1522,26 +1543,23 @@ def calendar_month(ctx, year, month):
     """Month overview: activities, workouts, events, rest days."""
     from garmin_mcp.utils import clean_nones
 
-    client = _client(ctx)
-    raw = client.get_calendar_month(year, month)
-    if not raw:
-        _out(ctx, {"error": f"No calendar data for {year}-{month:02d}"})
-        return
+    def _fetch():
+        raw = _client(ctx).get_calendar_month(year, month) or {}
+        items = []
+        for item in raw.get("calendarItems", []):
+            curated = clean_nones({
+                "date": item.get("date"),
+                "type": item.get("itemType"),
+                "title": item.get("title"),
+                "activity_type_id": item.get("activityTypeId"),
+                "distance_meters": item.get("distance"),
+                "duration_seconds": item.get("duration"),
+                "event_type": item.get("eventType"),
+            })
+            items.append(curated)
+        return {"year": year, "month": month, "count": len(items), "items": items}
 
-    items = []
-    for item in raw.get("calendarItems", []):
-        curated = clean_nones({
-            "date": item.get("date"),
-            "type": item.get("itemType"),
-            "title": item.get("title"),
-            "activity_type_id": item.get("activityTypeId"),
-            "distance_meters": item.get("distance"),
-            "duration_seconds": item.get("duration"),
-            "event_type": item.get("eventType"),
-        })
-        items.append(curated)
-
-    _out(ctx, {"year": year, "month": month, "items": items})
+    _run(ctx, _fetch)
 
 
 @calendar.command("events")
@@ -1551,7 +1569,6 @@ def calendar_month(ctx, year, month):
 @click.pass_context
 def calendar_events(ctx, start_date, end_date, limit):
     """Race events within a date range."""
-    client = _client(ctx)
     url = "/calendar-service/events"
     params = {
         "startDate": start_date,
@@ -1560,11 +1577,12 @@ def calendar_events(ctx, start_date, end_date, limit):
         "pageIndex": 1,
         "sortOrder": "eventDate_asc",
     }
-    raw = client.garth.connectapi(url, params=params)
-    if not raw:
-        _out(ctx, {"error": f"No events between {start_date} and {end_date}"})
-        return
-    _out(ctx, _curate_events(raw))
+
+    def _fetch():
+        raw = _client(ctx).garth.connectapi(url, params=params)
+        return _curate_events(raw) if raw else []
+
+    _run(ctx, _fetch)
 
 
 @calendar.command("upcoming")
@@ -1575,25 +1593,25 @@ def calendar_upcoming(ctx, days):
     from datetime import date, timedelta
     from garmin_mcp.utils import clean_nones
 
-    client = _client(ctx)
     start = date.today().strftime("%Y-%m-%d")
     end = (date.today() + timedelta(days=days)).strftime("%Y-%m-%d")
-    items = client.get_calendar_items_for_range(start, end)
-    if not items:
-        _out(ctx, {"error": f"No calendar items in the next {days} days"})
-        return
-    curated = []
-    for item in items:
-        curated.append(clean_nones({
-            "date": item.get("date"),
-            "type": item.get("itemType"),
-            "title": item.get("title"),
-            "activity_type_id": item.get("activityTypeId"),
-            "distance_meters": item.get("distance"),
-            "duration_seconds": item.get("duration"),
-            "event_type": item.get("eventType"),
-        }))
-    _out(ctx, {"from": start, "to": end, "items": curated})
+
+    def _fetch():
+        items = _client(ctx).get_calendar_items_for_range(start, end) or []
+        curated = []
+        for item in items:
+            curated.append(clean_nones({
+                "date": item.get("date"),
+                "type": item.get("itemType"),
+                "title": item.get("title"),
+                "activity_type_id": item.get("activityTypeId"),
+                "distance_meters": item.get("distance"),
+                "duration_seconds": item.get("duration"),
+                "event_type": item.get("eventType"),
+            }))
+        return {"from": start, "to": end, "count": len(curated), "items": curated}
+
+    _run(ctx, _fetch)
 
 
 def _curate_events(events_data):
@@ -1770,15 +1788,12 @@ def execute(command: str, token: str, display_name: str = None, tmp_dir: str = N
     # Pass pre-created client via obj so _client(ctx) reuses it
     obj = {"client": client} if client else {}
     result = runner.invoke(garmin, args, obj=obj, catch_exceptions=True)
-    stdout = result.output or ""
-    stderr = ""
-    if hasattr(result, "stderr") and result.stderr:
-        stderr = result.stderr
-
-    # Click 8.3+ mixes err=True output into both stdout and stderr — strip duplicates
-    if stderr and stdout:
-        for line in stderr.strip().splitlines():
-            stdout = stdout.replace(line + "\n", "", 1)
+    # `result.output` mixes stderr into stdout since Click 8.2: read each stream on its own.
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+    # An exception no command turned into a CLI error: exit 1 with nothing on stderr. Say why.
+    if result.exception is not None and not isinstance(result.exception, SystemExit):
+        stderr += f"Error: {as_garmin_error(result.exception)}\n"
 
     # Detect if garth refreshed tokens during execution (thread-safe: local ref)
     refreshed_token = None

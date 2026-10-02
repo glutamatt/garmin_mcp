@@ -3,9 +3,11 @@ Profile & Devices API layer — curation logic.
 
 Pure functions: (Garmin client, params) → dict.
 Merges user_profile + settings + unit_system + devices into 3 calls.
+Output contract (empty answers, failures): see `api/contract.py`.
 """
 
 from garminconnect import Garmin
+from garmin_mcp.api.contract import NO_DATA, Unavailable, unavailable
 from garmin_mcp.utils import clean_nones
 
 
@@ -31,10 +33,7 @@ def get_hr_zones(client: Garmin) -> dict:
     Garmin stores zone boundaries per-activity (not in user-settings).
     Fetches the latest activity's hrTimeInZones to extract the current config.
     """
-    result = _fetch_zones_from_activity(client)
-    if not result:
-        return {"error": "No zone data available"}
-    return result
+    return _fetch_zones_from_activity(client) or unavailable(NO_DATA)
 
 
 def get_user_profile(client) -> dict:
@@ -44,7 +43,7 @@ def get_user_profile(client) -> dict:
     """
     profile = client.get_user_profile()
     if not profile:
-        return {"error": "No user profile found"}
+        raise Unavailable("Garmin returned no user profile")
 
     result = clean_nones({
         "user_profile_id": profile.get("id"),
@@ -117,7 +116,7 @@ def get_devices(client) -> dict:
     """Enriched device list with last-used and primary flags."""
     devices = client.get_devices()
     if not devices:
-        return {"error": "No devices found"}
+        return {"count": 0, "devices": []}
 
     # Fetch last-used and primary training device for enrichment
     last_used_id = None

@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 
 from garminconnect import Garmin
+from garmin_mcp.api.contract import InvalidInput
 
 
 logger = logging.getLogger(__name__)
@@ -184,9 +185,9 @@ def get_sport_stats(
       - cadence: spm (running) / rpm (cycling)
     """
     if sport not in VALID_SPORTS:
-        raise ValueError(f"Unknown sport '{sport}'. Valid: {VALID_SPORTS}")
+        raise InvalidInput(f"Unknown sport '{sport}'. Valid: {VALID_SPORTS}")
     if aggregation not in VALID_AGGREGATIONS:
-        raise ValueError(
+        raise InvalidInput(
             f"Unknown aggregation '{aggregation}'. Valid: {VALID_AGGREGATIONS}"
         )
 
@@ -333,7 +334,7 @@ def get_heart_rate(
     Raw Garmin field names passed through (camelCase). All in bpm.
     """
     if aggregation not in HEART_RATE_AGGREGATIONS:
-        raise ValueError(
+        raise InvalidInput(
             f"Unknown aggregation '{aggregation}'. Valid: {HEART_RATE_AGGREGATIONS}"
         )
 
@@ -423,7 +424,7 @@ def get_vo2max(
     needed — VO2max is ml/kg/min (float), fitnessAge is years (often null).
     """
     if aggregation not in VO2MAX_AGGREGATIONS:
-        raise ValueError(
+        raise InvalidInput(
             f"Unknown aggregation '{aggregation}'. Valid: {VO2MAX_AGGREGATIONS}"
         )
 
@@ -463,13 +464,13 @@ def get_race_predictions(
     """One row per day: 5K / 10K / half-marathon / marathon predicted times (seconds).
 
     Garmin caps this endpoint at 365 days — pre-flight check raises a clear
-    ValueError before the HTTP call, instead of letting the server 400 silently.
+    InvalidInput before the HTTP call, instead of letting the server 400 silently.
     """
     s = datetime.strptime(start_date, "%Y-%m-%d").date()
     e = datetime.strptime(end_date, "%Y-%m-%d").date()
     days = (e - s).days
     if days > 365:
-        raise ValueError(
+        raise InvalidInput(
             f"race-predictions is capped at 365 days by Garmin server "
             f"(requested {days}). Use --days 365 or less."
         )

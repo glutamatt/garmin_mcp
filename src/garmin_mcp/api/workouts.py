@@ -3,6 +3,8 @@ Workouts API layer — preprocessing, validation, normalization, curation.
 
 Pure functions: (Garmin client, params) → dict.
 Pydantic models and normalization logic moved here from the old tool layer.
+Output contract (empty answers, failures): see `api/contract.py`. A change
+that Garmin does not apply raises `GarminWriteError`, never `{"status": "error"}`.
 """
 
 import copy
@@ -13,6 +15,7 @@ from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 
+from garmin_mcp.api.contract import GarminWriteError, NotFound, as_garmin_error
 from garmin_mcp.utils import clean_nones
 
 logger = logging.getLogger(__name__)
@@ -576,9 +579,7 @@ def prepare_workout_json(workout_data: dict) -> str:
 
 def get_workouts(client) -> dict:
     """Get all workouts from the library, curated."""
-    workouts = client.get_workouts()
-    if not workouts:
-        return {"error": "No workouts found"}
+    workouts = client.get_workouts() or []
     return {
         "count": len(workouts),
         "workouts": [_curate_workout_summary(w) for w in workouts],
@@ -589,7 +590,7 @@ def get_workout_by_id(client, workout_id: int) -> dict:
     """Get detailed workout info. Returns full structure for editing."""
     workout = client.get_workout_by_id(workout_id)
     if not workout:
-        return {"error": f"No workout found with ID {workout_id}"}
+        raise NotFound(f"No workout {workout_id}")
     sport_type = workout.get('sportType', {})
     return clean_nones({
         "id": workout.get('workoutId'),
@@ -608,10 +609,7 @@ def get_workout_by_id(client, workout_id: int) -> dict:
 
 def get_scheduled_workouts(client, start_date: str, end_date: str) -> dict:
     """Get workouts scheduled on the calendar between two dates."""
-    scheduled = client.get_scheduled_workouts_for_range(start_date, end_date)
-    if not scheduled:
-        return {"error": f"No workouts scheduled between {start_date} and {end_date}"}
-
+    scheduled = client.get_scheduled_workouts_for_range(start_date, end_date) or []
     return {
         "count": len(scheduled),
         "date_range": {"start": start_date, "end": end_date},
@@ -620,13 +618,17 @@ def get_scheduled_workouts(client, start_date: str, end_date: str) -> dict:
 
 
 def create_workout(client, workout_data: dict, date: str = None) -> dict:
-    """Create a workout and optionally schedule it. Atomic-ish: upload + schedule."""
+    """Create a workout and optionally schedule it: upload, then schedule.
+
+    If the upload works but the scheduling fails, the workout is in the library:
+    the error gives its id, so that it gets scheduled, not created twice.
+    """
     workout_json = prepare_workout_json(workout_data)
     upload_result = client.upload_workout(workout_json)
 
     workout_id = upload_result.get('workoutId') if isinstance(upload_result, dict) else None
     if not workout_id:
-        return {"status": "error", "message": "Failed to create workout — no workout ID returned"}
+        raise GarminWriteError("Garmin did not create the workout: no workout ID returned")
 
     result = clean_nones({
         "status": "created",
@@ -638,13 +640,16 @@ def create_workout(client, workout_data: dict, date: str = None) -> dict:
     if date:
         try:
             schedule_result = client.schedule_workout(workout_id, date)
-            result["status"] = "planned"
-            result["scheduled_date"] = date
-            if isinstance(schedule_result, dict):
-                result["schedule_id"] = schedule_result.get('workoutScheduleId')
         except Exception as e:
-            result["schedule_error"] = str(e)
-            result["message"] = "Workout created but scheduling failed"
+            raise GarminWriteError(
+                f"Workout {workout_id} was created, but scheduling it on {date} failed "
+                f"({as_garmin_error(e)}). Do not create it again: "
+                f"`workouts schedule {workout_id} --date {date}`."
+            ) from e
+        result["status"] = "planned"
+        result["scheduled_date"] = date
+        if isinstance(schedule_result, dict):
+            result["schedule_id"] = schedule_result.get('workoutScheduleId')
 
     return result
 
@@ -653,7 +658,7 @@ def update_workout(client, workout_id: int, workout_data: dict) -> dict:
     """Replace an existing workout's definition."""
     existing = client.get_workout_by_id(workout_id)
     if not existing:
-        return {"status": "error", "message": f"Workout {workout_id} not found"}
+        raise NotFound(f"No workout {workout_id}")
 
     workout_json_str = prepare_workout_json(workout_data)
     normalized = json.loads(workout_json_str)
@@ -684,7 +689,7 @@ def delete_workout(client, workout_id: int) -> dict:
         today = datetime.date.today()
         start_date = (today - datetime.timedelta(days=30)).isoformat()
         end_date = (today + datetime.timedelta(days=365)).isoformat()
-        scheduled = client.get_scheduled_workouts_for_range(start_date, end_date)
+        scheduled = client.get_scheduled_workouts_for_range(start_date, end_date) or []
 
         for entry in scheduled:
             if entry.get('workoutId') == workout_id:
@@ -700,7 +705,7 @@ def delete_workout(client, workout_id: int) -> dict:
 
     success = client.delete_workout(workout_id)
     if not success:
-        return {"status": "failed", "workout_id": workout_id, "message": "Failed to delete workout"}
+        raise GarminWriteError(f"Garmin did not delete workout {workout_id}")
 
     result = {
         "status": "deleted",
@@ -726,21 +731,23 @@ def schedule_workout(client, workout_id: int, date: str) -> dict:
 def unschedule_workout(client, schedule_id: int) -> dict:
     """Remove a scheduled workout from the calendar (keeps library entry)."""
     success = client.unschedule_workout(schedule_id)
-    if success:
-        return {"status": "unscheduled", "schedule_id": schedule_id}
-    return {"status": "failed", "schedule_id": schedule_id, "message": "Failed to unschedule workout"}
+    if not success:
+        raise GarminWriteError(f"Garmin did not unschedule {schedule_id}")
+    return {"status": "unscheduled", "schedule_id": schedule_id}
 
 
 def reschedule_workout(client, schedule_id: int, new_date: str) -> dict:
     """Move a scheduled workout to a different date.
 
     Implemented as unschedule + re-schedule (Garmin's PUT endpoint returns 500).
+    If the second step fails, the workout is on no date: the error says how to
+    put it back.
     """
     # Find the workout_id for this schedule entry
     today = datetime.date.today()
     start = (today - datetime.timedelta(days=30)).isoformat()
     end = (today + datetime.timedelta(days=365)).isoformat()
-    scheduled = client.get_scheduled_workouts_for_range(start, end)
+    scheduled = client.get_scheduled_workouts_for_range(start, end) or []
 
     workout_id = None
     workout_name = None
@@ -751,13 +758,21 @@ def reschedule_workout(client, schedule_id: int, new_date: str) -> dict:
             break
 
     if not workout_id:
-        return {"status": "error", "message": f"Schedule {schedule_id} not found"}
+        raise NotFound(f"No scheduled workout {schedule_id} between {start} and {end}")
 
     # Unschedule the old entry
-    client.unschedule_workout(schedule_id)
+    if not client.unschedule_workout(schedule_id):
+        raise GarminWriteError(f"Garmin did not unschedule {schedule_id}: nothing was moved")
 
     # Re-schedule on the new date
-    schedule_result = client.schedule_workout(workout_id, new_date)
+    try:
+        schedule_result = client.schedule_workout(workout_id, new_date)
+    except Exception as e:
+        raise GarminWriteError(
+            f"Schedule {schedule_id} was removed, but scheduling workout {workout_id} on "
+            f"{new_date} failed ({as_garmin_error(e)}): the workout is on no date now. "
+            f"`workouts schedule {workout_id} --date {new_date}`."
+        ) from e
     new_schedule_id = schedule_result.get('workoutScheduleId') if isinstance(schedule_result, dict) else None
 
     return clean_nones({

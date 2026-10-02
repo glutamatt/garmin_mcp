@@ -2,53 +2,69 @@
 Health & Wellness API — curated daily health data.
 
 Pure functions: (Garmin client, params) → dict.
-Returns {"error": "..."} for missing data.
-Lets SDK exceptions bubble for real errors (auth, network).
+A day without data is `{"date", "available": False, "reason": "no_data"}`;
+failures are exceptions (see `api/contract.py`).
 """
 
 from garminconnect import Garmin
+from garmin_mcp.api.contract import (
+    NO_DATA,
+    AuthError,
+    as_garmin_error,
+    day_answer,
+    error_reason,
+    has_data,
+    unavailable,
+)
 from garmin_mcp.utils import clean_nones
 
 
 def get_coaching_snapshot(client: Garmin, date: str) -> dict:
     """One-call daily overview: stats + sleep + readiness + body battery + HRV.
 
-    Sections that fail or return no data are included as {"unavailable": true}
-    so consumers can distinguish missing data from zero values.
+    Each section is its curated data, or `{"available": False, "reason": …}`:
+    `no_data` when Garmin has nothing for that day, `error: …` when its call
+    failed. An auth error fails the snapshot at once; so does a failure of
+    every section.
+
+    The sections are fetched here, one call each, and not with the SDK's
+    `get_coaching_snapshot`: it turns every error into `None`.
     """
-    raw = client.get_coaching_snapshot(date)
-    _unavailable = {"unavailable": True}
-    return {
-        "date": date,
-        "stats": _curate_stats(raw.get("stats")) if raw.get("stats") else _unavailable,
-        "sleep": _curate_sleep(raw.get("sleep")) if raw.get("sleep") else _unavailable,
-        "training_readiness": _curate_readiness(raw.get("training_readiness")) if raw.get("training_readiness") else _unavailable,
-        "body_battery": _curate_body_battery_summary(raw.get("body_battery")) if raw.get("body_battery") else _unavailable,
-        "hrv": _curate_hrv(raw.get("hrv")) if raw.get("hrv") else _unavailable,
-    }
+    snapshot = {"date": date}
+    errors = []
+    for name, method, curate in _SNAPSHOT_SECTIONS:
+        try:
+            raw = getattr(client, method)(date)
+            curated = curate(raw) if raw else None
+            snapshot[name] = curated if has_data(curated) else unavailable(NO_DATA)
+        except Exception as e:
+            error = as_garmin_error(e)
+            if isinstance(error, AuthError):
+                raise error from e
+            errors.append(error)
+            snapshot[name] = unavailable(error_reason(error))
+    if len(errors) == len(_SNAPSHOT_SECTIONS):
+        raise errors[0]
+    return snapshot
 
 
 def get_stats(client: Garmin, date: str) -> dict:
     """Curated daily stats: steps, calories, HR, stress, body battery, SpO2."""
     raw = client.get_user_summary(date)
-    if not raw:
-        return {"error": f"No stats for {date}"}
-    return _curate_stats(raw)
+    return day_answer(date, _curate_stats(raw) if raw else None)
 
 
 def get_sleep(client: Garmin, date: str) -> dict:
     """Curated sleep summary: score, phases, SpO2, respiration."""
     raw = client.get_sleep_data(date)
-    if not raw:
-        return {"error": f"No sleep data for {date}"}
-    return _curate_sleep(raw)
+    return day_answer(date, _curate_sleep(raw) if raw else None)
 
 
 def get_stress(client: Garmin, date: str) -> dict:
     """Curated stress summary: avg/max levels, distribution percentages."""
     raw = client.get_stress_data(date)
     if not raw:
-        return {"error": f"No stress data for {date}"}
+        return day_answer(date, None)
 
     summary = clean_nones({
         "date": raw.get("calendarDate"),
@@ -67,14 +83,14 @@ def get_stress(client: Garmin, date: str) -> dict:
             summary["medium_stress_percent"] = round(sum(1 for v in valid if 51 <= v < 76) / total * 100, 1)
             summary["high_stress_percent"] = round(sum(1 for v in valid if v >= 76) / total * 100, 1)
 
-    return summary
+    return day_answer(date, summary)
 
 
 def get_heart_rate(client: Garmin, date: str) -> dict:
     """Curated HR summary: resting, min, max, avg, 7-day trend."""
     raw = client.get_heart_rates(date)
     if not raw:
-        return {"error": f"No heart rate data for {date}"}
+        return day_answer(date, None)
 
     summary = clean_nones({
         "date": raw.get("calendarDate"),
@@ -91,28 +107,26 @@ def get_heart_rate(client: Garmin, date: str) -> dict:
         if valid:
             summary["avg_heart_rate_bpm"] = round(sum(valid) / len(valid), 1)
 
-    return summary
+    return day_answer(date, summary)
 
 
 def get_respiration(client: Garmin, date: str) -> dict:
     """Curated respiration summary: avg/min/max breaths per minute."""
     raw = client.get_respiration_data(date)
     if not raw:
-        return {"error": f"No respiration data for {date}"}
-    return clean_nones({
+        return day_answer(date, None)
+    return day_answer(date, clean_nones({
         "date": raw.get("calendarDate"),
         "lowest_breaths_per_min": raw.get("lowestRespirationValue"),
         "highest_breaths_per_min": raw.get("highestRespirationValue"),
         "avg_waking_breaths_per_min": raw.get("avgWakingRespirationValue"),
         "avg_sleep_breaths_per_min": raw.get("avgSleepRespirationValue"),
-    })
+    }))
 
 
 def get_body_battery(client: Garmin, start_date: str, end_date: str) -> dict:
     """Curated body battery: charge/drain per day with activity events."""
-    raw = client.get_body_battery(start_date, end_date)
-    if not raw:
-        return {"error": f"No body battery data between {start_date} and {end_date}"}
+    raw = client.get_body_battery(start_date, end_date) or []
 
     days = []
     for day in raw:
@@ -141,15 +155,15 @@ def get_body_battery(client: Garmin, start_date: str, end_date: str) -> dict:
 
         days.append(clean_nones(entry))
 
-    return {"days": days}
+    return {"count": len(days), "days": days}
 
 
 def get_spo2(client: Garmin, date: str) -> dict:
     """Curated SpO2: avg, lowest, latest, sleep avg."""
     raw = client.get_spo2_data(date)
     if not raw:
-        return {"error": f"No SpO2 data for {date}"}
-    return clean_nones({
+        return day_answer(date, None)
+    return day_answer(date, clean_nones({
         "date": raw.get("calendarDate"),
         "avg_spo2_percent": raw.get("averageSpO2"),
         "lowest_spo2_percent": raw.get("lowestSpO2"),
@@ -157,14 +171,14 @@ def get_spo2(client: Garmin, date: str) -> dict:
         "latest_reading_time": raw.get("latestSpO2TimestampLocal"),
         "last_7_days_avg_spo2": raw.get("lastSevenDaysAvgSpO2"),
         "avg_sleep_spo2_percent": raw.get("avgSleepSpO2"),
-    })
+    }))
 
 
 def get_training_readiness(client: Garmin, date: str) -> dict:
     """Curated training readiness: score, contributing factors."""
     raw = client.get_training_readiness(date)
     if not raw:
-        return {"error": f"No training readiness data for {date}"}
+        return day_answer(date, None)
 
     # API can return a list
     entries = raw if isinstance(raw, list) else [raw]
@@ -173,7 +187,7 @@ def get_training_readiness(client: Garmin, date: str) -> dict:
         curated.append(_curate_readiness_entry(r))
 
     if len(curated) == 1:
-        return curated[0]
+        return day_answer(date, curated[0])
     return {"entries": curated}
 
 
@@ -183,9 +197,7 @@ def get_body_composition(client: Garmin, start_date: str, end_date: str = None) 
         raw = client.get_body_composition(start_date, end_date)
     else:
         raw = client.get_body_composition(start_date)
-    if not raw:
-        return {"error": f"No body composition data for {start_date}"}
-    return raw
+    return raw or unavailable(NO_DATA, date=start_date)
 
 
 # ── Private curation helpers ─────────────────────────────────────────────────
@@ -316,3 +328,13 @@ def _curate_hrv(hrv_data: dict) -> dict | None:
         "baseline_upper_ms": baseline.get("balancedUpper"),
         "status": summary.get("status"),
     })
+
+
+# (section, client method called with the date, curation) — in output order.
+_SNAPSHOT_SECTIONS = (
+    ("stats", "get_user_summary", _curate_stats),
+    ("sleep", "get_sleep_data", _curate_sleep),
+    ("training_readiness", "get_training_readiness", _curate_readiness),
+    ("body_battery", "get_body_battery", _curate_body_battery_summary),
+    ("hrv", "get_hrv_data", _curate_hrv),
+)

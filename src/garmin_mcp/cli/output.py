@@ -57,19 +57,23 @@ def write_csv_file(
     return {"path": path, "rows": len(rows), "columns": len(fieldnames), "dropped": dropped}
 
 
+def _is_item_list(value) -> bool:
+    """A list of items: a list of dicts, or an empty list (an empty answer, `count: 0`)."""
+    return isinstance(value, list) and (not value or isinstance(value[0], dict))
+
+
 def find_missing_fields(data, fields: list[str]) -> list[str]:
-    """Return requested fields not present in ANY item (handles nullable fields stripped by clean_nones)."""
+    """Return requested fields not present in ANY item (handles nullable fields stripped by clean_nones).
+
+    An empty answer has no item to compare with: nothing is reported missing.
+    """
     all_keys: set[str] = set()
     items = []
     if isinstance(data, list):
         items = [d for d in data if isinstance(d, dict)]
     elif isinstance(data, dict):
-        for v in data.values():
-            if isinstance(v, list) and v and isinstance(v[0], dict):
-                items = v
-                break
-        if not items and data:
-            items = [data]
+        lists = [v for v in data.values() if _is_item_list(v)]
+        items = next((v for v in lists if v), []) if lists else [data]
     for item in items:
         all_keys.update(item.keys())
     if not all_keys:
@@ -96,15 +100,12 @@ def filter_fields(data, fields: list[str]):
     if not isinstance(data, dict):
         return data
 
-    has_data_list = any(
-        isinstance(v, list) and v and isinstance(v[0], dict)
-        for v in data.values()
-    )
+    has_data_list = any(_is_item_list(v) for v in data.values())
 
     if has_data_list:
         result = {}
         for k, v in data.items():
-            if isinstance(v, list) and v and isinstance(v[0], dict):
+            if _is_item_list(v):
                 result[k] = [_filter_dict(item, fields) for item in v]
             else:
                 result[k] = v  # keep metadata (count, date_range, etc.)
@@ -127,8 +128,6 @@ def _format_table(data) -> str:
     """Format data as a human-readable table."""
     if isinstance(data, str):
         return data
-    if isinstance(data, dict) and "error" in data:
-        return f"Error: {data['error']}"
 
     items = None
     header_info = []
@@ -137,8 +136,9 @@ def _format_table(data) -> str:
         items = data
     elif isinstance(data, dict):
         for k, v in data.items():
-            if isinstance(v, list) and v and isinstance(v[0], dict):
-                items = v
+            if _is_item_list(v):
+                if v or items is None:
+                    items = v
             else:
                 header_info.append(f"{k}: {v}")
 

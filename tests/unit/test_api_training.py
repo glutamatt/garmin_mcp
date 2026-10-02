@@ -10,6 +10,9 @@ def client():
     return Mock()
 
 
+NO_DATA_DAY = {"date": "2024-01-15", "available": False, "reason": "no_data"}
+
+
 class TestGetMaxMetrics:
     def test_single_metric(self, client):
         client.get_max_metrics.return_value = {
@@ -34,10 +37,9 @@ class TestGetMaxMetrics:
         assert "metrics" in result
         assert len(result["metrics"]) == 2
 
-    def test_no_data(self, client):
+    def test_no_data_is_unavailable(self, client):
         client.get_max_metrics.return_value = None
-        result = api.get_max_metrics(client, "2024-01-15")
-        assert "error" in result
+        assert api.get_max_metrics(client, "2024-01-15") == NO_DATA_DAY
 
 
 class TestGetHrvData:
@@ -59,10 +61,9 @@ class TestGetHrvData:
         assert result["status"] == "BALANCED"
         assert result["baseline_balanced_low_ms"] == 35
 
-    def test_no_data(self, client):
+    def test_no_data_is_unavailable(self, client):
         client.get_hrv_data.return_value = None
-        result = api.get_hrv_data(client, "2024-01-15")
-        assert "error" in result
+        assert api.get_hrv_data(client, "2024-01-15") == NO_DATA_DAY
 
 
 class TestGetTrainingStatus:
@@ -103,10 +104,17 @@ class TestGetTrainingStatus:
         assert result["vo2_max"] == 52.5
         assert result["monthly_load_aerobic_low"] == 200
 
-    def test_no_data(self, client):
+    def test_no_data_is_unavailable(self, client):
         client.get_training_status.return_value = None
-        result = api.get_training_status(client, "2024-01-15")
-        assert "error" in result
+        assert api.get_training_status(client, "2024-01-15") == NO_DATA_DAY
+
+    def test_all_null_status_is_unavailable(self, client):
+        """A watch that computes no training status: Garmin answers an object of nulls."""
+        client.get_training_status.return_value = {
+            "userId": 1, "mostRecentVO2Max": None, "mostRecentTrainingLoadBalance": None,
+            "mostRecentTrainingStatus": None, "heatAltitudeAcclimationDTO": None,
+        }
+        assert api.get_training_status(client, "2024-01-15") == NO_DATA_DAY
 
 
 class TestGetProgressSummary:
@@ -134,10 +142,11 @@ class TestGetProgressSummary:
         assert result["entries"][0]["total_distance_meters"] == 50000.0
         assert result["total_activities"] == 10
 
-    def test_no_data(self, client):
+    def test_no_data_is_an_empty_list(self, client):
         client.get_progress_summary_between_dates.return_value = None
         result = api.get_progress_summary(client, "2024-01-01", "2024-01-15", "distance")
-        assert "error" in result
+        assert result["total_activities"] == 0
+        assert result["entries"] == []
 
 
 class TestGetRacePredictions:
@@ -146,10 +155,9 @@ class TestGetRacePredictions:
         result = api.get_race_predictions(client)
         assert "5K" in result
 
-    def test_no_data(self, client):
+    def test_no_data_is_unavailable(self, client):
         client.get_race_predictions.return_value = None
-        result = api.get_race_predictions(client)
-        assert "error" in result
+        assert api.get_race_predictions(client) == {"available": False, "reason": "no_data"}
 
 
 class TestGetGoals:
@@ -158,10 +166,9 @@ class TestGetGoals:
         result = api.get_goals(client, "active")
         assert isinstance(result, list)
 
-    def test_no_data(self, client):
+    def test_no_data_is_an_empty_list(self, client):
         client.get_goals.return_value = None
-        result = api.get_goals(client)
-        assert "error" in result
+        assert api.get_goals(client) == []
 
 
 class TestGetPersonalRecord:
