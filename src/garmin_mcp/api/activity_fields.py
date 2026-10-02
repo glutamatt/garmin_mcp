@@ -32,9 +32,27 @@ LAP = Source("lap", "activities splits")
 WEATHER = Source("weather", "activities get")
 
 
+# Output names before the registry (audit PR 2, 2026-10). `--fields` with one of them
+# is refused with the new name.
+_FORMER_NAMES = {
+    "sport": ("type",),
+    "parent_type_id": ("parent_type",),
+    "start_time": ("start_time_local",),
+    "duration_s": ("duration_seconds",),
+    "moving_duration_s": ("moving_duration_seconds",),
+    "elapsed_duration_s": ("elapsed_duration_seconds",),
+    "distance_m": ("distance_meters",),
+    "hr_zones_s": ("hr_zones_seconds",),
+    "calories_kcal": ("calories",),
+    "avg_cadence_spm": ("avg_cadence",),
+    "max_cadence_spm": ("max_cadence",),
+    "vo2_max": ("vo2max",),
+}
+
+
 def _field(name, unit, doc, *, list=None, detail=None, lap=None, convert=None, digits=None) -> Field:
     keys = {source: key for source, key in ((LIST, list), (DETAIL, detail), (LAP, lap)) if key is not None}
-    return Field(name, unit, doc, keys, convert, digits)
+    return Field(name, unit, doc, keys, convert, digits, _FORMER_NAMES.get(name, ()))
 
 
 def _moving_speed(item: dict) -> float | None:

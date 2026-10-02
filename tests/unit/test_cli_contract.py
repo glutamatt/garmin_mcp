@@ -247,7 +247,8 @@ class TestInvalidInput:
         result = _run(f"{command} --fields distance_meters", client)
         assert result["exit_code"] == 2
         assert result["stdout"] == ""
-        assert "Unknown fields" in result["stderr"] and "distance_m" in result["stderr"]
+        assert "Unknown fields" in result["stderr"]
+        assert "distance_meters (now distance_m)" in result["stderr"]
         getattr(client, method).assert_not_called()
 
 

@@ -102,6 +102,11 @@ class TestCheck:
         assert "Unknown fields for thing list: bogus, speed." in message
         assert "Fields: id, distance_m, pace_s_per_km, label, double" in message
 
+    def test_a_former_name_is_refused_with_the_new_one(self):
+        renamed = FieldSet(A, (Field("distance_m", "m", "Distance", {A: "dist"}, formerly=("distance_meters",)),))
+        with pytest.raises(InvalidInput, match=r"Unknown fields for thing list: distance_meters \(now distance_m\)\."):
+            renamed.check(["distance_meters"])
+
 
 class TestSelect:
     ANSWER = {"count": 2, "things": [
@@ -160,6 +165,12 @@ class TestActivityTable:
     def test_names_are_unique(self):
         names = [f.name for f in af.FIELDS]
         assert len(names) == len(set(names))
+
+    def test_former_names_belong_to_fields_and_are_not_current_names(self):
+        names = {f.name for f in af.FIELDS}
+        assert set(af._FORMER_NAMES) <= names
+        former = [old for olds in af._FORMER_NAMES.values() for old in olds]
+        assert not set(former) & names
 
     @pytest.mark.parametrize("field", ALL_ACTIVITY_FIELDS, ids=lambda f: f.name)
     def test_the_name_says_the_unit(self, field):

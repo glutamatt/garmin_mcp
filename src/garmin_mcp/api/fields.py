@@ -54,6 +54,7 @@ class Field:
     keys: Mapping[Source, Reader]
     convert: Callable[[Any], Any] | None = None
     digits: int | None = None  # rounding after `convert`; 0 gives an int
+    formerly: tuple[str, ...] = ()  # old output names: `--fields` with one says the new name
 
     def read(self, source: Source, raw: dict) -> Any:
         """The curated value of this field in `raw`, or None when Garmin has none."""
@@ -101,9 +102,17 @@ class FieldSet:
         return field.read(self.source, raw)
 
     def check(self, requested: list[str]) -> None:
-        """Refuse a `--fields` name the registry does not know (the data is not looked at)."""
+        """Refuse a `--fields` name the registry does not know (the data is not looked at).
+
+        An old name is refused too, with the new one: the caller fixes its call,
+        and the code that reads the answer cannot silently miss the field.
+        """
         known = {f.name for f in self.registry}
-        unknown = [name for name in requested if name not in known]
+        renamed = {old: f.name for f in self.registry for old in f.formerly}
+        unknown = [
+            f"{name} (now {renamed[name]})" if name in renamed else name
+            for name in requested if name not in known
+        ]
         if unknown:
             raise InvalidInput(
                 f"Unknown fields for {self.source.command}: {', '.join(unknown)}. "
