@@ -8,6 +8,9 @@
 
 import json
 import os
+import subprocess
+import sys
+import textwrap
 from unittest.mock import Mock, patch
 
 import pytest
@@ -165,6 +168,34 @@ class TestFailure:
         result = _run("history running --end not-a-date", Mock())
         assert result["exit_code"] == 1
         assert result["stderr"].startswith("Error: ValueError: ")
+
+    def test_library_logs_stay_out_of_the_command_stderr(self):
+        """The SDK logs a traceback on every HTTP error: it belongs in the server log.
+
+        Run in a fresh process like the server (`create_app()` first): under pytest,
+        pytest's own log handler hides the leak.
+        """
+        script = textwrap.dedent("""
+            import json, logging
+            from unittest.mock import Mock, patch
+            from garmin_mcp.server import create_app
+            from garmin_mcp.cli import execute
+
+            create_app()
+            client = Mock()
+            client.garth.dumps.return_value = "fake"  # the token did not change
+            def get_activity(activity_id):
+                logging.getLogger("garminconnect").exception("API call failed")
+                raise RuntimeError("404")
+            client.get_activity.side_effect = get_activity
+            with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
+                print(json.dumps(execute("activities get 1", "fake")))
+        """)
+        process = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
+        result = json.loads(process.stdout.strip().splitlines()[-1])
+        assert result["exit_code"] == 1
+        assert result["stderr"] == "Error: RuntimeError: 404\n"
+        assert "API call failed" in process.stderr  # the server log
 
     def test_usage_error_is_not_copied_to_stdout(self):
         result = _run("activities list --bogus", Mock())
