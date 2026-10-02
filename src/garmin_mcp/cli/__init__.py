@@ -11,6 +11,7 @@ Usage:
 
 import json
 import os
+import re
 from datetime import date as _date, timedelta as _timedelta
 
 import click
@@ -23,6 +24,7 @@ from garmin_mcp.api.activity_fields import DETAIL_FIELDS, LAP_FIELDS, LIST_EFFOR
 from garmin_mcp.api.capabilities import missing_reason
 from garmin_mcp.api.contract import GarminError, InvalidInput, as_garmin_error, is_unavailable
 from garmin_mcp.api.fields import FieldSet
+from garmin_mcp.api.workout_format import FORMAT_HELP as WORKOUT_FORMAT_HELP
 from garmin_mcp.client_factory import create_client_from_tokens
 from garmin_mcp.cli.output import (
     filter_fields,
@@ -1256,6 +1258,27 @@ def workouts(ctx):
     pass
 
 
+_WORKOUT_CREATE_HELP = """Create a workout (and optionally schedule it).
+
+\b
+The workout, in the readable format, inline or in a file:
+  garmin workouts create --json '{"name": "Easy 30", "sport": "running", "steps": [{"run": "30:00"}]}'
+  garmin workouts create --input workout.json --date 2026-03-20
+--dry-run: the steps as Garmin will store them (paces read back from m/s) and
+the estimated duration and distance; nothing is sent.
+
+"""
+
+_WORKOUT_UPDATE_HELP = """Replace a workout's definition (readable format, as `workouts get` gives it).
+
+\b
+  garmin workouts get 123 --output w.json   then edit w.json
+  garmin workouts update 123 --input w.json
+--dry-run: the steps as Garmin will store them; nothing is sent.
+
+"""
+
+
 @workouts.command("list")
 @click.pass_context
 def workouts_list(ctx):
@@ -1267,12 +1290,20 @@ def workouts_list(ctx):
 
 @workouts.command("get")
 @click.argument("workout_id", type=int)
+@click.option("--raw", is_flag=True, default=False,
+              help="Garmin's native JSON instead (read only: create and update take the readable format)")
 @click.pass_context
-def workouts_get(ctx, workout_id):
-    """Get detailed workout definition."""
+def workouts_get(ctx, workout_id, raw):
+    """A workout in the readable format: edit it, give it to create or update.
+
+    \b
+    "warnings": what the readable format cannot say (the step has "not_readable",
+    and a create or update with it is refused), and the pace or heart-rate bounds
+    stored in the reverse of Garmin Connect's order (an update fixes them).
+    """
     from garmin_mcp.api import workouts as api
 
-    _run(ctx, lambda: api.get_workout_by_id(_client(ctx), workout_id))
+    _run(ctx, lambda: api.get_workout_by_id(_client(ctx), workout_id, raw=raw))
 
 
 @workouts.command("scheduled")
@@ -1286,50 +1317,32 @@ def workouts_scheduled(ctx, start_date, end_date):
     _run(ctx, lambda: api.get_scheduled_workouts(_client(ctx), start_date, end_date))
 
 
-@workouts.command("create", cls=MutationCommand)
-@click.option("--json", "workout_json", default=None, help="Workout JSON definition (inline string)")
-@click.option("--input", "input_file", default=None, help="Read workout JSON from file (sandboxed)")
+@workouts.command("create", cls=MutationCommand, help=_WORKOUT_CREATE_HELP + WORKOUT_FORMAT_HELP)
+@click.option("--json", "workout_json", default=None, help="The workout, readable format (inline)")
+@click.option("--input", "input_file", default=None, help="Read the workout from a JSON file (sandboxed)")
 @click.option("--date", default=None, help="Schedule date YYYY-MM-DD (optional)")
 @click.pass_context
 def workouts_create(ctx, workout_json, input_file, date):
-    """Create a workout (and optionally schedule it).
-
-    \b
-    Provide workout data via --json (inline) or --input (file):
-      garmin workouts create --json '{"workoutName":"Easy 5K",...}'
-      garmin workouts create --input workout.json
-      garmin workouts create --input workout.json --date 2026-03-20
-    """
     from garmin_mcp.api import workouts as api
 
     workout_data = _read_workout_input(ctx, workout_json, input_file)
-    warnings = api.validate_workout_keys(workout_data)
-    preview = {"action": "create_workout", "name": workout_data.get("workoutName"), "date": date}
-    if warnings:
-        preview["warnings"] = warnings
+    # The whole pipeline, dry-run or not: an invalid workout is exit 2 before any Garmin call.
+    preview = {"action": "create_workout", **({"date": date} if date else {}),
+               **_call(lambda: api.preview_workout(workout_data))}
     _run(ctx, lambda: api.create_workout(_client(ctx), workout_data, date), dry_run_preview=preview)
 
 
-@workouts.command("update", cls=MutationCommand)
+@workouts.command("update", cls=MutationCommand, help=_WORKOUT_UPDATE_HELP + WORKOUT_FORMAT_HELP)
 @click.argument("workout_id", type=int)
-@click.option("--json", "workout_json", default=None, help="New workout JSON definition (inline string)")
-@click.option("--input", "input_file", default=None, help="Read workout JSON from file (sandboxed)")
+@click.option("--json", "workout_json", default=None, help="The new workout, readable format (inline)")
+@click.option("--input", "input_file", default=None, help="Read the workout from a JSON file (sandboxed)")
 @click.pass_context
 def workouts_update(ctx, workout_id, workout_json, input_file):
-    """Replace an existing workout's definition.
-
-    \b
-    Provide workout data via --json (inline) or --input (file):
-      garmin workouts update 123 --json '{"workoutName":"Updated",...}'
-      garmin workouts update 123 --input workout.json
-    """
     from garmin_mcp.api import workouts as api
 
     workout_data = _read_workout_input(ctx, workout_json, input_file)
-    warnings = api.validate_workout_keys(workout_data)
-    preview = {"action": "update_workout", "workout_id": workout_id, "name": workout_data.get("workoutName")}
-    if warnings:
-        preview["warnings"] = warnings
+    preview = {"action": "update_workout", "workout_id": workout_id,
+               **_call(lambda: api.preview_workout(workout_data))}
     _run(ctx, lambda: api.update_workout(_client(ctx), workout_id, workout_data), dry_run_preview=preview)
 
 
@@ -1684,18 +1697,63 @@ def _curate_events(events_data):
 
 
 def _validate_command(command: str) -> str:
-    """Validate and sanitize command input. Reject control chars and shell tricks."""
+    """Validate command input: not empty, no control character.
+
+    There is no shell: the command is split by `shlex` and parsed by Click, so
+    `<`, `>`, `|` or `;` are plain characters (a note "FC < 160" is fine).
+    """
     if not command or not command.strip():
         raise ValueError("Empty command")
-    # Reject control characters (below ASCII 0x20 except space, tab, newline)
+    # Reject control characters (below ASCII 0x20 except tab and newline)
     for ch in command:
-        if ord(ch) < 0x20 and ch not in (" ", "\t", "\n"):
+        if ord(ch) < 0x20 and ch not in ("\t", "\n"):
             raise ValueError(f"Control character U+{ord(ch):04X} rejected")
-    # Reject shell metacharacters — this is a CLI, not a shell
-    for dangerous in (";", "&&", "||", "|", "`", "$(", "${", ">", "<"):
-        if dangerous in command:
-            raise ValueError(f"Shell metacharacter '{dangerous}' rejected")
     return command.strip()
+
+
+def _json_end(text: str, start: int) -> int:
+    """Index just after the JSON object or array that starts at `text[start]`, or 0."""
+    depth = 0
+    in_string = escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+        elif ch == "\\":
+            escape = True
+        elif ch == '"':
+            in_string = not in_string
+        elif in_string:
+            continue
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return 0
+
+
+def _extract_json_option(command: str) -> tuple[str, str | None]:
+    """The command without its `--json` value, and that value.
+
+    Taken out before `shlex.split`, which would strip the JSON's quotes and choke
+    on an apostrophe in a French note ("l'allure"). The value is a JSON object or
+    array, bare or in single quotes; anything else is left to `shlex`.
+    """
+    match = re.search(r"--json\s+", command)
+    if not match:
+        return command, None
+    start = match.end()
+    quoted = command[start:start + 1] == "'"
+    json_start = start + 1 if quoted else start
+    if command[json_start:json_start + 1] not in ("{", "["):
+        return command, None
+    end = _json_end(command, json_start)
+    if not end or (quoted and command[end:end + 1] != "'"):
+        return command, None
+    value = command[json_start:end]
+    return command[:match.start()] + command[end + 1 if quoted else end:], value
 
 
 # Global flags that belong to the root garmin group.
@@ -1740,8 +1798,8 @@ def execute(command: str, token: str, display_name: str = None, tmp_dir: str = N
 
     Used by the /cli HTTP endpoint and tests.
 
-    Input is validated: control characters and shell metacharacters are rejected.
-    Commands are parsed by Click, not by a shell — no shell expansion occurs.
+    Input is validated: control characters are rejected. Commands are split by
+    shlex and parsed by Click, not by a shell — no shell expansion occurs.
     Global flags (--fields, --format, --output, --dry-run) are hoisted to the front
     regardless of where the AI places them in the command.
 
@@ -1779,45 +1837,7 @@ def execute(command: str, token: str, display_name: str = None, tmp_dir: str = N
     except Exception:
         client = None
 
-    # Extract --json value BEFORE shlex.split — shlex strips quotes from JSON,
-    # turning {"key":"val"} into {key:val} which is invalid.
-    json_value = None
-    import re
-    json_match = re.search(r'--json\s+(.+)', command)
-    if json_match:
-        raw_json = json_match.group(1).strip()
-        # Find the JSON object boundaries (handle nested braces)
-        if raw_json.startswith('{') or raw_json.startswith('['):
-            depth = 0
-            in_string = False
-            escape = False
-            end = 0
-            for ci, ch in enumerate(raw_json):
-                if escape:
-                    escape = False
-                    continue
-                if ch == '\\':
-                    escape = True
-                    continue
-                if ch == '"':
-                    in_string = not in_string
-                    continue
-                if in_string:
-                    continue
-                if ch in ('{', '['):
-                    depth += 1
-                elif ch in ('}', ']'):
-                    depth -= 1
-                    if depth == 0:
-                        end = ci + 1
-                        break
-            if end > 0:
-                json_value = raw_json[:end]
-                # Remove --json <value> from command before shlex.split
-                command = command[:json_match.start()] + command[json_match.start() + len('--json ') + len(raw_json[:end]):]
-        elif raw_json.startswith("'") or raw_json.startswith('"'):
-            # Quoted JSON — let shlex handle it
-            pass
+    command, json_value = _extract_json_option(command)
 
     cmd_args = shlex.split(command)
     cmd_args = _hoist_global_flags(cmd_args)

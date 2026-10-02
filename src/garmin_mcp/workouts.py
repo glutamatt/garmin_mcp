@@ -62,21 +62,13 @@ def register_tools(app):
         If date is provided: creates + schedules in one atomic step (replaces old upload + schedule flow).
         If no date: creates in library only — use schedule_workout later to add to calendar.
 
-        Accepts simplified format: {workoutName, sport: "running", steps: [{stepOrder, stepType, endCondition, endConditionValue, ...}]}
-
-        REPEAT GROUPS (use for intervals instead of duplicating steps):
-        {stepOrder: 2, stepType: "repeat", numberOfIterations: 6, workoutSteps: [
-          {stepOrder: 1, stepType: "interval", endCondition: "distance", endConditionValue: 800},
-          {stepOrder: 2, stepType: "recovery", endCondition: "distance", endConditionValue: 200}
-        ]}
-
-        Step types: warmup, cooldown, interval, recovery, rest, repeat, other.
-        End conditions: time (seconds), distance (meters), lap.button.
-        Target types: no.target, heart.rate.zone (zoneNumber 1-5), pace.zone (targetValueOne=faster m/s, targetValueTwo=slower m/s), power.zone (zoneNumber 1-7).
-        Per-step note: optional `description` field (string) — Garmin Connect "note textuel", shown on the watch during that step. Use for intent ("Z1 stricte"), sensory cue ("doit causer naturellement"), or pacing reminder. Keep short.
+        workout_data is the readable format of `api/workout_format.py` (the one
+        get_workout_by_id gives): {name, sport, description, steps}, a step like
+        {"run": "40:00", "pace": "5:00-5:30", "note": "..."} or
+        {"repeat": 6, "steps": [...]}.
 
         Args:
-            workout_data: Workout structure (simplified or full Garmin format).
+            workout_data: The workout, readable format.
             date: Optional schedule date in YYYY-MM-DD format.
         """
         try:
@@ -88,11 +80,11 @@ def register_tools(app):
     async def update_workout(workout_id: int, workout_data: dict, ctx: Context) -> str:
         """Replace an existing workout's definition (full replacement, not partial).
 
-        Provide the complete workout structure. See create_workout for format details.
+        Provide the complete workout, readable format. See create_workout.
 
         Args:
             workout_id: ID of the workout to update (from get_workouts).
-            workout_data: Complete workout structure.
+            workout_data: The complete workout, readable format.
         """
         try:
             return json.dumps(api.update_workout(get_client(ctx), workout_id, workout_data), indent=2)

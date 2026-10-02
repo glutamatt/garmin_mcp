@@ -16,31 +16,13 @@ from tests.functional.conftest import invoke, invoke_json
 
 
 SIMPLE_WORKOUT = json.dumps({
-    "workoutName": "CLI Test Workout",
+    "name": "CLI Test Workout",
     "description": "Created by functional test — safe to delete",
-    "sportType": "running",
+    "sport": "running",
     "steps": [
-        {
-            "stepOrder": 1,
-            "stepType": "warmup",
-            "endCondition": "time",
-            "endConditionValue": 600,
-        },
-        {
-            "stepOrder": 2,
-            "stepType": "interval",
-            "endCondition": "distance",
-            "endConditionValue": 1000,
-            "targetType": "pace.zone",
-            "targetValueOne": 3.33,
-            "targetValueTwo": 3.03,
-        },
-        {
-            "stepOrder": 3,
-            "stepType": "cooldown",
-            "endCondition": "time",
-            "endConditionValue": 300,
-        },
+        {"warmup": "10:00"},
+        {"run": "1km", "pace": "5:00-5:30"},
+        {"cooldown": "5:00"},
     ],
 })
 
@@ -67,6 +49,9 @@ class TestWorkoutCRUD:
             detail = invoke_json(cli, dev_token, "workouts", "get", str(workout_id))
             assert detail.get("id") == workout_id
             assert detail.get("name") == "CLI Test Workout"
+            # The readable format comes back as written.
+            assert detail["steps"] == json.loads(SIMPLE_WORKOUT)["steps"]
+            assert detail["estimated_duration_s"] == 600 + 315 + 300
 
         finally:
             # 4. Delete (always cleanup)
