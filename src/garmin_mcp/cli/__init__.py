@@ -125,12 +125,15 @@ def _describe_shape(data) -> str:
     return str(type(data).__name__)
 
 
-def _out(ctx, data, field_set: FieldSet | None = None):
+def _out(ctx, data, field_set: FieldSet | None = None, *, to_output: bool = True):
     """Apply field filtering, format, and output.
 
     Only answers get here: a failure is a CLI error (`_call`), so `--fields`
     and `--output` never apply to it. `--fields` does not apply to an
     unavailable answer either: it would remove the reason.
+
+    `to_output=False`: `--output` named the command's data file (see
+    `_run_to_file`), so the answer goes to stdout.
 
     A command with a field registry (`field_set`) selects its fields with it
     (names already checked by `_run`, empty ones explained in `empty_fields`,
@@ -139,7 +142,7 @@ def _out(ctx, data, field_set: FieldSet | None = None):
     """
     fields = ctx.obj.get("fields")
     fmt = ctx.obj.get("format", "json")
-    output_path = ctx.obj.get("output")
+    output_path = ctx.obj.get("output") if to_output else None
 
     if fields and not is_unavailable(data):
         if field_set is not None:
@@ -200,6 +203,23 @@ def _run(ctx, fn, *, dry_run_preview: dict | None = None, field_set: FieldSet | 
     _out(ctx, _call(fn), field_set)
 
 
+def _data_path(ctx, default_name: str) -> str:
+    """Where a command writes its data file: `--output`, else `default_name`,
+    in the session sandbox."""
+    return _sanitize_path(ctx.obj.get("output") or default_name, _session_sandbox(ctx))
+
+
+def _run_to_file(ctx, default_name: str, fn):
+    """`_run` for a command that writes a data file (CSV, TSV).
+
+    `fn(path)` writes the file and answers with a short description of it.
+    `--output` names the data file, never this answer: the answer goes to
+    stdout.
+    """
+    path = _data_path(ctx, default_name)
+    _out(ctx, _call(lambda: fn(path)), to_output=False)
+
+
 # ── Main group ───────────────────────────────────────────────────────────────
 
 
@@ -212,7 +232,7 @@ def _run(ctx, fn, *, dry_run_preview: dict | None = None, field_set: FieldSet | 
     help="Output format",
 )
 @click.option("--fields", default=None, help="Comma-separated fields to include")
-@click.option("--output", "output_path", default=None, help="Write to file (auto-sandboxed to session dir)")
+@click.option("--output", "output_path", default=None, help="Write to file (auto-sandboxed to session dir); a command that writes a CSV/TSV writes it there")
 @click.option("--dry-run", is_flag=True, default=False, help="Validate without calling API (mutations only)")
 @click.option(
     "--token",
@@ -245,7 +265,7 @@ def garmin(ctx, fmt, fields, output_path, dry_run, token, display_name, tmp_dir)
                        is named in "empty_fields", with the reason: no_data,
                        not_supported_by_device, or only_in: <commands>
       --format table   Human-readable table instead of JSON
-      --output PATH    Write to file (auto-sandboxed)
+      --output PATH    Write to file (auto-sandboxed); a CSV/TSV command writes its data there
       --dry-run        Validate mutation without calling API
 
     \b
@@ -500,13 +520,16 @@ def activities_download(ctx, activity_id):
     Load skill 'fit-analysis' for analysis patterns.
 
     \b
+    File: <sandbox>/activity_<id>.csv, or the global --output name.
+
+    \b
     Examples:
         activities download 12345
     """
     from garmin_mcp.api import activities as api
 
-    _run(ctx, lambda: api.download_activity(
-        _client(ctx), activity_id, "fit", _session_sandbox(ctx),
+    _run_to_file(ctx, f"activity_{activity_id}.csv", lambda path: api.download_activity(
+        _client(ctx), activity_id, path,
     ))
 
 
@@ -567,8 +590,11 @@ def geographic_activity(ctx, activity_id):
     Pipeline (transparent to the agent):
       1. download the activity's FIT from Garmin Connect (in-memory)
       2. POST as multipart to geo-runner /api/analyze
-      3. write the TSV to <sandbox>/geographic_<id>.tsv
+      3. write the TSV to <sandbox>/geographic_<id>.tsv (or to --output)
       4. return metadata about the file
+
+    \b
+    A sleeping geo-runner is woken up and tried again for about 2 min.
 
     \b
     Examples:
@@ -576,8 +602,8 @@ def geographic_activity(ctx, activity_id):
     """
     from garmin_mcp.api import geographic as api
 
-    _run(ctx, lambda: api.analyze_activity(
-        _client(ctx), activity_id, _session_sandbox(ctx),
+    _run_to_file(ctx, f"geographic_{activity_id}.tsv", lambda path: api.analyze_activity(
+        _client(ctx), activity_id, path,
     ))
 
 
@@ -609,14 +635,8 @@ def history(ctx):
     help="Max activities ingested per call. Convergence: repeat until "
     "is_caught_up=true.",
 )
-@click.option(
-    "--geo-runner-url",
-    envvar="GEO_RUNNER_URL",
-    default=None,
-    help="Override geo-runner base URL (default: production HF Space).",
-)
 @click.pass_context
-def history_update(ctx, limit, geo_runner_url):
+def history_update(ctx, limit):
     """Index new runs into the per-user geographic DB.
 
     \b
@@ -635,10 +655,7 @@ def history_update(ctx, limit, geo_runner_url):
     """
     from garmin_mcp.api import geo_history as api
 
-    _run(ctx, lambda: api.update(
-        _client(ctx),
-        geo_runner_url=geo_runner_url, limit=limit,
-    ))
+    _run(ctx, lambda: api.update(_client(ctx), limit=limit))
 
 
 @history.command("query")
@@ -677,15 +694,9 @@ def history_update(ctx, limit, geo_runner_url):
     "`(chemin piéton) / Parc X` — features without a real OSM name. "
     "Default drops them : useful on the map UI, noise in narrative.",
 )
-@click.option(
-    "--geo-runner-url",
-    envvar="GEO_RUNNER_URL",
-    default=None,
-    help="Override geo-runner base URL.",
-)
 @click.pass_context
 def history_query(ctx, kind, since, until, exclusive, entity_types,
-                  include_anonymous, geo_runner_url):
+                  include_anonymous):
     """Run a query against the per-user geographic DB.
 
     \b
@@ -696,8 +707,7 @@ def history_query(ctx, kind, since, until, exclusive, entity_types,
     Always writes a TSV to the session sandbox (NO geometry — same shape
     as `activities download`). Filename encodes ALL filter params so
     successive queries with different params NEVER overwrite each other
-    silently. (To redirect the JSON response to a file, use the global
-    `garmin --output PATH ...`.)
+    silently. The global `--output NAME` names the TSV instead.
 
     \b
     Response = tiny metadata dict :
@@ -739,12 +749,13 @@ def history_query(ctx, kind, since, until, exclusive, entity_types,
             t.strip() for t in entity_types.split(",") if t.strip()
         ]
 
-    _run(ctx, lambda: api.query_to_tsv(
-        _client(ctx), kind, params=params,
-        sandbox=_session_sandbox(ctx),
-        geo_runner_url=geo_runner_url,
-        include_anonymous=include_anonymous,
-    ))
+    _run_to_file(
+        ctx, api.query_filename(kind, params, include_anonymous),
+        lambda path: api.query_to_tsv(
+            _client(ctx), kind, path, params=params,
+            include_anonymous=include_anonymous,
+        ),
+    )
 
 
 # ── Health ───────────────────────────────────────────────────────────────────
@@ -1014,8 +1025,7 @@ def _write_history_csv(
     default_name = (
         f"{default_name_base}_{agg}.csv" if agg else f"{default_name_base}.csv"
     )
-    output_name = ctx.obj.get("output") or default_name
-    safe_path = _sanitize_path(output_name, sandbox)
+    safe_path = _data_path(ctx, default_name)
     os.makedirs(os.path.dirname(safe_path) or sandbox, exist_ok=True)
     meta = write_csv_file(safe_path, rows)
     rel = os.path.relpath(safe_path, sandbox)

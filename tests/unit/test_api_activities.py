@@ -339,7 +339,7 @@ class TestGetActivityHrInTimezones:
 class TestDownloadActivity:
     def test_unsupported_format_is_invalid_input(self, client, tmp_path):
         with pytest.raises(InvalidInput, match="Unsupported format"):
-            api.download_activity(client, 1, "pdf", str(tmp_path))
+            api.download_activity(client, 1, str(tmp_path / "a.pdf"), "pdf")
         client.download_activity.assert_not_called()
 
     @staticmethod
@@ -353,7 +353,7 @@ class TestDownloadActivity:
     def test_zip_without_fit_is_unavailable(self, client, tmp_path):
         client.download_activity.return_value = self._zip(["activity.txt"])
         with pytest.raises(Unavailable, match="no .fit file"):
-            api.download_activity(client, 1, "fit", str(tmp_path))
+            api.download_activity(client, 1, str(tmp_path / "a.csv"))
 
     def test_fit_without_samples_is_an_empty_csv(self, client, tmp_path):
         """A manual activity has no record: an empty file and `rows: 0`, not an error."""
@@ -361,7 +361,8 @@ class TestDownloadActivity:
         fit = Mock()
         fit.get_messages.return_value = []
         with patch("fitparse.FitFile", return_value=fit):
-            result = api.download_activity(client, 1, "fit", str(tmp_path))
+            result = api.download_activity(client, 1, str(tmp_path / "out" / "run.csv"))
+        assert result["path"] == str(tmp_path / "out" / "run.csv")
         assert result["rows"] == 0
         assert result["columns"] == []
         assert open(result["path"]).read() == ""

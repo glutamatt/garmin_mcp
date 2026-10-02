@@ -6,6 +6,7 @@ Output contract (empty answers, failures): see `api/contract.py`.
 Fields of `list`, `get` and `splits` (names, units, raw keys): see `api/activity_fields.py`.
 """
 
+import io
 import logging
 import os
 import zipfile
@@ -128,8 +129,8 @@ def get_activity_types(client: Garmin) -> dict:
     }
 
 
-def download_activity(client: Garmin, activity_id: int, fmt: str = "fit", sandbox: str = "/tmp/garmin") -> dict:
-    """Download activity and preprocess to pandas-ready CSV.
+def download_activity(client: Garmin, activity_id: int, path: str, fmt: str = "fit") -> dict:
+    """Download activity and preprocess to pandas-ready CSV, written at `path`.
 
     Downloads ORIGINAL FIT (zip), extracts, parses second-by-second records,
     fixes all gotchas (cadence doubling, enhanced fields, semicircles→degrees,
@@ -148,41 +149,39 @@ def download_activity(client: Garmin, activity_id: int, fmt: str = "fit", sandbo
     if fmt not in format_map:
         raise InvalidInput(f"Unsupported format '{fmt}'. Use: fit, gpx, tcx")
 
+    if fmt == "fit":
+        return _fit_to_csv(download_fit(client, activity_id), activity_id, path)
+
     content = client.download_activity(str(activity_id), dl_fmt=format_map[fmt])
-    os.makedirs(sandbox, exist_ok=True)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(content)
+    size_kb = round(os.path.getsize(path) / 1024, 1)
+    return {"activity_id": activity_id, "format": fmt, "path": path, "size_kb": size_kb}
 
-    if fmt != "fit":
-        file_path = os.path.join(sandbox, f"activity_{activity_id}.{fmt}")
-        with open(file_path, "wb") as f:
-            f.write(content)
-        size_kb = round(os.path.getsize(file_path) / 1024, 1)
-        return {"activity_id": activity_id, "format": fmt, "path": file_path, "size_kb": size_kb}
 
-    # ── FIT → CSV preprocessing ──────────────────────────────────────────
-    return _fit_to_csv(content, activity_id, sandbox)
+def download_fit(client: Garmin, activity_id: int) -> bytes:
+    """The activity's original FIT file, taken out of Garmin's zip. In memory only."""
+    zip_bytes = client.download_activity(
+        str(activity_id), dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL,
+    )
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            fit_names = [n for n in zf.namelist() if n.endswith(".fit")]
+            if not fit_names:
+                raise Unavailable(f"Garmin's download of activity {activity_id} has no .fit file")
+            return zf.read(fit_names[0])
+    except zipfile.BadZipFile as e:
+        raise Unavailable(f"Garmin's download of activity {activity_id} is not a valid zip: {e}")
 
 
 _SEMICIRCLES_TO_DEG = 180.0 / (2 ** 31)
 
 
-def _fit_to_csv(zip_bytes: bytes, activity_id: int, sandbox: str) -> dict:
-    """Extract FIT from zip, parse records, write clean CSV."""
+def _fit_to_csv(fit_bytes: bytes, activity_id: int, csv_path: str) -> dict:
+    """Parse the FIT records, write a clean CSV at `csv_path`."""
     import csv
-    import io
     from fitparse import FitFile
-
-    # Extract .fit from zip
-    zip_path = os.path.join(sandbox, f"_tmp_{activity_id}.zip")
-    with open(zip_path, "wb") as f:
-        f.write(zip_bytes)
-    try:
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            fit_names = [n for n in zf.namelist() if n.endswith(".fit")]
-            if not fit_names:
-                raise Unavailable(f"Garmin's download of activity {activity_id} has no .fit file")
-            fit_bytes = zf.read(fit_names[0])
-    finally:
-        os.remove(zip_path)
 
     # Parse FIT
     fit = FitFile(io.BytesIO(fit_bytes))
@@ -269,7 +268,7 @@ def _fit_to_csv(zip_bytes: bytes, activity_id: int, sandbox: str) -> dict:
                 del r[k]
 
     # Write CSV
-    csv_path = os.path.join(sandbox, f"activity_{activity_id}.csv")
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
     columns = [k for k in all_keys if k not in drop_keys]
     with open(csv_path, "w", newline="") as f:
         if columns:
