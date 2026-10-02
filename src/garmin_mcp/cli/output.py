@@ -2,7 +2,7 @@
 
 import csv
 import json
-from garmin_mcp.utils import format_duration, format_distance, format_pace
+from garmin_mcp.utils import format_duration, format_distance, format_pace, format_pace_s_per_km
 
 
 def _has_signal(values) -> bool:
@@ -181,11 +181,15 @@ def _format_value(key: str, value) -> str:
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False)
 
-    if "duration" in key and "seconds" in key and isinstance(value, (int, float)):
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return str(value)
+    if "duration" in key and (key.endswith("_s") or "seconds" in key):
         return format_duration(value)
-    if "distance" in key and "meters" in key and isinstance(value, (int, float)):
+    if "distance" in key and (key.endswith("_m") or "meters" in key):
         return format_distance(value)
-    if "speed" in key and "mps" in key and isinstance(value, (int, float)):
+    if key.endswith("_s_per_km"):
+        return format_pace_s_per_km(value)
+    if "speed" in key and "mps" in key:
         p = format_pace(value)
         return p if p else str(value)
 

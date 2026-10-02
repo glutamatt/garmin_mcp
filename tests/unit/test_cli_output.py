@@ -132,6 +132,15 @@ class TestFormatOutput:
         result = format_output(data, "table")
         assert "1h01m01s" in result
 
+    def test_table_formats_the_registry_units(self):
+        """Activity fields: `_s` durations, `_m` distances, `_s_per_km` paces."""
+        data = {"moving_duration_s": 1801, "distance_m": 4516, "gap_s_per_km": 394, "elevation_gain_m": 46}
+        result = format_output(data, "table")
+        assert "30m01s" in result
+        assert "4.5 km" in result
+        assert "6:34 /km" in result
+        assert "46" in result and "46 m" not in result  # only distances are shown in km/m
+
     def test_table_empty_list(self):
         data = {"count": 0, "activities": []}
         result = format_output(data, "table")

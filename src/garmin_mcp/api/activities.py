@@ -3,14 +3,18 @@ Activities API — curated activity data.
 
 Pure functions: (Garmin client, params) → dict.
 Output contract (empty answers, failures): see `api/contract.py`.
+Fields of `list`, `get` and `splits` (names, units, raw keys): see `api/activity_fields.py`.
 """
 
 import logging
 import os
 import zipfile
+from datetime import timedelta
 
 from garminconnect import Garmin
+from garmin_mcp.api.activity_fields import DETAIL_FIELDS, LAP_FIELDS, LIST_FIELDS
 from garmin_mcp.api.contract import InvalidInput, NotFound, Unavailable
+from garmin_mcp.api.fields import parse_time, shift_time
 from garmin_mcp.utils import clean_nones
 
 logger = logging.getLogger(__name__)
@@ -36,7 +40,7 @@ def get_activities(
 
     if start_date and end_date:
         raw = client.get_activities_by_date(start_date, end_date, activity_type) or []
-        activities = [_curate_activity_summary(a) for a in raw]
+        activities = [LIST_FIELDS.curate(a) for a in raw]
         if include_hr_zones:
             _enrich_hr_zones(client, activities, raw)
         if activities:
@@ -48,7 +52,7 @@ def get_activities(
         }
     else:
         raw = client.get_activities(start, limit) or []
-        activities = [_curate_activity_summary(a) for a in raw]
+        activities = [LIST_FIELDS.curate(a) for a in raw]
         if include_hr_zones:
             _enrich_hr_zones(client, activities, raw)
         # For pagination: derive date range from results for GraphQL enrichment
@@ -65,104 +69,29 @@ def get_activities(
 
 
 def get_activity(client: Garmin, activity_id: int) -> dict:
-    """Curated single activity detail: timing, distance, HR, cadence, power, training effect."""
+    """One activity: the fields of `DETAIL_FIELDS`, with the weather at the start."""
     raw = client.get_activity(activity_id)
     if not raw:
         raise NotFound(f"No activity {activity_id}")
-
-    summary = raw.get("summaryDTO", {})
-    activity_type = raw.get("activityTypeDTO", {})
-    metadata = raw.get("metadataDTO", {})
-
-    result = clean_nones({
-        "id": raw.get("activityId"),
-        "name": raw.get("activityName"),
-        "type": activity_type.get("typeKey"),
-        "parent_type": activity_type.get("parentTypeId"),
-        # Timing
-        "start_time_local": summary.get("startTimeLocal"),
-        "start_time_gmt": summary.get("startTimeGMT"),
-        "duration_seconds": summary.get("duration"),
-        "moving_duration_seconds": summary.get("movingDuration"),
-        "elapsed_duration_seconds": summary.get("elapsedDuration"),
-        # Distance & speed
-        "distance_meters": summary.get("distance"),
-        "avg_speed_mps": summary.get("averageSpeed"),
-        "max_speed_mps": summary.get("maxSpeed"),
-        # Heart rate
-        "avg_hr_bpm": summary.get("averageHR"),
-        "max_hr_bpm": summary.get("maxHR"),
-        "min_hr_bpm": summary.get("minHR"),
-        # Calories
-        "calories": summary.get("calories"),
-        # Running metrics
-        "avg_cadence": summary.get("averageRunCadence"),
-        "max_cadence": summary.get("maxRunCadence"),
-        "avg_stride_length_cm": summary.get("strideLength"),
-        "steps": summary.get("steps"),
-        # Power
-        "avg_power_watts": summary.get("averagePower"),
-        "max_power_watts": summary.get("maxPower"),
-        "normalized_power_watts": summary.get("normalizedPower"),
-        # Training effect
-        "training_effect": summary.get("trainingEffect"),
-        "anaerobic_training_effect": summary.get("anaerobicTrainingEffect"),
-        "training_effect_label": summary.get("trainingEffectLabel"),
-        "training_load": summary.get("activityTrainingLoad"),
-        # Self-evaluation (athlete post-workout input) — Garmin 0-100 → Foster CR10 0-10
-        "perceived_effort": round(summary["directWorkoutRpe"] / 10, 1) if summary.get("directWorkoutRpe") is not None else None,
-        "workout_feel": summary.get("directWorkoutFeel"),
-        # Recovery
-        "recovery_hr_bpm": summary.get("recoveryHeartRate"),
-        "body_battery_impact": summary.get("differenceBodyBattery"),
-        # Weather (folded into detail) — Garmin returns Fahrenheit, convert to Celsius
-        "temperature_celsius": round((summary.get("startingTemperatureInFahrenheit", 32) - 32) * 5 / 9, 1) if summary.get("startingTemperatureInFahrenheit") is not None else None,
-        # Metadata
-        "lap_count": metadata.get("lapCount"),
-        "has_splits": metadata.get("hasSplits"),
-    })
-
-    # Try to get weather inline
-    try:
-        weather = client.get_activity_weather(activity_id)
-        if weather:
-            result["weather"] = clean_nones({
-                "temperature_celsius": round((weather["temp"] - 32) * 5 / 9, 1) if weather.get("temp") is not None else None,
-                "apparent_temperature_celsius": round((weather["apparentTemp"] - 32) * 5 / 9, 1) if weather.get("apparentTemp") is not None else None,
-                "humidity_percent": weather.get("relativeHumidity"),
-                "wind_speed_mps": weather.get("windSpeed"),
-                "weather_type": (weather.get("weatherTypeDTO") or {}).get("weatherTypeName"),
-            })
-    except Exception:
-        pass  # Weather is optional, don't fail the whole response
-
-    return result
+    return DETAIL_FIELDS.curate({**raw, "weather": _activity_weather(client, activity_id)})
 
 
 def get_activity_splits(client: Garmin, activity_id: int) -> dict:
-    """Per-lap splits: distance, duration, pace, HR, cadence, power."""
+    """Per-lap splits: the fields of `LAP_FIELDS`.
+
+    Garmin's laps only have a GMT start. The activity detail gives the offset to
+    local time, so a lap's `start_time` is local, as in `list` and `get`.
+    """
     raw = client.get_activity_splits(activity_id) or {}
     laps = raw.get("lapDTOs") or []
+    if laps:
+        offset = _local_time_offset(client.get_activity(activity_id))
+        if offset is not None:
+            laps = [_with_local_start(lap, offset) for lap in laps]
     return {
         "activity_id": raw.get("activityId", activity_id),
         "lap_count": len(laps),
-        "laps": [
-            clean_nones({
-                "lap_number": lap.get("lapIndex"),
-                "start_time": lap.get("startTimeGMT"),
-                "distance_meters": lap.get("distance"),
-                "duration_seconds": lap.get("duration"),
-                "avg_speed_mps": lap.get("averageSpeed"),
-                "max_speed_mps": lap.get("maxSpeed"),
-                "avg_hr_bpm": lap.get("averageHR"),
-                "max_hr_bpm": lap.get("maxHR"),
-                "calories": lap.get("calories"),
-                "avg_cadence": lap.get("averageRunCadence"),
-                "avg_power_watts": lap.get("averagePower"),
-                "intensity_type": lap.get("intensityType"),
-            })
-            for lap in laps
-        ],
+        "laps": [LAP_FIELDS.curate(lap) for lap in laps],
     }
 
 
@@ -380,15 +309,6 @@ def _fix_half_cadence_glitch(rows: list[dict], key: str) -> None:
         logger.info("Half-cadence fix: corrected %d points (threshold=%d)", fixed, _CADENCE_HALF_THRESHOLD)
 
 
-def _first_not_none(d: dict, *keys):
-    """Return the first non-None value from d for the given keys."""
-    for k in keys:
-        v = d.get(k)
-        if v is not None:
-            return v
-    return None
-
-
 # Fields only available via GraphQL activitiesScalar (not in REST list)
 _GRAPHQL_ONLY_FIELDS = {"training_load"}
 
@@ -434,8 +354,10 @@ def _maybe_enrich_graphql(
         enriched = 0
         for activity in activities:
             gql = gql_by_id.get(activity.get("id"))
-            if gql and gql.get("activityTrainingLoad") is not None:
-                activity["training_load"] = gql["activityTrainingLoad"]
+            # GraphQL items have the keys of the REST list.
+            training_load = LIST_FIELDS.value("training_load", gql) if gql else None
+            if training_load is not None:
+                activity["training_load"] = training_load
                 enriched += 1
         logger.info("GraphQL enrichment: %d/%d activities got training_load", enriched, len(activities))
     except Exception as e:
@@ -460,7 +382,7 @@ def _maybe_enrich_graphql_from_activities(
 def _enrich_hr_zones(client: Garmin, activities: list[dict], raw: list[dict]) -> None:
     """Fetch HR zones per activity and embed as compact dict. Mutates activities in-place."""
     for activity, raw_a in zip(activities, raw):
-        if activity.get("hr_zones_seconds"):
+        if activity.get("hr_zones_s"):
             continue  # Already has inline zones from list response
         activity_id = raw_a.get("activityId")
         if not activity_id:
@@ -468,8 +390,8 @@ def _enrich_hr_zones(client: Garmin, activities: list[dict], raw: list[dict]) ->
         try:
             zones = client.get_activity_hr_in_timezones(activity_id)
             if zones:
-                activity["hr_zones_seconds"] = {
-                    f"z{z['zoneNumber']}": z.get("secsInZone", 0)
+                activity["hr_zones_s"] = {
+                    f"z{z['zoneNumber']}": round(z.get("secsInZone", 0))
                     for z in sorted(zones, key=lambda z: z.get("zoneNumber", 0))
                     if z.get("zoneNumber")
                 }
@@ -477,42 +399,25 @@ def _enrich_hr_zones(client: Garmin, activities: list[dict], raw: list[dict]) ->
             pass  # Skip zones for this activity, don't fail the batch
 
 
-def _curate_activity_summary(a: dict) -> dict:
-    """Curate an activity list item to essential fields."""
-    result = clean_nones({
-        "id": a.get("activityId"),
-        "name": a.get("activityName"),
-        "type": (a.get("activityType") or {}).get("typeKey"),
-        "start_time": a.get("startTimeLocal"),
-        "distance_meters": a.get("distance"),
-        "duration_seconds": a.get("duration"),
-        "moving_duration_seconds": a.get("movingDuration"),
-        "calories": a.get("calories"),
-        "avg_hr_bpm": a.get("averageHR"),
-        "max_hr_bpm": a.get("maxHR"),
-        "steps": a.get("steps"),
-        # Training effect (FirstBeat) — list uses aerobicTrainingEffect, detail uses trainingEffect
-        "training_effect": _first_not_none(a, "aerobicTrainingEffect", "trainingEffect"),
-        "anaerobic_training_effect": a.get("anaerobicTrainingEffect"),
-        "training_effect_label": a.get("trainingEffectLabel"),
-        # Power — list uses avgPower/normPower, detail uses averagePower/normalizedPower
-        "avg_power_watts": _first_not_none(a, "avgPower", "averagePower"),
-        "normalized_power_watts": _first_not_none(a, "normPower", "normalizedPower"),
-        # Self-evaluation (athlete post-workout input) — Garmin 0-100 → Foster CR10 0-10
-        "perceived_effort": round(a["directWorkoutRpe"] / 10, 1) if a.get("directWorkoutRpe") is not None else None,
-        "workout_feel": a.get("directWorkoutFeel"),
-        # Training load (EPOC) — may be in REST list for some accounts, else GraphQL enriches
-        "training_load": a.get("activityTrainingLoad"),
-        # VO2max & body battery (available in list)
-        "vo2max": a.get("vO2MaxValue"),
-        "body_battery_impact": a.get("differenceBodyBattery"),
-    })
-    # HR zones — available inline in list as hrTimeInZone_1..5 (seconds)
-    zones = {}
-    for z in range(1, 6):
-        val = a.get(f"hrTimeInZone_{z}")
-        if val:
-            zones[f"z{z}"] = round(val)
-    if zones:
-        result["hr_zones_seconds"] = zones
-    return result
+def _activity_weather(client: Garmin, activity_id: int) -> dict | None:
+    """Garmin's raw weather at the start of the activity. Optional: never fails the detail."""
+    try:
+        return client.get_activity_weather(activity_id)
+    except Exception:
+        return None
+
+
+def _local_time_offset(detail: dict | None) -> timedelta | None:
+    """Local time − GMT at the start of the activity, from its detail."""
+    summary = (detail or {}).get("summaryDTO") or {}
+    local, gmt = summary.get("startTimeLocal"), summary.get("startTimeGMT")
+    if not (local and gmt):
+        return None
+    return parse_time(local) - parse_time(gmt)
+
+
+def _with_local_start(lap: dict, offset: timedelta) -> dict:
+    """The lap with the `startTimeLocal` key that list and detail answers have (read by LAP_FIELDS)."""
+    if not lap.get("startTimeGMT"):
+        return lap
+    return {**lap, "startTimeLocal": shift_time(lap["startTimeGMT"], offset)}

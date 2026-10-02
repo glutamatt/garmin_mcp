@@ -238,6 +238,46 @@ class TestInvalidInput:
         assert result["exit_code"] == 2
         assert "capped at 365 days" in result["stderr"]
 
+    @pytest.mark.parametrize("command, method", [
+        ("activities get 1", "get_activity"),
+        ("activities splits 1", "get_activity_splits"),
+    ])
+    def test_unknown_field_is_refused_before_garmin_is_called(self, command, method):
+        client = Mock()
+        result = _run(f"{command} --fields distance_meters", client)
+        assert result["exit_code"] == 2
+        assert result["stdout"] == ""
+        assert "Unknown fields" in result["stderr"] and "distance_m" in result["stderr"]
+        getattr(client, method).assert_not_called()
+
+
+# ── Field registry: a known field is never "unknown" ─────────────────────────
+
+
+class TestEmptyFields:
+    def test_detail_says_which_fields_are_empty_and_why(self):
+        client = Mock()
+        client.get_activity.return_value = {"activityId": 1, "summaryDTO": {"distance": 5000.0}}
+        client.get_activity_weather.return_value = None
+        result = _run("activities get 1 --fields distance_m,training_load,vo2_max", client)
+        assert result["exit_code"] == 0
+        assert result["stderr"] == ""
+        assert json.loads(result["stdout"]) == {
+            "distance_m": 5000,
+            "empty_fields": {"training_load": "no_data", "vo2_max": "only_in: activities list"},
+        }
+
+    def test_laps_say_which_fields_are_empty_and_why(self):
+        client = Mock()
+        client.get_activity_splits.return_value = {"lapDTOs": [{"lapIndex": 1, "distance": 1000.0}]}
+        client.get_activity.return_value = {"summaryDTO": {}}
+        result = _run("activities splits 1 --fields lap_number,gap_s_per_km,perceived_effort", client)
+        assert result["exit_code"] == 0
+        assert json.loads(result["stdout"]) == {
+            "activity_id": 1, "lap_count": 1, "laps": [{"lap_number": 1}],
+            "empty_fields": {"gap_s_per_km": "no_data", "perceived_effort": "only_in: activities get"},
+        }
+
 
 # ── as_garmin_error ──────────────────────────────────────────────────────────
 

@@ -112,7 +112,10 @@ def format_pace(meters_per_sec) -> str | None:
         return None
     if mps <= 0:
         return None
-    seconds_per_km = 1000.0 / mps
-    minutes = int(seconds_per_km) // 60
-    secs = int(seconds_per_km) % 60
-    return f"{minutes}:{secs:02d} /km"
+    return format_pace_s_per_km(1000.0 / mps)
+
+
+def format_pace_s_per_km(seconds_per_km) -> str:
+    """Format a pace in seconds per km as "M:SS /km" (e.g. 394 → "6:34 /km")."""
+    seconds = int(seconds_per_km)
+    return f"{seconds // 60}:{seconds % 60:02d} /km"
