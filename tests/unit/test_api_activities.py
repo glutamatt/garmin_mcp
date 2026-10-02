@@ -37,8 +37,9 @@ class TestGetActivities:
         assert result["date_range"]["start"] == "2024-01-01"
         a = result["activities"][0]
         assert a["id"] == 12345
-        assert a["type"] == "running"
-        assert a["distance_meters"] == 10000.0
+        assert a["sport"] == "running"
+        assert a["distance_m"] == 10000
+        assert a["start_time"] == "2024-01-15T07:00:00"
         # Raw keys must not leak
         assert "activityId" not in a
         assert "activityType" not in a
@@ -115,7 +116,7 @@ class TestGraphQLEnrichment:
         client.get_activities_by_date.return_value = [SAMPLE_RAW_ACTIVITY]
         result = api.get_activities(
             client, "2024-01-01", "2024-01-15",
-            fields=["id", "name", "distance_meters"],
+            fields=["id", "name", "distance_m"],
         )
         assert "training_load" not in result["activities"][0]
         client.query_garmin_graphql.assert_not_called()
@@ -169,10 +170,49 @@ class TestGetActivity:
         client.get_activity_weather.return_value = None
         result = api.get_activity(client, 12345)
         assert result["id"] == 12345
-        assert result["type"] == "running"
+        assert result["sport"] == "running"
+        assert result["start_time"] == "2024-01-15T07:00:00"
+        assert result["avg_pace_s_per_km"] == 300  # 1000 / 3.33
         assert result["training_effect"] == 3.5
         assert result["training_load"] == 85
         assert result["lap_count"] == 5
+        assert "weather" not in result
+
+    def test_relief_and_paces(self, client):
+        client.get_activity.return_value = {
+            "activityId": 1,
+            "summaryDTO": {
+                "averageSpeed": 2.39, "averageMovingSpeed": 2.4033, "avgGradeAdjustedSpeed": 2.405,
+                "elevationGain": 40.0, "elevationLoss": 47.0, "minElevation": 69.8, "maxElevation": 100.8,
+            },
+        }
+        client.get_activity_weather.return_value = None
+        result = api.get_activity(client, 1)
+        assert result["avg_pace_s_per_km"] == 418
+        assert result["moving_pace_s_per_km"] == 416
+        assert result["gap_s_per_km"] == 416
+        assert (result["elevation_gain_m"], result["elevation_loss_m"]) == (40, 47)
+        assert (result["min_elevation_m"], result["max_elevation_m"]) == (70, 101)
+
+    def test_weather_is_converted_from_imperial(self, client):
+        """Garmin's weather is °F and mph."""
+        client.get_activity.return_value = {"activityId": 1, "summaryDTO": {}}
+        client.get_activity_weather.return_value = {
+            "temp": 70, "apparentTemp": 68, "relativeHumidity": 64, "windSpeed": 12,
+            "weatherTypeDTO": {"desc": "Light Rain"},
+        }
+        assert api.get_activity(client, 1)["weather"] == {
+            "temperature_celsius": 21.1,
+            "apparent_temperature_celsius": 20.0,
+            "humidity_percent": 64,
+            "wind_speed_mps": 5.4,
+            "weather_type": "Light Rain",
+        }
+
+    def test_weather_failure_keeps_the_detail(self, client):
+        client.get_activity.return_value = {"activityId": 1, "summaryDTO": {"distance": 5000.0}}
+        client.get_activity_weather.side_effect = Exception("weather down")
+        assert api.get_activity(client, 1) == {"id": 1, "distance_m": 5000}
 
     def test_no_data_is_not_found(self, client):
         client.get_activity.return_value = None
@@ -181,20 +221,28 @@ class TestGetActivity:
 
 
 class TestGetActivitySplits:
+    DETAIL = {"summaryDTO": {"startTimeLocal": "2024-01-15T08:00:00.0", "startTimeGMT": "2024-01-15T07:00:00.0"}}
+
     def test_curates_laps(self, client):
         client.get_activity_splits.return_value = {
             "activityId": 12345,
             "lapDTOs": [
                 {
                     "lapIndex": 1,
-                    "distance": 1000.0,
+                    "startTimeGMT": "2024-01-15T07:00:00.0",
+                    "distance": 1000.4,
                     "duration": 300.0,
                     "averageSpeed": 3.33,
+                    "avgGradeAdjustedSpeed": 3.2,
+                    "elevationGain": 12.0,
                     "averageHR": 145,
                     "maxHR": 155,
+                    "wktStepIndex": 0,
+                    "intensityType": "WARMUP",
                 },
                 {
                     "lapIndex": 2,
+                    "startTimeGMT": "2024-01-15T07:05:00.0",
                     "distance": 1000.0,
                     "duration": 280.0,
                     "averageSpeed": 3.57,
@@ -203,16 +251,42 @@ class TestGetActivitySplits:
                 },
             ],
         }
+        client.get_activity.return_value = self.DETAIL
         result = api.get_activity_splits(client, 12345)
         assert result["lap_count"] == 2
-        assert result["laps"][0]["lap_number"] == 1
-        assert result["laps"][1]["avg_hr_bpm"] == 160
+        first, second = result["laps"]
+        assert first == {
+            "lap_number": 1,
+            "intensity_type": "WARMUP",
+            "workout_step_index": 0,
+            "start_time": "2024-01-15T08:00:00",
+            "start_time_gmt": "2024-01-15T07:00:00",
+            "duration_s": 300,
+            "distance_m": 1000,
+            "avg_pace_s_per_km": 300,
+            "gap_s_per_km": 312,
+            "avg_speed_mps": 3.33,
+            "elevation_gain_m": 12,
+            "avg_hr_bpm": 145,
+            "max_hr_bpm": 155,
+        }
+        assert second["start_time"] == "2024-01-15T08:05:00"
+        assert second["avg_hr_bpm"] == 160
+
+    def test_start_time_stays_gmt_only_without_the_detail(self, client):
+        client.get_activity_splits.return_value = {
+            "lapDTOs": [{"lapIndex": 1, "startTimeGMT": "2024-01-15T07:00:00.0"}],
+        }
+        client.get_activity.return_value = None
+        (lap,) = api.get_activity_splits(client, 12345)["laps"]
+        assert lap == {"lap_number": 1, "start_time_gmt": "2024-01-15T07:00:00"}
 
     def test_no_splits_is_an_empty_list(self, client):
         client.get_activity_splits.return_value = None
         assert api.get_activity_splits(client, 12345) == {
             "activity_id": 12345, "lap_count": 0, "laps": [],
         }
+        client.get_activity.assert_not_called()
 
 
 class TestGetActivityHrInTimezones:

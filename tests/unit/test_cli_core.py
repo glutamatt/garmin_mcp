@@ -574,18 +574,28 @@ class TestStdoutStderrSeparation:
         return client
 
     def test_warning_only_in_stderr(self):
-        """Unknown --fields warning should appear in stderr only, not stdout."""
-        client = self._mock_client([
-            {"activityId": 1, "activityName": "Run", "activityType": {"typeKey": "running"}},
-        ])
+        """Unknown --fields warning (command without a field registry) in stderr only, not stdout."""
+        client = Mock()
+        client.get_workouts.return_value = [{"workoutId": 1, "workoutName": "Easy"}]
+        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
+            result = execute("workouts list --fields id,name,BOGUS", "fake_token")
+        assert result["exit_code"] == 0
+        assert "BOGUS" in result["stderr"]
+        assert "BOGUS" not in result["stdout"]
+
+    def test_unknown_registry_field_is_an_error_only_in_stderr(self):
+        """activities list checks --fields against its registry: exit 2, before any Garmin call."""
+        client = self._mock_client([])
         with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
             result = execute(
                 "activities list --from 2024-01-01 --to 2024-01-07 --fields id,name,BOGUS",
                 "fake_token",
             )
-        assert result["exit_code"] == 0
-        assert "BOGUS" in result["stderr"]
-        assert "BOGUS" not in result["stdout"]
+        assert result["exit_code"] == 2
+        assert result["stdout"] == ""
+        assert "Unknown fields for activities list: BOGUS." in result["stderr"]
+        assert "distance_m" in result["stderr"]  # the valid names
+        client.get_activities_by_date.assert_not_called()
 
     def test_stdout_clean_when_no_warnings(self):
         """No warnings → stderr empty, stdout has data."""
@@ -630,12 +640,11 @@ class TestOutputShapePreview:
 
     def test_output_shape_with_warning_not_duplicated(self):
         """--output with unknown fields: warning in stderr only, shape in stdout."""
-        client = self._mock_client([
-            {"activityId": 1, "activityName": "Run", "activityType": {"typeKey": "running"}},
-        ])
+        client = Mock()
+        client.get_workouts.return_value = [{"workoutId": 1, "workoutName": "Easy"}]
         with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
             result = execute(
-                "activities list --from 2024-01-01 --to 2024-01-07 --fields id,BOGUS --output out.json",
+                "workouts list --fields id,BOGUS --output out.json",
                 "fake_token",
                 tmp_dir="/tmp",
             )
@@ -643,7 +652,24 @@ class TestOutputShapePreview:
         assert "BOGUS" in result["stderr"]
         assert "BOGUS" not in result["stdout"]
         assert "written to out.json" in result["stdout"]
-        assert "activities" in result["stdout"]
+        assert "workouts" in result["stdout"]
+
+    def test_output_shape_keeps_empty_fields(self, tmp_path):
+        """--output with a known but empty field: the shape in stdout names `empty_fields`."""
+        client = self._mock_client([
+            {"activityId": 1, "activityName": "Run", "activityType": {"typeKey": "running"}},
+        ])
+        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
+            result = execute(
+                "activities list --from 2024-01-01 --to 2024-01-07 --fields id,elevation_gain_m --output out.json",
+                "fake_token",
+                tmp_dir=str(tmp_path),
+            )
+        assert result["exit_code"] == 0
+        assert result["stderr"] == ""
+        assert '"empty_fields": ...' in result["stdout"]
+        written = json.loads((tmp_path / "out.json").read_text())
+        assert written["empty_fields"] == {"elevation_gain_m": "no_data"}
 
 
 class TestDescribeShape:

@@ -19,7 +19,9 @@ import click
 def _today():
     return _date.today().isoformat()
 
+from garmin_mcp.api.activity_fields import DETAIL_FIELDS, LAP_FIELDS, LIST_FIELDS
 from garmin_mcp.api.contract import GarminError, InvalidInput, as_garmin_error, is_unavailable
+from garmin_mcp.api.fields import FieldSet
 from garmin_mcp.client_factory import create_client_from_tokens
 from garmin_mcp.cli.output import (
     filter_fields,
@@ -122,22 +124,29 @@ def _describe_shape(data) -> str:
     return str(type(data).__name__)
 
 
-def _out(ctx, data):
+def _out(ctx, data, field_set: FieldSet | None = None):
     """Apply field filtering, format, and output.
 
     Only answers get here: a failure is a CLI error (`_call`), so `--fields`
     and `--output` never apply to it. `--fields` does not apply to an
     unavailable answer either: it would remove the reason.
+
+    A command with a field registry (`field_set`) selects its fields with it
+    (names already checked by `_run`, empty ones explained in `empty_fields`).
+    The other commands compare `--fields` with the data.
     """
     fields = ctx.obj.get("fields")
     fmt = ctx.obj.get("format", "json")
     output_path = ctx.obj.get("output")
 
     if fields and not is_unavailable(data):
-        missing = find_missing_fields(data, fields)
-        if missing:
-            click.echo(f"Warning: unknown fields ignored: {', '.join(missing)}", err=True)
-        data = filter_fields(data, fields)
+        if field_set is not None:
+            data = field_set.select(data, fields)
+        else:
+            missing = find_missing_fields(data, fields)
+            if missing:
+                click.echo(f"Warning: unknown fields ignored: {', '.join(missing)}", err=True)
+            data = filter_fields(data, fields)
 
     text = format_output(data, fmt)
 
@@ -169,16 +178,21 @@ def _call(fn):
         raise _fail(as_garmin_error(e)) from e
 
 
-def _run(ctx, fn, *, dry_run_preview: dict | None = None):
+def _run(ctx, fn, *, dry_run_preview: dict | None = None, field_set: FieldSet | None = None):
     """Execute fn(), handle errors, output result.
 
     If --dry-run is active AND dry_run_preview is provided, skip execution
     and output the preview instead. Read-only commands pass no preview.
+
+    `field_set`: the command's field registry. An unknown `--fields` name is
+    invalid input (exit 2), refused before any Garmin call.
     """
     if ctx.obj.get("dry_run") and dry_run_preview is not None:
         _out(ctx, {"dry_run": True, **dry_run_preview})
         return
-    _out(ctx, _call(fn))
+    if field_set is not None and ctx.obj.get("fields"):
+        _call(lambda: field_set.check(ctx.obj["fields"]))
+    _out(ctx, _call(fn), field_set)
 
 
 # ── Main group ───────────────────────────────────────────────────────────────
@@ -221,6 +235,9 @@ def garmin(ctx, fmt, fields, output_path, dry_run, token, display_name, tmp_dir)
     \b
     Global flags (before command):
       --fields f1,f2   Only include these fields (reduces output)
+                       activities list/get/splits: an unknown name is an error
+                       (exit 2, the valid names listed); a field with no value
+                       is named in "empty_fields", with the reason
       --format table   Human-readable table instead of JSON
       --output PATH    Write to file (auto-sandboxed)
       --dry-run        Validate mutation without calling API
@@ -240,7 +257,7 @@ def garmin(ctx, fmt, fields, output_path, dry_run, token, display_name, tmp_dir)
     ctx.obj.setdefault("output", output_path)
     ctx.obj.setdefault("dry_run", dry_run)
     if fields and "fields" not in ctx.obj:
-        ctx.obj["fields"] = [f.strip() for f in fields.split(",")]
+        ctx.obj["fields"] = [f.strip() for f in fields.split(",") if f.strip()]
     if token:
         ctx.obj.setdefault("_token", token)
         ctx.obj.setdefault("_display_name", display_name)
@@ -401,7 +418,7 @@ def activities_list(ctx, start_date, end_date, activity_type, start, limit):
     _run(ctx, lambda: api.get_activities(
         _client(ctx), start_date, end_date, activity_type, start, limit,
         fields=fields,
-    ))
+    ), field_set=LIST_FIELDS)
 
 
 @activities.command("get")
@@ -411,7 +428,7 @@ def activities_get(ctx, activity_id):
     """Get detailed activity info."""
     from garmin_mcp.api import activities as api
 
-    _run(ctx, lambda: api.get_activity(_client(ctx), activity_id))
+    _run(ctx, lambda: api.get_activity(_client(ctx), activity_id), field_set=DETAIL_FIELDS)
 
 
 @activities.command("splits")
@@ -421,7 +438,7 @@ def activities_splits(ctx, activity_id):
     """Get per-lap splits for an activity."""
     from garmin_mcp.api import activities as api
 
-    _run(ctx, lambda: api.get_activity_splits(_client(ctx), activity_id))
+    _run(ctx, lambda: api.get_activity_splits(_client(ctx), activity_id), field_set=LAP_FIELDS)
 
 
 @activities.command("hr-zones")

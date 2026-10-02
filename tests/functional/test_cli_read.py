@@ -77,12 +77,12 @@ class TestActivities:
     def test_list_with_fields(self, cli, readonly_token):
         data = invoke_json(
             cli, readonly_token,
-            "--fields", "id,name,distance_meters",
+            "--fields", "id,name,distance_m",
             "activities", "list", "--limit", "2",
         )
         if data.get("activities"):
             activity = data["activities"][0]
-            assert set(activity.keys()) <= {"id", "name", "distance_meters"}
+            assert set(activity.keys()) <= {"id", "name", "sport", "distance_m"}
 
     def test_list_table_format(self, cli, readonly_token):
         result = invoke(
