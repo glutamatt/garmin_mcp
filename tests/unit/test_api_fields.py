@@ -22,17 +22,20 @@ from garmin_mcp.api.fields import (
 )
 
 A = Source("a", "thing list")
+A_PLUS = Source("a_plus", "thing list", option="--with more")
 B = Source("b", "thing get")
 
 REGISTRY = (
-    Field("id", "", "Id", {A: "thingId", B: "thingId"}),
+    Field("id", "", "Id", {A: "thingId", A_PLUS: "thingId", B: "thingId"}),
     Field("distance_m", "m", "Distance", {A: "dist", B: "summary.dist"}, digits=0),
     Field("pace_s_per_km", "s/km", "Pace", {A: "speed", B: "summary.speed"}, pace_s_per_km, 0),
-    Field("label", "", "Label", {A: "label"}),
-    Field("effort", "", "Effort", {B: "summary.rpe"}, lambda rpe: rpe / 10, 1),
+    Field("label", "", "Label", {A: "label", A_PLUS: "label"}),
+    Field("effort", "", "Effort", {A_PLUS: "summary.rpe", B: "summary.rpe"}, lambda rpe: rpe / 10, 1),
     Field("double", "", "Computed", {A: lambda raw: raw["dist"] * 2 if "dist" in raw else None}),
+    Field("load", "", "Load", {A: "load", B: "summary.load"}, feature="load"),
 )
 LIST = FieldSet(A, REGISTRY, items_key="things", always=("label",))
+LIST_PLUS = FieldSet(A_PLUS, REGISTRY, items_key="things")
 DETAIL = FieldSet(B, REGISTRY)
 
 
@@ -80,8 +83,9 @@ class TestCurate:
         assert LIST.curate({"dist": 0.0, "speed": 0.0}) == {"distance_m": 0, "double": 0.0}
 
     def test_names_follow_the_source(self):
-        assert LIST.names == ("id", "distance_m", "pace_s_per_km", "label", "double")
-        assert DETAIL.names == ("id", "distance_m", "pace_s_per_km", "effort")
+        assert LIST.names == ("id", "distance_m", "pace_s_per_km", "label", "double", "load")
+        assert LIST_PLUS.names == ("id", "label", "effort")
+        assert DETAIL.names == ("id", "distance_m", "pace_s_per_km", "effort", "load")
 
     def test_value(self):
         assert DETAIL.value("effort", {"summary": {"rpe": 25}}) == 2.5
@@ -124,11 +128,36 @@ class TestSelect:
         assert "empty_fields" not in LIST.select(self.ANSWER, ["distance_m"])
 
     def test_empty_fields_say_why(self):
-        selected = LIST.select(self.ANSWER, ["id", "pace_s_per_km", "effort"])
+        selected = LIST.select(self.ANSWER, ["id", "pace_s_per_km", "effort", "load"])
         assert selected["empty_fields"] == {
             "pace_s_per_km": "no_data",          # this command gives it, Garmin had no value
-            "effort": "only_in: thing get",      # this command does not give it
+            "effort": "only_in: thing list --with more, thing get",  # this command does not give it
+            "load": "no_data",                   # no device reason asked for
         }
+
+    def test_a_device_field_asks_the_device_reason(self):
+        asked = []
+
+        def missing_reason(feature):
+            asked.append(feature)
+            return "not_supported_by_device"
+
+        selected = LIST.select(self.ANSWER, ["id", "pace_s_per_km", "load"], missing_reason)
+        assert selected["empty_fields"] == {"pace_s_per_km": "no_data", "load": "not_supported_by_device"}
+        assert asked == ["load"]
+
+    def test_the_device_reason_is_not_asked_when_the_field_has_a_value(self):
+        answer = {"count": 1, "things": [{"id": 1, "load": 80}]}
+        assert "empty_fields" not in LIST.select(answer, ["load"], lambda feature: pytest.fail("asked"))
+
+    def test_a_command_named_once_without_its_option_when_it_gives_the_field_without(self):
+        """`label` is in `thing list` with and without `--with more`: the reason names `thing list`."""
+        detail = {"id": 1}
+        assert DETAIL.select(detail, ["label"])["empty_fields"] == {"label": "only_in: thing list"}
+
+    def test_a_field_of_the_option(self):
+        answer = {"count": 1, "things": [{"id": 1}]}
+        assert LIST_PLUS.select(answer, ["effort"])["empty_fields"] == {"effort": "no_data"}
 
     def test_an_answer_without_items_says_nothing(self):
         empty = {"count": 0, "things": []}
@@ -197,13 +226,27 @@ class TestActivityTable:
                 "gap_s_per_km", "moving_pace_s_per_km", "elevation_gain_m", "elevation_loss_m",
                 "avg_hr_bpm", "calories_kcal", "avg_cadence_spm"} <= shared
 
-    def test_effort_is_only_in_the_detail(self):
-        """Garmin's list has no RPE (checked on real answers): `--fields perceived_effort` on a list says so."""
+    def test_effort_is_only_in_the_detail_and_the_list_with_effort(self):
+        """Garmin's list has no RPE (checked on real answers): `--fields perceived_effort` on a list
+        says where it is."""
         assert "perceived_effort" not in af.LIST_FIELDS.names
         answer = {"count": 1, "activities": [{"id": 1, "sport": "running"}]}
         assert af.LIST_FIELDS.select(answer, ["id", "perceived_effort"])["empty_fields"] == {
-            "perceived_effort": "only_in: activities get",
+            "perceived_effort": "only_in: activities list --with effort, activities get",
         }
+
+    def test_the_list_with_effort_has_every_list_field_and_the_effort(self):
+        assert set(af.LIST_EFFORT_FIELDS.names) == set(af.LIST_FIELDS.names) | {"perceived_effort", "workout_feel"}
+
+    def test_the_list_with_effort_reads_the_added_detail_summary(self):
+        raw = {"activityId": 1, "distance": 5000.0, "summaryDTO": {"directWorkoutRpe": 40, "directWorkoutFeel": 75}}
+        assert af.LIST_EFFORT_FIELDS.curate(raw) == {
+            "id": 1, "distance_m": 5000, "perceived_effort": 4.0, "workout_feel": 75,
+        }
+
+    def test_training_load_depends_on_the_device(self):
+        (field,) = [f for f in af.FIELDS if f.name == "training_load"]
+        assert field.feature == "training_load"
 
     def test_sport_is_always_kept(self):
         answer = {"count": 1, "activities": [{"id": 1, "sport": "running", "distance_m": 5000}]}

@@ -9,11 +9,20 @@ Fields of `list`, `get` and `splits` (names, units, raw keys): see `api/activity
 import logging
 import os
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 from garminconnect import Garmin
-from garmin_mcp.api.activity_fields import DETAIL_FIELDS, LAP_FIELDS, LIST_FIELDS
-from garmin_mcp.api.contract import InvalidInput, NotFound, Unavailable
+from garmin_mcp.api.activity_fields import DETAIL_FIELDS, LAP_FIELDS, LIST_EFFORT_FIELDS, LIST_FIELDS
+from garmin_mcp.api.contract import (
+    NO_DATA,
+    AuthError,
+    InvalidInput,
+    NotFound,
+    Unavailable,
+    as_garmin_error,
+    error_reason,
+)
 from garmin_mcp.api.fields import parse_time, shift_time
 from garmin_mcp.utils import clean_nones
 
@@ -28,44 +37,45 @@ def get_activities(
     start: int = 0,
     limit: int = 20,
     include_hr_zones: bool = False,
-    fields: list[str] | None = None,
+    with_effort: bool = False,
 ) -> dict:
     """Unified activity list: date range OR pagination.
 
     If start_date and end_date are given, uses date-based query.
     Otherwise, uses pagination (start/limit).
-    Enriches with GraphQL data (training_load) when needed.
+
+    `with_effort`: the RPE and feel of each activity (`perceived_effort`,
+    `workout_feel`). The list endpoint has neither: one detail call per
+    activity, in parallel. `effort_missing` gives the activities without RPE,
+    and why (see `_add_effort`).
     """
     limit = min(max(1, limit), 100)
 
     if start_date and end_date:
         raw = client.get_activities_by_date(start_date, end_date, activity_type) or []
-        activities = [LIST_FIELDS.curate(a) for a in raw]
-        if include_hr_zones:
-            _enrich_hr_zones(client, activities, raw)
-        if activities:
-            _maybe_enrich_graphql(client, activities, start_date, end_date, fields)
-        return {
-            "count": len(activities),
-            "date_range": {"start": start_date, "end": end_date},
-            "activities": activities,
-        }
+        answer = {"count": len(raw), "date_range": {"start": start_date, "end": end_date}}
     else:
         raw = client.get_activities(start, limit) or []
-        activities = [LIST_FIELDS.curate(a) for a in raw]
-        if include_hr_zones:
-            _enrich_hr_zones(client, activities, raw)
-        # For pagination: derive date range from results for GraphQL enrichment
-        if activities:
-            _maybe_enrich_graphql_from_activities(client, activities, fields)
-        return {
+        answer = {
             "start": start,
             "limit": limit,
-            "count": len(activities),
+            "count": len(raw),
             "has_more": len(raw) == limit,
             "next_start": start + limit if len(raw) == limit else None,
-            "activities": activities,
         }
+
+    if with_effort:
+        raw, missing = _add_effort(client, raw)
+        activities = [LIST_EFFORT_FIELDS.curate(a) for a in raw]
+    else:
+        missing = {}
+        activities = [LIST_FIELDS.curate(a) for a in raw]
+    if include_hr_zones:
+        _enrich_hr_zones(client, activities, raw)
+    answer["activities"] = activities
+    if missing:
+        answer["effort_missing"] = missing
+    return answer
 
 
 def get_activity(client: Garmin, activity_id: int) -> dict:
@@ -309,74 +319,50 @@ def _fix_half_cadence_glitch(rows: list[dict], key: str) -> None:
         logger.info("Half-cadence fix: corrected %d points (threshold=%d)", fixed, _CADENCE_HALF_THRESHOLD)
 
 
-# Fields only available via GraphQL activitiesScalar (not in REST list)
-_GRAPHQL_ONLY_FIELDS = {"training_load"}
+# `--with effort`: at most this many detail calls per list, this many at a time.
+EFFORT_MAX_ACTIVITIES = 100
+_EFFORT_WORKERS = 5
 
 
-def _needs_graphql(fields: list[str] | None) -> bool:
-    """Check if requested fields include GraphQL-only data."""
-    if fields is None:
-        return True  # No filter = include everything
-    return bool(set(fields) & _GRAPHQL_ONLY_FIELDS)
+def _add_effort(client: Garmin, raw: list[dict]) -> tuple[list[dict], dict[str, str]]:
+    """Each list item with the `summaryDTO` of its detail (read by LIST_EFFORT_FIELDS),
+    and the activities without RPE: `{"<id>": "no_data" | "error: …"}`.
 
-
-def _maybe_enrich_graphql(
-    client: Garmin,
-    activities: list[dict],
-    start_date: str,
-    end_date: str,
-    fields: list[str] | None,
-) -> None:
-    """Enrich activities with GraphQL data (training_load) if needed."""
-    if not _needs_graphql(fields):
-        return
-    try:
-        display_name = getattr(client, "display_name", None)
-        if not display_name:
-            logger.warning("GraphQL enrichment skipped: no display_name on client")
-            return
-        gql_data = client.query_garmin_graphql({
-            "query": f'query{{activitiesScalar(displayName:"{display_name}", '
-                     f'startTimestampLocal:"{start_date}T00:00:00.00", '
-                     f'endTimestampLocal:"{end_date}T23:59:59.999", '
-                     f'limit:200)}}'
-        })
-        gql_activities = (
-            gql_data.get("data", {})
-            .get("activitiesScalar", {})
-            .get("activityList", [])
+    `no_data`: the athlete entered no RPE. `error: …`: the detail call failed; the
+    other activities keep theirs. An auth error fails the list at once; so does
+    a failure of every call.
+    """
+    if len(raw) > EFFORT_MAX_ACTIVITIES:
+        raise InvalidInput(
+            f"--with effort reads one detail per activity: {len(raw)} activities, "
+            f"at most {EFFORT_MAX_ACTIVITIES}. Ask for a shorter range."
         )
-        if not gql_activities:
-            logger.info("GraphQL enrichment: no activities returned for %s..%s", start_date, end_date)
-            return
-        # Build lookup by activity ID
-        gql_by_id = {a["activityId"]: a for a in gql_activities if "activityId" in a}
-        enriched = 0
-        for activity in activities:
-            gql = gql_by_id.get(activity.get("id"))
-            # GraphQL items have the keys of the REST list.
-            training_load = LIST_FIELDS.value("training_load", gql) if gql else None
-            if training_load is not None:
-                activity["training_load"] = training_load
-                enriched += 1
-        logger.info("GraphQL enrichment: %d/%d activities got training_load", enriched, len(activities))
-    except Exception as e:
-        logger.warning("GraphQL enrichment failed: %s", e)
 
+    def detail(item: dict):
+        try:
+            return client.get_activity(item["activityId"]), None
+        except Exception as e:  # noqa: BLE001 — one failed detail does not fail the list
+            return None, as_garmin_error(e)
 
-def _maybe_enrich_graphql_from_activities(
-    client: Garmin,
-    activities: list[dict],
-    fields: list[str] | None,
-) -> None:
-    """Derive date range from activities and enrich via GraphQL."""
-    if not _needs_graphql(fields):
-        return
-    # Extract date range from start_time fields
-    dates = [a.get("start_time", "")[:10] for a in activities if a.get("start_time")]
-    if not dates:
-        return
-    _maybe_enrich_graphql(client, activities, min(dates), max(dates), fields)
+    with ThreadPoolExecutor(max_workers=_EFFORT_WORKERS) as pool:
+        details = list(pool.map(detail, raw))
+
+    errors = [error for _, error in details if error is not None]
+    for error in errors:
+        if isinstance(error, AuthError):
+            raise error
+    if raw and len(errors) == len(raw):
+        raise errors[0]
+
+    items, missing = [], {}
+    for item, (found, error) in zip(raw, details):
+        item = {**item, "summaryDTO": (found or {}).get("summaryDTO") or {}}
+        items.append(item)
+        if error is not None:
+            missing[str(item["activityId"])] = error_reason(error)
+        elif LIST_EFFORT_FIELDS.value("perceived_effort", item) is None:
+            missing[str(item["activityId"])] = NO_DATA
+    return items, missing
 
 
 def _enrich_hr_zones(client: Garmin, activities: list[dict], raw: list[dict]) -> None:

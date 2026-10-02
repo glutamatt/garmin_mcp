@@ -19,7 +19,8 @@ import click
 def _today():
     return _date.today().isoformat()
 
-from garmin_mcp.api.activity_fields import DETAIL_FIELDS, LAP_FIELDS, LIST_FIELDS
+from garmin_mcp.api.activity_fields import DETAIL_FIELDS, LAP_FIELDS, LIST_EFFORT_FIELDS, LIST_FIELDS
+from garmin_mcp.api.capabilities import missing_reason
 from garmin_mcp.api.contract import GarminError, InvalidInput, as_garmin_error, is_unavailable
 from garmin_mcp.api.fields import FieldSet
 from garmin_mcp.client_factory import create_client_from_tokens
@@ -132,7 +133,8 @@ def _out(ctx, data, field_set: FieldSet | None = None):
     unavailable answer either: it would remove the reason.
 
     A command with a field registry (`field_set`) selects its fields with it
-    (names already checked by `_run`, empty ones explained in `empty_fields`).
+    (names already checked by `_run`, empty ones explained in `empty_fields`,
+    with the device capabilities when the field depends on the device).
     The other commands compare `--fields` with the data.
     """
     fields = ctx.obj.get("fields")
@@ -141,7 +143,7 @@ def _out(ctx, data, field_set: FieldSet | None = None):
 
     if fields and not is_unavailable(data):
         if field_set is not None:
-            data = field_set.select(data, fields)
+            data = field_set.select(data, fields, lambda feature: missing_reason(_client(ctx), feature))
         else:
             missing = find_missing_fields(data, fields)
             if missing:
@@ -237,7 +239,8 @@ def garmin(ctx, fmt, fields, output_path, dry_run, token, display_name, tmp_dir)
       --fields f1,f2   Only include these fields (reduces output)
                        activities list/get/splits: an unknown name is an error
                        (exit 2, the valid names listed); a field with no value
-                       is named in "empty_fields", with the reason
+                       is named in "empty_fields", with the reason: no_data,
+                       not_supported_by_device, or only_in: <commands>
       --format table   Human-readable table instead of JSON
       --output PATH    Write to file (auto-sandboxed)
       --dry-run        Validate mutation without calling API
@@ -409,16 +412,24 @@ def activities(ctx):
 @click.option("--type", "activity_type", default="", help="Filter: running, cycling...")
 @click.option("--start", default=0, type=int, help="Pagination offset")
 @click.option("--limit", default=20, type=int, help="Max results (max 100)")
+@click.option("--with", "extras", type=click.Choice(["effort"]), multiple=True,
+              help="effort: add perceived_effort (RPE 0-10) and workout_feel, read from each "
+                   "activity's detail (one call per activity, max 100)")
 @click.pass_context
-def activities_list(ctx, start_date, end_date, activity_type, start, limit):
-    """List activities by date range or pagination."""
+def activities_list(ctx, start_date, end_date, activity_type, start, limit, extras):
+    """List activities by date range or pagination.
+
+    \b
+    --with effort: "effort_missing" gives the activities without RPE
+    and why: {"<id>": "no_data" | "error: ..."}.
+    """
     from garmin_mcp.api import activities as api
 
-    fields = ctx.obj.get("fields")
+    with_effort = "effort" in extras
     _run(ctx, lambda: api.get_activities(
         _client(ctx), start_date, end_date, activity_type, start, limit,
-        fields=fields,
-    ), field_set=LIST_FIELDS)
+        with_effort=with_effort,
+    ), field_set=LIST_EFFORT_FIELDS if with_effort else LIST_FIELDS)
 
 
 @activities.command("get")
@@ -868,7 +879,7 @@ def training_hrv(ctx, date):
 @click.argument("date", default=None)
 @click.pass_context
 def training_status(ctx, date):
-    """Training status: productive/maintaining/detraining, ACWR, load balance."""
+    """Training status of the main device: status, acute/chronic load (ACWR), monthly load and targets."""
     from garmin_mcp.api import training as api
 
     _run(ctx, lambda: api.get_training_status(_client(ctx), date or _today()))

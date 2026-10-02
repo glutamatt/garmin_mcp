@@ -4,17 +4,21 @@ Activity fields — the registry behind `activities list`, `get` and `splits`.
 Each row says where Garmin keeps a value in each source:
 - LIST:   an item of the activity list (`activitylist-service`);
 - DETAIL: the activity detail (`activity-service/activity/<id>`), most values in `summaryDTO`;
-- LAP:    an item of `lapDTOs` (`activity-service/activity/<id>/splits`). Same keys as `summaryDTO`.
+- LAP:    an item of `lapDTOs` (`activity-service/activity/<id>/splits`). Same keys as `summaryDTO`;
+- LIST_EFFORT: a list item with `--with effort`. The list endpoint has no RPE:
+  `get_activities` adds the `summaryDTO` of each activity's detail to its list item.
 
-Raw keys checked on real answers (neural-runner `tests/garmin-fixtures/`). Two keys
+Raw keys checked on real answers (neural-runner `tests/garmin-fixtures/`). Three keys
 are added by `api/activities.py` from another Garmin call, and say so below:
-`weather` (detail) and `startTimeLocal` (lap: Garmin's laps only have GMT).
+`weather` (detail), `startTimeLocal` (lap: Garmin's laps only have GMT) and
+`summaryDTO` (list with `--with effort`).
 
 Naming and unit rule: `api/fields.py`.
 """
 
 from __future__ import annotations
 
+from garmin_mcp.api.capabilities import TRAINING_LOAD
 from garmin_mcp.api.fields import (
     Field,
     FieldSet,
@@ -28,6 +32,7 @@ from garmin_mcp.api.fields import (
 LIST = Source("list", "activities list")
 DETAIL = Source("detail", "activities get")
 LAP = Source("lap", "activities splits")
+LIST_EFFORT = Source("list_effort", "activities list", option="--with effort")
 
 WEATHER = Source("weather", "activities get")
 
@@ -50,9 +55,13 @@ _FORMER_NAMES = {
 }
 
 
-def _field(name, unit, doc, *, list=None, detail=None, lap=None, convert=None, digits=None) -> Field:
-    keys = {source: key for source, key in ((LIST, list), (DETAIL, detail), (LAP, lap)) if key is not None}
-    return Field(name, unit, doc, keys, convert, digits, _FORMER_NAMES.get(name, ()))
+def _field(name, unit, doc, *, list=None, detail=None, lap=None, effort=None,
+           convert=None, digits=None, feature=None) -> Field:
+    """One row. `effort`: the key of a field that only `--with effort` adds to the list;
+    every other list field is in the list with `--with effort` too."""
+    sources = ((LIST, list), (LIST_EFFORT, effort or list), (DETAIL, detail), (LAP, lap))
+    keys = {source: key for source, key in sources if key is not None}
+    return Field(name, unit, doc, keys, convert, digits, _FORMER_NAMES.get(name, ()), feature)
 
 
 def _moving_speed(item: dict) -> float | None:
@@ -180,11 +189,15 @@ FIELDS: tuple[Field, ...] = (
     _field("training_effect_label", "", "Main benefit: AEROBIC_BASE, TEMPO, THRESHOLD…",
            list="trainingEffectLabel", detail="summaryDTO.trainingEffectLabel"),
     _field("training_load", "", "Training load (EPOC), when the device computes it",
-           list="activityTrainingLoad", detail="summaryDTO.activityTrainingLoad", digits=1),
+           list="activityTrainingLoad", detail="summaryDTO.activityTrainingLoad", digits=1,
+           feature=TRAINING_LOAD),
     _field("perceived_effort", "", "Effort entered by the athlete after the run, 0-10 (Foster CR10)",
-           detail="summaryDTO.directWorkoutRpe", convert=_cr10, digits=1),
+           detail="summaryDTO.directWorkoutRpe",
+           effort="summaryDTO.directWorkoutRpe",  # added by get_activities, from get_activity
+           convert=_cr10, digits=1),
     _field("workout_feel", "", "Feel entered by the athlete after the run, 0-100",
-           detail="summaryDTO.directWorkoutFeel"),
+           detail="summaryDTO.directWorkoutFeel",
+           effort="summaryDTO.directWorkoutFeel"),  # added by get_activities, from get_activity
     _field("vo2_max", "mL/kg/min", "VO2max estimate after the activity",
            list="vO2MaxValue", digits=1),
     _field("body_battery_impact", "", "Body Battery change during the activity (negative = drain)",
@@ -213,5 +226,6 @@ WEATHER_FIELDS = FieldSet(WEATHER, (
 ))
 
 LIST_FIELDS = FieldSet(LIST, FIELDS, items_key="activities", always=("sport",))
+LIST_EFFORT_FIELDS = FieldSet(LIST_EFFORT, FIELDS, items_key="activities", always=("sport",))
 DETAIL_FIELDS = FieldSet(DETAIL, FIELDS, always=("sport",))
 LAP_FIELDS = FieldSet(LAP, FIELDS, items_key="laps")

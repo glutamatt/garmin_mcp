@@ -6,7 +6,7 @@ import zipfile
 import pytest
 from unittest.mock import Mock, patch
 from garmin_mcp.api import activities as api
-from garmin_mcp.api.contract import InvalidInput, NotFound, Unavailable
+from garmin_mcp.api.contract import AuthError, InvalidInput, NotFound, Unavailable
 
 
 @pytest.fixture
@@ -59,7 +59,6 @@ class TestGetActivities:
             "date_range": {"start": "2024-01-01", "end": "2024-01-15"},
             "activities": [],
         }
-        client.query_garmin_graphql.assert_not_called()
 
     def test_no_data_pagination_is_an_empty_list(self, client):
         client.get_activities.return_value = []
@@ -74,77 +73,119 @@ class TestGetActivities:
         client.get_activities.assert_called_with(0, 100)
 
 
-class TestGraphQLEnrichment:
-    def test_enriches_training_load_when_no_fields_filter(self, client):
-        """GraphQL enrichment adds training_load when fields=None (no filter)."""
-        client.get_activities_by_date.return_value = [SAMPLE_RAW_ACTIVITY]
-        client.display_name = "test-user"
-        client.query_garmin_graphql.return_value = {
-            "data": {
-                "activitiesScalar": {
-                    "activityList": [
-                        {"activityId": 12345, "activityTrainingLoad": 142.5}
-                    ]
-                }
-            }
-        }
+class TestTrainingLoad:
+    def test_read_from_the_list_item(self, client):
+        """The list endpoint has `activityTrainingLoad` when the device computes it."""
+        client.get_activities_by_date.return_value = [{**SAMPLE_RAW_ACTIVITY, "activityTrainingLoad": 142.46}]
         result = api.get_activities(client, "2024-01-01", "2024-01-15")
         assert result["activities"][0]["training_load"] == 142.5
-        client.query_garmin_graphql.assert_called_once()
 
-    def test_enriches_when_training_load_in_fields(self, client):
-        """GraphQL call made when training_load is in requested fields."""
+    @pytest.mark.parametrize("call", [
+        lambda client: api.get_activities(client, "2024-01-01", "2024-01-15"),
+        lambda client: api.get_activities(client, start=0, limit=5),
+    ])
+    def test_no_graphql_call(self, call):
+        """The GraphQL list (`activitiesScalar`) has the same items as the REST list: never asked."""
+        client = Mock()
         client.get_activities_by_date.return_value = [SAMPLE_RAW_ACTIVITY]
-        client.display_name = "test-user"
-        client.query_garmin_graphql.return_value = {
-            "data": {
-                "activitiesScalar": {
-                    "activityList": [
-                        {"activityId": 12345, "activityTrainingLoad": 100.0}
-                    ]
-                }
-            }
-        }
-        result = api.get_activities(
-            client, "2024-01-01", "2024-01-15",
-            fields=["id", "training_load"],
-        )
-        assert result["activities"][0]["training_load"] == 100.0
-
-    def test_skips_graphql_when_field_not_requested(self, client):
-        """No GraphQL call when training_load is not in requested fields."""
-        client.get_activities_by_date.return_value = [SAMPLE_RAW_ACTIVITY]
-        result = api.get_activities(
-            client, "2024-01-01", "2024-01-15",
-            fields=["id", "name", "distance_m"],
-        )
-        assert "training_load" not in result["activities"][0]
+        client.get_activities.return_value = [SAMPLE_RAW_ACTIVITY]
+        call(client)
         client.query_garmin_graphql.assert_not_called()
 
-    def test_graphql_failure_doesnt_crash(self, client):
-        """GraphQL errors are silently ignored."""
-        client.get_activities_by_date.return_value = [SAMPLE_RAW_ACTIVITY]
-        client.display_name = "test-user"
-        client.query_garmin_graphql.side_effect = Exception("GraphQL down")
-        result = api.get_activities(client, "2024-01-01", "2024-01-15")
-        assert result["count"] == 1
-        assert "training_load" not in result["activities"][0]
 
-    def test_pagination_mode_enriches(self, client):
-        """Pagination mode also enriches via GraphQL."""
+def _detail(rpe=None, feel=None) -> dict:
+    summary = {"distance": 10000.0}
+    if rpe is not None:
+        summary["directWorkoutRpe"] = rpe
+    if feel is not None:
+        summary["directWorkoutFeel"] = feel
+    return {"activityId": 12345, "summaryDTO": summary}
+
+
+class TestWithEffort:
+    def _list(self, client, *ids):
+        client.get_activities_by_date.return_value = [{**SAMPLE_RAW_ACTIVITY, "activityId": i} for i in ids]
+
+    def test_adds_rpe_and_feel_from_each_detail(self, client):
+        self._list(client, 1, 2)
+        client.get_activity.side_effect = lambda i: _detail(rpe=30 if i == 1 else 70, feel=50)
+        result = api.get_activities(client, "2024-01-01", "2024-01-15", with_effort=True)
+        assert [(a["id"], a["perceived_effort"], a["workout_feel"]) for a in result["activities"]] == [
+            (1, 3.0, 50), (2, 7.0, 50),
+        ]
+        assert "effort_missing" not in result
+        assert sorted(c.args[0] for c in client.get_activity.call_args_list) == [1, 2]
+
+    def test_says_which_activities_have_no_rpe(self, client):
+        self._list(client, 1, 2)
+        client.get_activity.side_effect = lambda i: _detail(rpe=30) if i == 1 else _detail()
+        result = api.get_activities(client, "2024-01-01", "2024-01-15", with_effort=True)
+        assert result["effort_missing"] == {"2": "no_data"}
+        assert "perceived_effort" not in result["activities"][1]
+
+    def test_a_failed_detail_is_named_the_others_are_kept(self, client):
+        self._list(client, 1, 2)
+
+        def detail(i):
+            if i == 2:
+                raise ConnectionError("reset by peer")
+            return _detail(rpe=30)
+
+        client.get_activity.side_effect = detail
+        result = api.get_activities(client, "2024-01-01", "2024-01-15", with_effort=True)
+        assert result["activities"][0]["perceived_effort"] == 3.0
+        assert result["effort_missing"]["2"].startswith("error: ")
+        assert "reset by peer" in result["effort_missing"]["2"]
+
+    def test_every_detail_failing_fails_the_list(self, client):
+        self._list(client, 1, 2)
+        client.get_activity.side_effect = NotFound("gone")
+        with pytest.raises(NotFound):
+            api.get_activities(client, "2024-01-01", "2024-01-15", with_effort=True)
+
+    def test_an_auth_error_fails_the_list(self, client):
+        self._list(client, 1, 2)
+
+        def detail(i):
+            if i == 2:
+                raise AuthError("login refused")
+            return _detail(rpe=30)
+
+        client.get_activity.side_effect = detail
+        with pytest.raises(AuthError):
+            api.get_activities(client, "2024-01-01", "2024-01-15", with_effort=True)
+
+    def test_list_fields_are_kept(self, client):
+        self._list(client, 1)
+        client.get_activity.return_value = _detail(rpe=30)
+        activity = api.get_activities(client, "2024-01-01", "2024-01-15", with_effort=True)["activities"][0]
+        assert activity["distance_m"] == 10000
+        assert activity["start_time"] == "2024-01-15T07:00:00"
+        assert "summaryDTO" not in activity
+
+    def test_pagination_mode(self, client):
         client.get_activities.return_value = [SAMPLE_RAW_ACTIVITY]
-        client.display_name = "test-user"
-        client.query_garmin_graphql.return_value = {
-            "data": {
-                "activitiesScalar": {
-                    "activityList": [
-                        {"activityId": 12345, "activityTrainingLoad": 88.0}
-                    ]
-                }
-            }
-        }
-        result = api.get_activities(client, start=0, limit=5)
-        assert result["activities"][0]["training_load"] == 88.0
+        client.get_activity.return_value = _detail(rpe=20)
+        result = api.get_activities(client, start=0, limit=5, with_effort=True)
+        assert result["activities"][0]["perceived_effort"] == 2.0
+
+    def test_empty_list_makes_no_detail_call(self, client):
+        client.get_activities_by_date.return_value = []
+        result = api.get_activities(client, "2024-01-01", "2024-01-15", with_effort=True)
+        assert result["count"] == 0
+        assert "effort_missing" not in result
+        client.get_activity.assert_not_called()
+
+    def test_too_many_activities_is_invalid_input(self, client):
+        self._list(client, *range(api.EFFORT_MAX_ACTIVITIES + 1))
+        with pytest.raises(InvalidInput, match="shorter range"):
+            api.get_activities(client, "2020-01-01", "2024-01-15", with_effort=True)
+        client.get_activity.assert_not_called()
+
+    def test_without_the_option_no_detail_call(self, client):
+        self._list(client, 1)
+        api.get_activities(client, "2024-01-01", "2024-01-15")
+        client.get_activity.assert_not_called()
 
 
 class TestGetActivity:

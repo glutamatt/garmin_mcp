@@ -2,11 +2,13 @@
 Health & Wellness API — curated daily health data.
 
 Pure functions: (Garmin client, params) → dict.
-A day without data is `{"date", "available": False, "reason": "no_data"}`;
+A day without data is `{"date", "available": False, "reason": "no_data"}`
+(`not_supported_by_device` for a device feature, see `api/capabilities.py`);
 failures are exceptions (see `api/contract.py`).
 """
 
 from garminconnect import Garmin
+from garmin_mcp.api import capabilities
 from garmin_mcp.api.contract import (
     NO_DATA,
     AuthError,
@@ -23,8 +25,9 @@ def get_coaching_snapshot(client: Garmin, date: str) -> dict:
     """One-call daily overview: stats + sleep + readiness + body battery + HRV.
 
     Each section is its curated data, or `{"available": False, "reason": …}`:
-    `no_data` when Garmin has nothing for that day, `error: …` when its call
-    failed. An auth error fails the snapshot at once; so does a failure of
+    `no_data` when Garmin has nothing for that day, `not_supported_by_device`
+    when no device of the athlete computes it (readiness), `error: …` when its
+    call failed. An auth error fails the snapshot at once; so does a failure of
     every section.
 
     The sections are fetched here, one call each, and not with the SDK's
@@ -32,11 +35,15 @@ def get_coaching_snapshot(client: Garmin, date: str) -> dict:
     """
     snapshot = {"date": date}
     errors = []
-    for name, method, curate in _SNAPSHOT_SECTIONS:
+    for name, method, curate, feature in _SNAPSHOT_SECTIONS:
         try:
             raw = getattr(client, method)(date)
             curated = curate(raw) if raw else None
-            snapshot[name] = curated if has_data(curated) else unavailable(NO_DATA)
+            if has_data(curated):
+                snapshot[name] = curated
+            else:
+                reason = capabilities.missing_reason(client, feature) if feature else NO_DATA
+                snapshot[name] = unavailable(reason)
         except Exception as e:
             error = as_garmin_error(e)
             if isinstance(error, AuthError):
@@ -178,7 +185,7 @@ def get_training_readiness(client: Garmin, date: str) -> dict:
     """Curated training readiness: score, contributing factors."""
     raw = client.get_training_readiness(date)
     if not raw:
-        return day_answer(date, None)
+        return capabilities.day_answer(client, capabilities.TRAINING_READINESS, date, None)
 
     # API can return a list
     entries = raw if isinstance(raw, list) else [raw]
@@ -187,7 +194,7 @@ def get_training_readiness(client: Garmin, date: str) -> dict:
         curated.append(_curate_readiness_entry(r))
 
     if len(curated) == 1:
-        return day_answer(date, curated[0])
+        return capabilities.day_answer(client, capabilities.TRAINING_READINESS, date, curated[0])
     return {"entries": curated}
 
 
@@ -330,11 +337,11 @@ def _curate_hrv(hrv_data: dict) -> dict | None:
     })
 
 
-# (section, client method called with the date, curation) — in output order.
+# (section, client method called with the date, curation, device feature or None) — in output order.
 _SNAPSHOT_SECTIONS = (
-    ("stats", "get_user_summary", _curate_stats),
-    ("sleep", "get_sleep_data", _curate_sleep),
-    ("training_readiness", "get_training_readiness", _curate_readiness),
-    ("body_battery", "get_body_battery", _curate_body_battery_summary),
-    ("hrv", "get_hrv_data", _curate_hrv),
+    ("stats", "get_user_summary", _curate_stats, None),
+    ("sleep", "get_sleep_data", _curate_sleep, None),
+    ("training_readiness", "get_training_readiness", _curate_readiness, capabilities.TRAINING_READINESS),
+    ("body_battery", "get_body_battery", _curate_body_battery_summary, None),
+    ("hrv", "get_hrv_data", _curate_hrv, None),
 )
