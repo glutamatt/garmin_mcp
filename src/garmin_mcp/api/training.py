@@ -2,11 +2,15 @@
 Training & Performance API — curated fitness metrics.
 
 Pure functions: (Garmin client, params) → dict.
-A day without data is `{"date", "available": False, "reason": "no_data"}`;
+A day without data is `{"date", "available": False, "reason": "no_data"}`
+(`not_supported_by_device` for a device feature, see `api/capabilities.py`);
 failures are exceptions (see `api/contract.py`).
 """
 
+import re
+
 from garminconnect import Garmin
+from garmin_mcp.api import capabilities
 from garmin_mcp.api.contract import NO_DATA, day_answer, unavailable
 from garmin_mcp.utils import clean_nones
 
@@ -64,55 +68,104 @@ def get_hrv_data(client: Garmin, date: str) -> dict:
 
 
 def get_training_status(client: Garmin, date: str) -> dict:
-    """Training status: productive/maintaining/detraining, ACWR, VO2, load balance."""
-    raw = client.get_training_status(date)
-    if not raw:
-        return day_answer(date, None)
+    """Training status of the main device: status, acute and chronic load (ACWR),
+    weekly load, monthly load balance and its targets, VO2max.
 
-    recent_status = raw.get("mostRecentTrainingStatus") or {}
-    latest_data = recent_status.get("latestTrainingStatusData") or {}
-
-    # Get first device data
-    device_data = {}
-    for _device_id, data in latest_data.items():
-        device_data = data
-        break
-
-    acwr = device_data.get("acuteTrainingLoadDTO") or {}
+    Garmin keeps one entry per device that computes it, keyed by device id
+    (`latestTrainingStatusData`, `metricsTrainingLoadBalanceDTOMap`). The main
+    device is the entry with `primaryTrainingDevice: true`, else the latest one.
+    A watch that computes no training status (Forerunner 165) gets an answer of
+    nulls: `not_supported_by_device`.
+    """
+    raw = client.get_training_status(date) or {}
+    status_block = raw.get("mostRecentTrainingStatus") or {}
+    balance_block = raw.get("mostRecentTrainingLoadBalance") or {}
+    status = _main_device_entry(status_block.get("latestTrainingStatusData"))
+    balance = _main_device_entry(balance_block.get("metricsTrainingLoadBalanceDTOMap"))
+    acute = status.get("acuteTrainingLoadDTO") or {}
     vo2 = (raw.get("mostRecentVO2Max") or {}).get("generic") or {}
+    phrase = status.get("trainingStatusFeedbackPhrase")
+    device_id = status.get("deviceId") or balance.get("deviceId")
 
-    # Load balance
-    load_balance = raw.get("mostRecentTrainingLoadBalance") or {}
-    load_map = load_balance.get("metricsTrainingLoadBalanceDTOMap") or {}
-    load_data = {}
-    for _device_id, data in load_map.items():
-        load_data = data
-        break
-
-    return day_answer(date, clean_nones({
-        "date": device_data.get("calendarDate", date),
+    curated = clean_nones({
+        "date": status.get("calendarDate") or balance.get("calendarDate") or date,
+        "device": _device_name(device_id, status_block, balance_block),
+        "device_id": device_id,
         # Training status
-        "training_status": device_data.get("trainingStatus"),
-        "training_status_feedback": device_data.get("trainingStatusFeedbackPhrase"),
-        "sport": device_data.get("sport"),
-        "fitness_trend": device_data.get("fitnessTrend"),
-        # ACWR
-        "acute_load": acwr.get("dailyTrainingLoadAcute"),
-        "chronic_load": acwr.get("dailyTrainingLoadChronic"),
-        "load_ratio": acwr.get("dailyAcuteChronicWorkloadRatio"),
-        "acwr_status": acwr.get("acwrStatus"),
-        "acwr_percent": acwr.get("acwrPercent"),
-        "optimal_chronic_load_min": acwr.get("minTrainingLoadChronic"),
-        "optimal_chronic_load_max": acwr.get("maxTrainingLoadChronic"),
+        "training_status": _status_label(phrase) or status.get("trainingStatus"),
+        "training_status_feedback": phrase,
+        "training_paused": status.get("trainingPaused"),
+        "sport": status.get("sport"),
+        "fitness_trend": status.get("fitnessTrend"),
+        # Weekly load (devices without ACWR) and its optimal range
+        "weekly_training_load": _load(status.get("weeklyTrainingLoad")),
+        "optimal_weekly_load_min": _load(status.get("loadTunnelMin")),
+        "optimal_weekly_load_max": _load(status.get("loadTunnelMax")),
+        # ACWR: acute load (7 days) / chronic load (28 days)
+        "acute_load": _load(acute.get("dailyTrainingLoadAcute")),
+        "chronic_load": _load(acute.get("dailyTrainingLoadChronic")),
+        "load_ratio": acute.get("dailyAcuteChronicWorkloadRatio"),
+        "acwr_status": acute.get("acwrStatus"),
+        "acwr_status_feedback": acute.get("acwrStatusFeedback"),
+        "acwr_percent": acute.get("acwrPercent"),
+        "optimal_chronic_load_min": _load(acute.get("minTrainingLoadChronic")),
+        "optimal_chronic_load_max": _load(acute.get("maxTrainingLoadChronic")),
         # VO2 Max
         "vo2_max": vo2.get("vo2MaxValue"),
         "vo2_max_precise": vo2.get("vo2MaxPreciseValue"),
-        # Monthly load balance
-        "monthly_load_aerobic_low": load_data.get("monthlyLoadAerobicLow"),
-        "monthly_load_aerobic_high": load_data.get("monthlyLoadAerobicHigh"),
-        "monthly_load_anaerobic": load_data.get("monthlyLoadAnaerobic"),
-        "training_balance_feedback": load_data.get("trainingBalanceFeedbackPhrase"),
-    }))
+        # Monthly load balance (4 weeks) and Garmin's target range for each part
+        **_monthly_load(balance),
+        "training_balance_feedback": balance.get("trainingBalanceFeedbackPhrase"),
+    })
+    return capabilities.day_answer(client, capabilities.TRAINING_STATUS, date, curated)
+
+
+# Garmin's feedback phrase is `<STATUS>_<n>` (`PRODUCTIVE_3`, `MAINTAINING_3`); its
+# `trainingStatus` is a number (7, 4) with no table published.
+_STATUS_PHRASE = re.compile(r"^([A-Z_]+?)_\d+$")
+
+# The three parts of the monthly load balance: output prefix → Garmin's prefix.
+_MONTHLY_LOADS = {
+    "monthly_load_aerobic_low": "monthlyLoadAerobicLow",
+    "monthly_load_aerobic_high": "monthlyLoadAerobicHigh",
+    "monthly_load_anaerobic": "monthlyLoadAnaerobic",
+}
+
+
+def _main_device_entry(by_device: dict | None) -> dict:
+    """The entry of the main device: `primaryTrainingDevice: true`, else the latest."""
+    entries = [e for e in (by_device or {}).values() if isinstance(e, dict)]
+    if not entries:
+        return {}
+    primary = [e for e in entries if e.get("primaryTrainingDevice")]
+    return max(primary or entries, key=lambda e: (e.get("calendarDate") or "", e.get("timestamp") or 0))
+
+
+def _device_name(device_id, *blocks: dict) -> str | None:
+    for block in blocks:
+        for device in block.get("recordedDevices") or []:
+            if device.get("deviceId") == device_id:
+                return device.get("deviceName")
+    return None
+
+
+def _status_label(phrase: str | None) -> str | None:
+    match = _STATUS_PHRASE.match(phrase or "")
+    return match.group(1) if match else None
+
+
+def _load(value: float | None) -> int | None:
+    """A training load: Garmin gives floats (1926.3918), the unit is a whole point."""
+    return round(value) if value is not None else None
+
+
+def _monthly_load(balance: dict) -> dict:
+    loads = {}
+    for name, key in _MONTHLY_LOADS.items():
+        loads[name] = _load(balance.get(key))
+        loads[f"{name}_target_min"] = _load(balance.get(f"{key}TargetMin"))
+        loads[f"{name}_target_max"] = _load(balance.get(f"{key}TargetMax"))
+    return loads
 
 
 def get_progress_summary(

@@ -7,7 +7,8 @@ Every api function answers in one of three ways:
   `{"count": 0, "<items>": []}`. Empty is never an error.
 - **Unavailable**: a one-object answer (a day, a section of the snapshot) that
   Garmin cannot give. `unavailable(reason)` →
-  `{"available": False, "reason": "no_data" | "error: <message>"}`.
+  `{"available": False, "reason": "no_data" | "not_supported_by_device" | "error: <message>"}`.
+  `not_supported_by_device` comes from the device capabilities (`api/capabilities.py`).
 - **Failure**: one of the exceptions below. The CLI prints the message on
   stderr and exits with `exit_code` (1, or 2 for invalid input).
 
@@ -25,6 +26,7 @@ from requests import RequestException
 from garmin_mcp.client_factory import GarminTokenError
 
 NO_DATA = "no_data"
+NOT_SUPPORTED_BY_DEVICE = "not_supported_by_device"
 
 
 # ── Failures ─────────────────────────────────────────────────────────────────

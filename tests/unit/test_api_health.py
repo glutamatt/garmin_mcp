@@ -234,6 +234,22 @@ class TestGetCoachingSnapshot:
         for section in ("sleep", "training_readiness", "body_battery", "hrv"):
             assert result[section] == {"available": False, "reason": "no_data"}
 
+    def test_readiness_not_computed_by_the_device_says_so(self, client):
+        """Forerunner 165: no readiness, `hasTrainingReadinessCapableDevice: false`."""
+        client.get_training_readiness.return_value = []
+        client.get_hrv_data.return_value = {}
+        client.get_usage_indicators.return_value = {
+            "deviceBasedIndicators": {"hasTrainingReadinessCapableDevice": False},
+        }
+        result = api.get_coaching_snapshot(client, "2024-01-15")
+        assert result["training_readiness"] == {"available": False, "reason": "not_supported_by_device"}
+        assert result["hrv"] == {"available": False, "reason": "no_data"}  # no device reason for HRV yet
+        client.get_usage_indicators.assert_called_once()
+
+    def test_sections_with_data_read_no_capabilities(self, client):
+        api.get_coaching_snapshot(client, "2024-01-15")
+        client.get_usage_indicators.assert_not_called()
+
     def test_failed_section_says_why(self, client):
         """A 429 on one endpoint is not "no data": the reason carries the error."""
         client.get_hrv_data.side_effect = GarminConnectTooManyRequestsError("Rate limit exceeded")
@@ -312,6 +328,15 @@ class TestGetTrainingReadiness:
     def test_no_data_is_unavailable(self, client):
         client.get_training_readiness.return_value = []
         assert api.get_training_readiness(client, "2024-01-15") == NO_DATA_DAY
+
+    def test_not_computed_by_the_device(self, client):
+        client.get_training_readiness.return_value = []
+        client.get_usage_indicators.return_value = {
+            "deviceBasedIndicators": {"hasTrainingReadinessCapableDevice": False},
+        }
+        assert api.get_training_readiness(client, "2024-01-15") == {
+            "date": "2024-01-15", "available": False, "reason": "not_supported_by_device",
+        }
 
 
 # ── Days without data ────────────────────────────────────────────────────────

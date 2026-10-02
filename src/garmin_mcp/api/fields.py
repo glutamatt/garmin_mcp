@@ -34,10 +34,14 @@ ONLY_IN = "only_in"
 
 @dataclass(frozen=True)
 class Source:
-    """One shape of raw Garmin data (a list item, a detail, a lap), and the command that shows it."""
+    """One shape of raw Garmin data (a list item, a detail, a lap), and the command that shows it.
+
+    `option`: the command gives this shape only with this option (`--with effort`).
+    """
 
     name: str
     command: str
+    option: str | None = None
 
 
 # How to read a raw value: a dotted path in the raw item, or a function of the raw item.
@@ -55,6 +59,7 @@ class Field:
     convert: Callable[[Any], Any] | None = None
     digits: int | None = None  # rounding after `convert`; 0 gives an int
     formerly: tuple[str, ...] = ()  # old output names: `--fields` with one says the new name
+    feature: str | None = None  # the device feature that computes it (`api/capabilities.py`)
 
     def read(self, source: Source, raw: dict) -> Any:
         """The curated value of this field in `raw`, or None when Garmin has none."""
@@ -119,12 +124,16 @@ class FieldSet:
                 f"Fields: {', '.join(self.names)}"
             )
 
-    def select(self, answer: dict, requested: list[str]) -> dict:
+    def select(self, answer: dict, requested: list[str],
+               missing_reason: Callable[[str], str] | None = None) -> dict:
         """The answer with only the requested fields in its items, and why some of them are empty.
 
         `empty_fields` maps each requested field that no item has to its reason:
-        `no_data` (Garmin gave no value), or `only_in: <commands>` (this command
-        does not give it). An answer without items says nothing: empty is empty.
+        - `no_data`: Garmin gave no value;
+        - `not_supported_by_device`: no device of the athlete computes it. Only for a
+          field with a `feature`, from `missing_reason(feature)` (`api/capabilities.py`);
+        - `only_in: <commands>`: this command does not give it.
+        An answer without items says nothing: empty is empty.
         """
         keep = set(requested) | set(self.always)
         if self.items_key is None:
@@ -133,12 +142,13 @@ class FieldSet:
         else:
             items = answer[self.items_key]
             selected = {**answer, self.items_key: [_only(item, keep) for item in items]}
-        empty = self.empty_fields(items, requested) if items else {}
+        empty = self.empty_fields(items, requested, missing_reason) if items else {}
         if empty:
             selected["empty_fields"] = empty
         return selected
 
-    def empty_fields(self, items: list[dict], requested: list[str]) -> dict[str, str]:
+    def empty_fields(self, items: list[dict], requested: list[str],
+                     missing_reason: Callable[[str], str] | None = None) -> dict[str, str]:
         by_name = {f.name: f for f in self.registry}
         present = {name for item in items for name in item}
         empty = {}
@@ -147,10 +157,23 @@ class FieldSet:
                 continue
             field = by_name[name]
             if self.source in field.keys:
-                empty[name] = NO_DATA
+                device_dependent = field.feature is not None and missing_reason is not None
+                empty[name] = missing_reason(field.feature) if device_dependent else NO_DATA
             else:
-                empty[name] = f"{ONLY_IN}: {', '.join(s.command for s in field.keys)}"
+                empty[name] = f"{ONLY_IN}: {_commands(field.keys)}"
         return empty
+
+
+def _commands(sources) -> str:
+    """The commands that give a field, each once: `activities list --with effort, activities get`.
+    A command that gives it without its option is named without the option."""
+    plain = {s.command for s in sources if s.option is None}
+    names = []
+    for source in sources:
+        name = source.command if source.command in plain else f"{source.command} {source.option}"
+        if name not in names:
+            names.append(name)
+    return ", ".join(names)
 
 
 def dig(raw: Any, path: str) -> Any:

@@ -276,8 +276,116 @@ class TestEmptyFields:
         assert result["exit_code"] == 0
         assert json.loads(result["stdout"]) == {
             "activity_id": 1, "lap_count": 1, "laps": [{"lap_number": 1}],
-            "empty_fields": {"gap_s_per_km": "no_data", "perceived_effort": "only_in: activities get"},
+            "empty_fields": {
+                "gap_s_per_km": "no_data",
+                "perceived_effort": "only_in: activities list --with effort, activities get",
+            },
         }
+
+
+class TestDeviceReason:
+    """`not_supported_by_device` comes from the device capabilities, read only for an empty field."""
+
+    NO_LOAD = {"deviceBasedIndicators": {"hasAcuteTrainingLoadCapableDevice": False}}
+
+    def test_list_training_load_not_computed_by_the_device(self):
+        client = Mock()
+        client.get_activities_by_date.return_value = [{"activityId": 1, "distance": 5000.0}]
+        client.get_usage_indicators.return_value = self.NO_LOAD
+        result = _run("activities list --from 2024-01-01 --to 2024-01-07 --fields id,training_load", client)
+        assert result["exit_code"] == 0
+        assert json.loads(result["stdout"])["empty_fields"] == {"training_load": "not_supported_by_device"}
+
+    def test_detail_training_load_not_computed_by_the_device(self):
+        client = Mock()
+        client.get_activity.return_value = {"activityId": 1, "summaryDTO": {"distance": 5000.0}}
+        client.get_activity_weather.return_value = None
+        client.get_usage_indicators.return_value = self.NO_LOAD
+        result = _run("activities get 1 --fields distance_m,training_load", client)
+        assert json.loads(result["stdout"])["empty_fields"] == {"training_load": "not_supported_by_device"}
+
+    def test_an_auth_error_on_the_capabilities_fails_the_command(self):
+        client = Mock()
+        client.get_activities_by_date.return_value = [{"activityId": 1}]
+        client.get_usage_indicators.side_effect = _http_error(401)
+        result = _run("activities list --from 2024-01-01 --to 2024-01-07 --fields id,training_load", client)
+        assert result["exit_code"] == 1
+        assert result["stdout"] == ""
+        assert "Garmin login refused" in result["stderr"]
+
+    def test_a_field_with_a_value_reads_no_capabilities(self):
+        client = Mock()
+        client.get_activities_by_date.return_value = [{"activityId": 1, "activityTrainingLoad": 80.0}]
+        result = _run("activities list --from 2024-01-01 --to 2024-01-07 --fields id,training_load", client)
+        assert json.loads(result["stdout"])["activities"] == [{"id": 1, "training_load": 80.0}]
+        client.get_usage_indicators.assert_not_called()
+
+    def test_training_status_not_computed_by_the_device(self):
+        client = Mock()
+        client.get_training_status.return_value = {"userId": 1, "mostRecentTrainingStatus": None}
+        client.get_usage_indicators.return_value = {
+            "deviceBasedIndicators": {"hasTrainingStatusCapableDevice": False},
+        }
+        result = _run("training status 2024-01-15", client)
+        assert result["exit_code"] == 0
+        assert json.loads(result["stdout"]) == {
+            "date": "2024-01-15", "available": False, "reason": "not_supported_by_device",
+        }
+
+
+# ── activities list --with effort ────────────────────────────────────────────
+
+
+class TestWithEffort:
+    LIST = "activities list --from 2024-01-01 --to 2024-01-07"
+
+    def _client(self):
+        client = Mock()
+        client.get_activities_by_date.return_value = [
+            {"activityId": 1, "distance": 5000.0}, {"activityId": 2, "distance": 8000.0},
+        ]
+        client.get_activity.side_effect = lambda i: {
+            "activityId": i, "summaryDTO": {"directWorkoutRpe": 40, "directWorkoutFeel": 75} if i == 1 else {},
+        }
+        return client
+
+    def test_effort_in_the_list_and_the_activities_without_rpe(self):
+        result = _run(f"{self.LIST} --with effort --fields id,perceived_effort,workout_feel", self._client())
+        assert result["exit_code"] == 0
+        assert result["stderr"] == ""
+        assert json.loads(result["stdout"]) == {
+            "count": 2,
+            "date_range": {"start": "2024-01-01", "end": "2024-01-07"},
+            "activities": [{"id": 1, "perceived_effort": 4.0, "workout_feel": 75}, {"id": 2}],
+            "effort_missing": {"2": "no_data"},
+        }
+
+    def test_no_rpe_at_all_is_no_data(self):
+        client = self._client()
+        client.get_activity.side_effect = lambda i: {"activityId": i, "summaryDTO": {}}
+        out = json.loads(_run(f"{self.LIST} --with effort --fields id,perceived_effort", client)["stdout"])
+        assert out["empty_fields"] == {"perceived_effort": "no_data"}
+        assert out["effort_missing"] == {"1": "no_data", "2": "no_data"}
+
+    def test_without_the_option_the_list_says_where_the_effort_is(self):
+        client = self._client()
+        out = json.loads(_run(f"{self.LIST} --fields id,perceived_effort", client)["stdout"])
+        assert out["empty_fields"] == {"perceived_effort": "only_in: activities list --with effort, activities get"}
+        client.get_activity.assert_not_called()
+
+    def test_unknown_extra_is_invalid_input(self):
+        client = Mock()
+        result = _run(f"{self.LIST} --with zones", client)
+        assert result["exit_code"] == 2
+        client.get_activities_by_date.assert_not_called()
+
+    def test_unknown_field_is_refused_before_any_call(self):
+        client = Mock()
+        result = _run(f"{self.LIST} --with effort --fields id,rpe", client)
+        assert result["exit_code"] == 2
+        assert "Unknown fields for activities list: rpe." in result["stderr"]
+        client.get_activities_by_date.assert_not_called()
+        client.get_activity.assert_not_called()
 
 
 # ── as_garmin_error ──────────────────────────────────────────────────────────

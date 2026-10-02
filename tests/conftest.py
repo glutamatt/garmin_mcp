@@ -76,7 +76,6 @@ def mock_garmin_client():
     client.delete_workout = Mock(return_value=True)
     client.reschedule_workout = Mock(return_value={})
     client.get_scheduled_workouts_for_range = Mock(return_value=[])
-    client.query_garmin_graphql = Mock(return_value={})
 
     return client
 
