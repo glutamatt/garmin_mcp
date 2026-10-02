@@ -1,10 +1,9 @@
-"""Unit tests for garmin_mcp.api.workouts — preprocessing, normalization, CRUD."""
+"""Unit tests for garmin_mcp.api.workouts — payload, preview, curation, CRUD."""
 
-import json
 import pytest
 from unittest.mock import Mock
 from garmin_mcp.api import workouts as api
-from garmin_mcp.api.contract import GarminWriteError, NotFound
+from garmin_mcp.api.contract import GarminWriteError, InvalidInput, NotFound
 
 
 @pytest.fixture
@@ -12,106 +11,43 @@ def client():
     return Mock()
 
 
-# ── Preprocessing ─────────────────────────────────────────────────────────────
+EASY = {"name": "Test", "sport": "running", "steps": [{"warmup": "lap"}]}
 
 
-class TestPreprocessWorkoutInput:
-    def test_simplified_format(self):
-        data = {
-            "workoutName": "Easy 5K",
-            "sport": "running",
-            "steps": [
-                {"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "endConditionValue": 600},
-                {"stepOrder": 2, "stepType": "interval", "endCondition": "distance", "endConditionValue": 5000},
-                {"stepOrder": 3, "stepType": "cooldown", "endCondition": "time", "endConditionValue": 300},
-            ],
+# ── Readable format → payload ─────────────────────────────────────────────────
+
+
+class TestPrepareWorkout:
+    def test_payload_of_a_readable_workout(self):
+        native = api.prepare_workout({"name": "Test", "sport": "running", "steps": [
+            {"warmup": "10:00"}, {"run": "5km", "pace": "5:00"}]})
+        assert native["workoutName"] == "Test"
+        assert native["estimatedDurationInSecs"] == 600 + 1500
+        assert "avgTrainingSpeed" not in native
+
+    def test_invalid_workout_is_invalid_input(self):
+        with pytest.raises(InvalidInput):
+            api.prepare_workout({"workoutName": "Test", "steps": []})
+
+
+class TestPreviewWorkout:
+    def test_steps_read_back_with_estimates(self):
+        preview = api.preview_workout({"name": "Test", "sport": "running", "steps": [
+            {"run": "1km", "pace": "5:30-5:00"}]})
+        assert preview == {
+            "workout": {"name": "Test", "sport": "running", "steps": [{"run": "1km", "pace": "5:00-5:30"}]},
+            "estimated_duration_s": 315,
+            "estimated_distance_m": 1000,
         }
-        result = api.preprocess_workout_input(data)
 
-        assert result["workoutName"] == "Easy 5K"
-        assert result["sportType"]["sportTypeId"] == 1
-        assert len(result["workoutSegments"]) == 1
-        assert len(result["workoutSegments"][0]["workoutSteps"]) == 3
-        step = result["workoutSegments"][0]["workoutSteps"][0]
-        assert step["stepType"]["stepTypeKey"] == "warmup"
-        assert step["endCondition"]["conditionTypeKey"] == "time"
-
-    def test_already_full_format_passthrough(self):
-        data = {
-            "workoutName": "Test",
-            "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
-            "workoutSegments": [{
-                "segmentOrder": 1,
-                "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
-                "workoutSteps": [{
-                    "stepOrder": 1,
-                    "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
-                    "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
-                }],
-            }],
+    def test_missing_estimate_says_why(self):
+        preview = api.preview_workout({"name": "Test", "sport": "running", "steps": [
+            {"warmup": "lap"}, {"run": "30:00"}]})
+        assert "estimated_duration_s" not in preview
+        assert preview["not_estimated"] == {
+            "duration_s": ["steps[0] (lap)"],
+            "distance_m": ["steps[0] (lap)", "steps[1] (no pace)"],
         }
-        result = api.preprocess_workout_input(data)
-        assert result == data  # Should pass through unchanged
-
-    def test_repeat_group(self):
-        data = {
-            "workoutName": "Intervals",
-            "sport": "running",
-            "steps": [
-                {
-                    "stepOrder": 1,
-                    "stepType": "repeat",
-                    "numberOfIterations": 6,
-                    "workoutSteps": [
-                        {"stepOrder": 1, "stepType": "interval", "endCondition": "distance", "endConditionValue": 800},
-                        {"stepOrder": 2, "stepType": "recovery", "endCondition": "distance", "endConditionValue": 200},
-                    ],
-                }
-            ],
-        }
-        result = api.preprocess_workout_input(data)
-        repeat = result["workoutSegments"][0]["workoutSteps"][0]
-        assert repeat["numberOfIterations"] == 6
-        assert len(repeat["workoutSteps"]) == 2
-
-    def test_target_value_aliases(self):
-        data = {
-            "workoutName": "Pace",
-            "sport": "running",
-            "steps": [
-                {
-                    "stepOrder": 1,
-                    "stepType": "interval",
-                    "endCondition": "distance",
-                    "endConditionValue": 1000,
-                    "targetType": "pace.zone",
-                    "targetValueHigh": 4.0,
-                    "targetValueLow": 3.5,
-                }
-            ],
-        }
-        result = api.preprocess_workout_input(data)
-        step = result["workoutSegments"][0]["workoutSteps"][0]
-        assert step["targetValueOne"] == 4.0
-        assert step["targetValueTwo"] == 3.5
-
-
-# ── prepare_workout_json ──────────────────────────────────────────────────────
-
-
-class TestPrepareWorkoutJson:
-    def test_returns_valid_json(self):
-        data = {
-            "workoutName": "Test",
-            "sport": "running",
-            "steps": [
-                {"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "endConditionValue": 600},
-            ],
-        }
-        result = api.prepare_workout_json(data)
-        parsed = json.loads(result)
-        assert parsed["workoutName"] == "Test"
-        assert "workoutSegments" in parsed
 
 
 # ── CRUD operations ───────────────────────────────────────────────────────────
@@ -132,6 +68,35 @@ class TestGetWorkouts:
         client.get_workouts.return_value = None
         assert api.get_workouts(client) == {"count": 0, "workouts": []}
 
+    def test_estimates_and_update_date(self, client):
+        """Garmin's keys: `estimatedDurationInSecs`, `estimatedDistanceInMeters`; the list says `updateDate`."""
+        client.get_workouts.return_value = [
+            {"workoutId": 1, "estimatedDurationInSecs": 315, "estimatedDistanceInMeters": 1000.0,
+             "updateDate": "2026-10-02T10:36:14.0"},
+            {"workoutId": 2, "estimatedDurationInSecs": 0, "estimatedDistanceInMeters": 0.0},
+        ]
+        first, second = api.get_workouts(client)["workouts"]
+        assert first["estimated_duration_s"] == 315
+        assert first["estimated_distance_m"] == 1000
+        assert first["updated_date"] == "2026-10-02T10:36:14.0"
+        # 0 is Garmin's "no estimate".
+        assert "estimated_duration_s" not in second
+        assert "estimated_distance_m" not in second
+
+
+RAW_WORKOUT = {
+    "workoutId": 7, "workoutName": "Easy", "description": "Flat", "createdDate": "2026-10-01T14:23:37.0",
+    "updatedDate": "2026-10-01T14:23:37.0", "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+    "estimatedDurationInSecs": 0, "estimatedDistanceInMeters": 0.0, "avgTrainingSpeed": 2.5,
+    "workoutSegments": [{"segmentOrder": 1, "workoutSteps": [
+        {"type": "ExecutableStepDTO", "stepOrder": 1,
+         "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+         "endCondition": {"conditionTypeKey": "time"}, "endConditionValue": 2400.0,
+         "targetType": {"workoutTargetTypeId": 6, "workoutTargetTypeKey": "pace.zone"},
+         "targetValueOne": 3.0303, "targetValueTwo": 3.3333, "description": "HR < 160"},
+    ]}],
+}
+
 
 class TestGetWorkoutById:
     def test_no_workout_is_not_found(self, client):
@@ -139,8 +104,43 @@ class TestGetWorkoutById:
         with pytest.raises(NotFound, match="123"):
             api.get_workout_by_id(client, 123)
 
+    def test_readable_format(self, client):
+        client.get_workout_by_id.return_value = RAW_WORKOUT
+        result = api.get_workout_by_id(client, 7)
+        assert result["id"] == 7
+        assert result["name"] == "Easy"
+        assert result["sport"] == "running"
+        assert result["description"] == "Flat"
+        assert result["steps"] == [{"run": "40:00", "pace": "5:00-5:30", "note": "HR < 160"}]
+        assert result["created_date"] == "2026-10-01T14:23:37.0"
+        # Our own upload default, not Garmin's: never shown.
+        assert "avg_training_speed_mps" not in result
+        assert "estimated_duration_s" not in result
+        assert result["warnings"][0].startswith("steps[0].pace: Garmin has the slower bound first")
+
+    def test_raw_is_garmin_json_unchanged(self, client):
+        client.get_workout_by_id.return_value = RAW_WORKOUT
+        assert api.get_workout_by_id(client, 7, raw=True) is RAW_WORKOUT
+
+    def test_get_output_goes_back_into_create(self, client):
+        """get → create as is: the read-only keys are ignored, the pace order is fixed."""
+        client.get_workout_by_id.return_value = RAW_WORKOUT
+        native = api.prepare_workout(api.get_workout_by_id(client, 7))
+        (step,) = native["workoutSegments"][0]["workoutSteps"]
+        assert step["targetValueOne"] == pytest.approx(3.3333, abs=1e-4)
+        assert step["targetValueTwo"] == pytest.approx(3.0303, abs=1e-4)
+        assert native["estimatedDurationInSecs"] == 2400
+
 
 class TestGetScheduledWorkouts:
+    def test_estimates(self, client):
+        client.get_scheduled_workouts_for_range.return_value = [
+            {"scheduledWorkoutId": 9, "workoutId": 7, "scheduleDate": "2026-10-03",
+             "estimatedDurationInSecs": 2400, "estimatedDistanceInMeters": 0.0}]
+        (item,) = api.get_scheduled_workouts(client, "2026-10-01", "2026-10-31")["scheduled_workouts"]
+        assert item["estimated_duration_s"] == 2400
+        assert "estimated_distance_m" not in item
+
     def test_empty_range_is_an_empty_list(self, client):
         client.get_scheduled_workouts_for_range.return_value = []
         assert api.get_scheduled_workouts(client, "2024-01-01", "2024-01-31") == {
@@ -151,14 +151,21 @@ class TestGetScheduledWorkouts:
 
 
 class TestCreateWorkout:
+    def test_uploads_the_payload(self, client):
+        client.upload_workout.return_value = {"workoutId": 42}
+        api.create_workout(client, EASY)
+        (payload,) = client.upload_workout.call_args.args
+        assert payload == api.prepare_workout(EASY)
+
+    def test_invalid_workout_uploads_nothing(self, client):
+        with pytest.raises(InvalidInput):
+            api.create_workout(client, {"name": "Test", "sport": "running", "steps": [{"intervall": "5:00"}]})
+        client.upload_workout.assert_not_called()
+
     def test_create_only(self, client):
         client.upload_workout.return_value = {"workoutId": 42, "workoutName": "Test"}
 
-        result = api.create_workout(client, {
-            "workoutName": "Test",
-            "sport": "running",
-            "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "lap.button"}],
-        })
+        result = api.create_workout(client, EASY)
 
         assert result["status"] == "created"
         assert result["workout_id"] == 42
@@ -169,11 +176,7 @@ class TestCreateWorkout:
         client.upload_workout.return_value = {"workoutId": 42, "workoutName": "Test"}
         client.schedule_workout.return_value = {"workoutScheduleId": 99}
 
-        result = api.create_workout(client, {
-            "workoutName": "Test",
-            "sport": "running",
-            "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "lap.button"}],
-        }, date="2024-01-20")
+        result = api.create_workout(client, EASY, date="2024-01-20")
 
         assert result["status"] == "planned"
         assert result["workout_id"] == 42
@@ -186,11 +189,7 @@ class TestCreateWorkout:
         client.schedule_workout.side_effect = Exception("Scheduling failed")
 
         with pytest.raises(GarminWriteError) as raised:
-            api.create_workout(client, {
-                "workoutName": "Test",
-                "sport": "running",
-                "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "lap.button"}],
-            }, date="2024-01-20")
+            api.create_workout(client, EASY, date="2024-01-20")
 
         message = str(raised.value)
         assert "Workout 42 was created" in message
@@ -199,7 +198,7 @@ class TestCreateWorkout:
     def test_no_workout_id_fails(self, client):
         client.upload_workout.return_value = {}
         with pytest.raises(GarminWriteError, match="no workout ID"):
-            api.create_workout(client, {"workoutName": "Test", "steps": []})
+            api.create_workout(client, EASY)
 
 
 class TestDeleteWorkout:
@@ -232,8 +231,25 @@ class TestUpdateWorkout:
     def test_no_workout_is_not_found(self, client):
         client.get_workout_by_id.return_value = None
         with pytest.raises(NotFound, match="42"):
-            api.update_workout(client, 42, {"workoutName": "Test", "steps": []})
+            api.update_workout(client, 42, EASY)
         client.garth.put.assert_not_called()
+
+    def test_invalid_workout_calls_nothing(self, client):
+        with pytest.raises(InvalidInput):
+            api.update_workout(client, 42, {"workoutName": "Test", "steps": []})
+        client.get_workout_by_id.assert_not_called()
+        client.garth.put.assert_not_called()
+
+    def test_puts_the_payload_with_its_id(self, client):
+        client.get_workout_by_id.return_value = RAW_WORKOUT
+        client.garth.put.return_value.text = ""
+        result = api.update_workout(client, 7, EASY)
+        url = client.garth.put.call_args.args[1]
+        payload = client.garth.put.call_args.kwargs["json"]
+        assert url == "/workout-service/workout/7"
+        assert payload["workoutId"] == 7
+        assert payload["workoutName"] == "Test"
+        assert result == {"status": "updated", "workout_id": 7, "name": "Test"}
 
 
 class TestScheduleWorkout:

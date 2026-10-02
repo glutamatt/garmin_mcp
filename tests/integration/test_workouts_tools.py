@@ -75,11 +75,7 @@ async def test_create_workout_without_date(app, mock_garmin_client):
     mock_garmin_client.upload_workout.return_value = {"workoutId": 42, "workoutName": "Test"}
 
     result = await app.call_tool("create_workout", {
-        "workout_data": {
-            "workoutName": "Test",
-            "sport": "running",
-            "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "lap.button"}],
-        },
+        "workout_data": {"name": "Test", "sport": "running", "steps": [{"warmup": "lap"}]},
     })
     data = _parse(result)
 
@@ -94,11 +90,7 @@ async def test_create_workout_with_date(app, mock_garmin_client):
     mock_garmin_client.schedule_workout.return_value = {"workoutScheduleId": 99}
 
     result = await app.call_tool("create_workout", {
-        "workout_data": {
-            "workoutName": "Test",
-            "sport": "running",
-            "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "lap.button"}],
-        },
+        "workout_data": {"name": "Test", "sport": "running", "steps": [{"warmup": "lap"}]},
         "date": "2024-01-20",
     })
     data = _parse(result)

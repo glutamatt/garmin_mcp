@@ -1,20 +1,19 @@
 """
-Workouts API layer — preprocessing, validation, normalization, curation.
+Workouts API layer — the readable workout format in and out, Garmin calls, curation.
 
 Pure functions: (Garmin client, params) → dict.
-Pydantic models and normalization logic moved here from the old tool layer.
+The readable format (parse, render, estimates) is in `api/workout_format.py`.
 Output contract (empty answers, failures): see `api/contract.py`. A change
 that Garmin does not apply raises `GarminWriteError`, never `{"status": "error"}`.
 """
 
-import copy
-import json
 import datetime
 import logging
-from typing import List, Optional, Union
+from typing import Annotated, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from garmin_mcp.api import workout_format
 from garmin_mcp.api.contract import GarminWriteError, NotFound, as_garmin_error
 from garmin_mcp.utils import clean_nones
 
@@ -22,464 +21,153 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# PYDANTIC MODELS - JSON Schema for AI agents
+# PYDANTIC MODELS — the native JSON we send to Garmin, exactly
 # =============================================================================
-
-class SportType(BaseModel):
-    """Sport type definition."""
-    sportTypeId: int = Field(description="1=running, 2=cycling, 5=swimming")
-    sportTypeKey: str = Field(description="Sport type key: running, cycling, swimming, other")
+# `workout_format.to_garmin` builds it; these models check every payload, in a
+# dry-run too. `extra="forbid"`: a key not listed here is a bug of the builder.
 
 
-class StepType(BaseModel):
-    """Workout step type definition."""
-    stepTypeId: int = Field(
-        description="1=warmup, 2=cooldown, 3=interval, 4=recovery, 5=rest, 6=repeat, 7=other"
-    )
-    stepTypeKey: str = Field(description="Step type key: warmup, cooldown, interval, recovery, rest, repeat, other")
+class _Native(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
-class EndCondition(BaseModel):
-    """Step end condition (duration or distance)."""
-    conditionTypeId: int = Field(description="1=lap.button, 2=time, 3=distance")
-    conditionTypeKey: str = Field(description="Condition type key: lap.button, time, distance")
+class SportType(_Native):
+    sportTypeId: int = Field(description="1=running, 2=cycling")
+    sportTypeKey: str
+    displayOrder: int
 
 
-class TargetType(BaseModel):
-    """Target type for intensity."""
-    workoutTargetTypeId: int = Field(
-        description="1=no.target, 4=heart.rate.zone, 5=power.zone, 6=pace.zone"
-    )
-    workoutTargetTypeKey: str = Field(
-        description="Target type key: no.target, heart.rate.zone, power.zone, pace.zone"
-    )
+class StepType(_Native):
+    stepTypeId: int = Field(description="1=warmup, 2=cooldown, 3=interval, 4=recovery, 5=rest, 6=repeat, 7=other")
+    stepTypeKey: str
+    displayOrder: int
 
 
-class WorkoutStep(BaseModel):
-    """A single workout step (warmup, interval, cooldown, etc.)."""
-    stepOrder: int = Field(description="Order of this step (1, 2, 3...)")
-    stepType: StepType = Field(description="Type of step")
-    endCondition: EndCondition = Field(description="How the step ends")
-    endConditionValue: Optional[float] = Field(
-        default=None,
-        description="Duration in seconds (for time) or distance in meters (for distance)"
-    )
-    targetType: Optional[TargetType] = Field(default=None, description="Intensity target type")
-    zoneNumber: Optional[int] = Field(default=None, description="Zone number: HR zones 1-5, power zones 1-7")
-    targetValueOne: Optional[float] = Field(default=None, description="For pace.zone: FASTER pace in m/s")
-    targetValueTwo: Optional[float] = Field(default=None, description="For pace.zone: SLOWER pace in m/s")
-    description: Optional[str] = Field(
-        default=None,
-        description="Free-text per-step note (Garmin Connect 'note textuel'). Shown to the runner on the watch."
-    )
+class EndCondition(_Native):
+    conditionTypeId: int = Field(description="1=lap.button, 2=time, 3=distance, 7=iterations")
+    conditionTypeKey: str
+    displayOrder: int
+    displayable: bool
 
 
-class RepeatGroup(BaseModel):
-    """A repeat group containing multiple steps to repeat."""
-    stepOrder: int = Field(description="Order of this repeat group")
-    stepType: StepType = Field(
-        default=StepType(stepTypeId=6, stepTypeKey="repeat"),
-        description="Must be repeat type"
-    )
-    numberOfIterations: int = Field(description="Number of times to repeat")
-    workoutSteps: List[WorkoutStep] = Field(description="Steps to repeat")
+class TargetType(_Native):
+    workoutTargetTypeId: int = Field(description="1=no.target, 3=cadence, 4=heart.rate.zone, 6=pace.zone")
+    workoutTargetTypeKey: str
+    displayOrder: int
 
 
-class WorkoutSegment(BaseModel):
-    """A workout segment containing steps."""
-    segmentOrder: int = Field(default=1, description="Segment order (usually 1)")
-    sportType: SportType = Field(description="Sport type for this segment")
-    workoutSteps: List[Union[WorkoutStep, RepeatGroup]] = Field(description="List of steps or repeat groups")
+class StrokeType(_Native):
+    strokeTypeId: int
+    displayOrder: int
 
 
-class WorkoutData(BaseModel):
-    """Complete workout structure for Garmin Connect."""
-    workoutName: str = Field(description="Name of the workout")
-    description: Optional[str] = Field(default=None, description="Optional description")
-    sportType: SportType = Field(description="Primary sport type")
-    workoutSegments: List[WorkoutSegment] = Field(description="Workout segments containing steps")
+class EquipmentType(_Native):
+    equipmentTypeId: int
+    displayOrder: int
 
 
-# =============================================================================
-# LOOKUP MAPS
-# =============================================================================
+class WorkoutStep(_Native):
+    """An executable step (warmup, interval, recovery, rest, cooldown, other)."""
+    type: Literal["ExecutableStepDTO"]
+    stepId: int
+    stepOrder: int
+    stepType: StepType
+    endCondition: EndCondition
+    endConditionValue: Optional[float] = Field(default=None, description="Seconds (time) or meters (distance)")
+    targetType: TargetType
+    zoneNumber: Optional[int] = Field(default=None, description="Heart rate zone 1-5")
+    targetValueOne: Optional[float] = Field(default=None, description="pace.zone: FASTER bound, m/s; hr/cadence: lower")
+    targetValueTwo: Optional[float] = Field(default=None, description="pace.zone: SLOWER bound, m/s; hr/cadence: higher")
+    description: Optional[str] = Field(default=None, description="Step note, shown on the watch")
+    strokeType: StrokeType
+    equipmentType: EquipmentType
 
-SPORT_TYPE_MAP = {
-    'running': {'sportTypeId': 1, 'sportTypeKey': 'running'},
-    'cycling': {'sportTypeId': 2, 'sportTypeKey': 'cycling'},
-    'swimming': {'sportTypeId': 5, 'sportTypeKey': 'swimming'},
-    'other': {'sportTypeId': 99, 'sportTypeKey': 'other'},
-}
 
-STEP_TYPE_MAP = {
-    'warmup': {'stepTypeId': 1, 'stepTypeKey': 'warmup'},
-    'cooldown': {'stepTypeId': 2, 'stepTypeKey': 'cooldown'},
-    'interval': {'stepTypeId': 3, 'stepTypeKey': 'interval'},
-    'recovery': {'stepTypeId': 4, 'stepTypeKey': 'recovery'},
-    'rest': {'stepTypeId': 5, 'stepTypeKey': 'rest'},
-    'repeat': {'stepTypeId': 6, 'stepTypeKey': 'repeat'},
-    'other': {'stepTypeId': 7, 'stepTypeKey': 'other'},
-}
+class RepeatGroup(_Native):
+    """Steps done `numberOfIterations` times."""
+    type: Literal["RepeatGroupDTO"]
+    stepId: int
+    stepOrder: int
+    stepType: StepType
+    numberOfIterations: int
+    endCondition: EndCondition
+    endConditionValue: float
+    skipLastRestStep: bool
+    smartRepeat: bool
+    workoutSteps: List[WorkoutStep]
 
-CONDITION_TYPE_MAP = {
-    'lap.button': {'conditionTypeId': 1, 'conditionTypeKey': 'lap.button'},
-    'time': {'conditionTypeId': 2, 'conditionTypeKey': 'time'},
-    'distance': {'conditionTypeId': 3, 'conditionTypeKey': 'distance'},
-}
 
-TARGET_TYPE_MAP = {
-    'no.target': {'workoutTargetTypeId': 1, 'workoutTargetTypeKey': 'no.target'},
-    'heart.rate.zone': {'workoutTargetTypeId': 4, 'workoutTargetTypeKey': 'heart.rate.zone'},
-    'power.zone': {'workoutTargetTypeId': 5, 'workoutTargetTypeKey': 'power.zone'},
-    'pace.zone': {'workoutTargetTypeId': 6, 'workoutTargetTypeKey': 'pace.zone'},
-}
+class WorkoutSegment(_Native):
+    segmentOrder: int
+    sportType: SportType
+    workoutSteps: List[Annotated[Union[WorkoutStep, RepeatGroup], Field(discriminator="type")]]
+
+
+class WorkoutData(_Native):
+    """Complete workout payload for Garmin Connect."""
+    workoutName: str
+    description: Optional[str] = None
+    sportType: SportType
+    workoutSegments: List[WorkoutSegment]
+    isWheelchair: Optional[bool] = None
+    estimatedDurationInSecs: Optional[int] = None
+    estimatedDistanceInMeters: Optional[float] = None
 
 
 # =============================================================================
-# PREPROCESSING — simplified AI format → full Garmin format
+# READABLE FORMAT → PAYLOAD
 # =============================================================================
 
-def _preprocess_sport_type(value) -> dict:
-    """Convert string or dict sport type to full format."""
-    if isinstance(value, str):
-        return SPORT_TYPE_MAP.get(value, SPORT_TYPE_MAP['other']).copy()
-    if isinstance(value, dict) and 'sportTypeId' in value:
-        return value
-    if isinstance(value, dict) and 'sportTypeKey' in value:
-        return SPORT_TYPE_MAP.get(value['sportTypeKey'], SPORT_TYPE_MAP['other']).copy()
-    return SPORT_TYPE_MAP['other'].copy()
 
+def prepare_workout(workout: dict) -> dict:
+    """The native payload for a readable workout: parsed, checked, with its estimates.
 
-def _preprocess_step(step: dict) -> dict:
-    """Convert a simplified step to the full Garmin format."""
-    result = {}
-    result['stepOrder'] = step.get('stepOrder', 1)
-
-    st = step.get('stepType', 'interval')
-    if isinstance(st, str):
-        result['stepType'] = STEP_TYPE_MAP.get(st, STEP_TYPE_MAP['other']).copy()
-    else:
-        result['stepType'] = st
-
-    ec = step.get('endCondition', step.get('endConditionType'))
-    if isinstance(ec, str):
-        result['endCondition'] = CONDITION_TYPE_MAP.get(ec, CONDITION_TYPE_MAP['lap.button']).copy()
-    elif isinstance(ec, dict):
-        result['endCondition'] = ec
-    else:
-        result['endCondition'] = CONDITION_TYPE_MAP['lap.button'].copy()
-
-    if 'endConditionValue' in step and step['endConditionValue'] is not None:
-        val = step['endConditionValue']
-        # Guard: time endConditionValue is in SECONDS — reject likely millisecond mistakes
-        ec_key = result.get('endCondition', {}).get('conditionTypeKey', '')
-        if ec_key == 'time' and val > 36000:  # > 10 hours
-            raise ValueError(
-                f"endConditionValue={val} seconds ({val/3600:.1f}h) is unreasonably large. "
-                f"Unit is SECONDS, not milliseconds. Did you mean {val/1000:.0f}?"
-            )
-        if ec_key == 'distance' and val > 500000:  # > 500 km
-            raise ValueError(
-                f"endConditionValue={val} meters ({val/1000:.0f}km) is unreasonably large."
-            )
-        result['endConditionValue'] = val
-
-    tt = step.get('targetType')
-    if isinstance(tt, str):
-        result['targetType'] = TARGET_TYPE_MAP.get(tt, TARGET_TYPE_MAP['no.target']).copy()
-    elif isinstance(tt, dict) and 'workoutTargetTypeId' in tt:
-        result['targetType'] = tt
-
-    for src, dst in [
-        ('targetValueOne', 'targetValueOne'),
-        ('targetValueTwo', 'targetValueTwo'),
-        ('targetValueHigh', 'targetValueOne'),
-        ('targetValueLow', 'targetValueTwo'),
-    ]:
-        if src in step and step[src] is not None and dst not in result:
-            result[dst] = step[src]
-
-    if 'zoneNumber' in step:
-        result['zoneNumber'] = step['zoneNumber']
-
-    # Per-step free-text note (Garmin Connect "note textuel"). Surface
-    # field name : `description` — same as Garmin's wire format on the
-    # workout-service PUT (cf. HAR capture). Empty/None values are skipped
-    # so we don't override server-side behavior with a null.
-    if step.get('description') is not None:
-        result['description'] = step['description']
-
-    if 'numberOfIterations' in step:
-        result['numberOfIterations'] = step['numberOfIterations']
-    if 'workoutSteps' in step:
-        result['workoutSteps'] = [_preprocess_step(s) for s in step['workoutSteps']]
-
-    return result
-
-
-def preprocess_workout_input(data: dict) -> dict:
-    """Convert simplified AI-generated workout to full Garmin-compatible format.
-
-    Accepts keys: steps, workoutSteps, workoutSegments, or segments (alias from curation).
+    Invalid input raises `InvalidInput` (exit 2) with every error. The same
+    function runs for a create, an update and their dry-run.
     """
-    # Normalize curation aliases so round-trip (GET → modify → create) works
-    if 'segments' in data and 'workoutSegments' not in data:
-        data = {**data, 'workoutSegments': data['segments']}
-        del data['segments']
-    if 'name' in data and 'workoutName' not in data:
-        data = {**data, 'workoutName': data['name']}
-        del data['name']
-
-    if 'workoutSegments' in data and isinstance(data.get('sportType'), dict):
-        steps_ok = True
-        for seg in data['workoutSegments']:
-            for step in seg.get('workoutSteps', []):
-                if isinstance(step.get('stepType'), str):
-                    steps_ok = False
-                    break
-        if steps_ok:
-            return data
-
-    result = {'workoutName': data.get('workoutName', 'Workout')}
-    if 'description' in data:
-        result['description'] = data['description']
-
-    sport = data.get('sportType') or data.get('sport', 'running')
-    result['sportType'] = _preprocess_sport_type(sport)
-
-    steps = data.get('steps') or data.get('workoutSteps')
-    if steps:
-        result['workoutSegments'] = [{
-            'segmentOrder': 1,
-            'sportType': result['sportType'].copy(),
-            'workoutSteps': [_preprocess_step(s) for s in steps],
-        }]
-    elif 'workoutSegments' in data:
-        segments = []
-        for seg in data['workoutSegments']:
-            new_seg = {
-                'segmentOrder': seg.get('segmentOrder', 1),
-                'sportType': _preprocess_sport_type(seg.get('sportType', result['sportType'])),
-            }
-            raw_steps = seg.get('workoutSteps', [])
-            new_seg['workoutSteps'] = [_preprocess_step(s) for s in raw_steps]
-            segments.append(new_seg)
-        result['workoutSegments'] = segments
-    else:
-        result['workoutSegments'] = [{
-            'segmentOrder': 1,
-            'sportType': result['sportType'].copy(),
-            'workoutSteps': [],
-        }]
-
-    return result
+    native = workout_format.to_garmin(workout)
+    WorkoutData.model_validate(native)
+    return native
 
 
-# =============================================================================
-# NORMALIZATION — add Garmin-required fields, fix IDs
-# =============================================================================
+def preview_workout(workout: dict) -> dict:
+    """What a create or update would send, read back in the readable format.
 
-def normalize_workout_structure(workout_data: dict) -> dict:
-    """Normalize workout structure to match Garmin API requirements."""
-    normalized = copy.deepcopy(workout_data)
-
-    normalized.setdefault('avgTrainingSpeed', 2.5)
-    normalized.setdefault('estimatedDurationInSecs', 0)
-    normalized.setdefault('estimatedDistanceInMeters', 0.0)
-
-    sport_type = normalized.get('sportType', {})
-    if sport_type.get('sportTypeKey') == 'running':
-        normalized.setdefault('isWheelchair', False)
-
-    if 'sportType' in normalized:
-        normalized['sportType'].setdefault('displayOrder', 1)
-
-    if 'workoutSegments' in normalized:
-        for segment in normalized['workoutSegments']:
-            if 'sportType' in segment:
-                segment['sportType'].setdefault('displayOrder', 1)
-            if 'workoutSteps' in segment:
-                segment['workoutSteps'] = _normalize_steps(segment['workoutSteps'])
-
-    return normalized
-
-
-def _restructure_flat_repeats(steps: list) -> list:
-    """Restructure flat repeat groups into nested structure."""
-    step_map = {}
-    for step in steps:
-        if 'stepId' in step:
-            step_map[step['stepId']] = step
-
-    moved_step_ids = set()
-    restructured = []
-
-    for step in steps:
-        if step.get('stepId') in moved_step_ids:
-            continue
-
-        is_repeat = (step.get('stepType', {}).get('stepTypeKey') == 'repeat' or
-                     step.get('numberOfIterations'))
-        has_child_id = 'childStepId' in step
-        has_workout_steps = 'workoutSteps' in step and step['workoutSteps']
-
-        if is_repeat and has_child_id and not has_workout_steps:
-            child_steps = []
-            current_child_id = step.get('childStepId')
-
-            while current_child_id and current_child_id in step_map:
-                child_step = step_map[current_child_id]
-                child_steps.append(child_step)
-                moved_step_ids.add(current_child_id)
-                next_child_id = child_step.get('childStepId')
-                if not next_child_id or next_child_id in moved_step_ids:
-                    break
-                current_child_id = next_child_id
-
-            step['workoutSteps'] = child_steps
-
-        restructured.append(step)
-
-    return restructured
-
-
-def _normalize_steps(steps: list, step_id_counter: list = None) -> list:
-    """Recursively normalize workout steps."""
-    if step_id_counter is None:
-        step_id_counter = [1]
-
-    steps = _restructure_flat_repeats(steps)
-    normalized_steps = []
-
-    for step in steps:
-        step_type_key = step.get('stepType', {}).get('stepTypeKey', '')
-        if step_type_key == 'repeat' or step.get('numberOfIterations'):
-            normalized_step = _normalize_repeat_group(step, step_id_counter)
-        else:
-            normalized_step = _normalize_executable_step(step, step_id_counter)
-        normalized_steps.append(normalized_step)
-
-    return normalized_steps
-
-
-def _normalize_repeat_group(step: dict, step_id_counter: list = None) -> dict:
-    """Normalize a repeat group step."""
-    if step_id_counter is None:
-        step_id_counter = [1]
-
-    normalized = step.copy()
-
-    if normalized.get('stepId') is None or not isinstance(normalized.get('stepId'), int):
-        normalized['stepId'] = step_id_counter[0]
-        step_id_counter[0] += 1
-
-    if normalized.get('type') != 'RepeatGroupDTO':
-        normalized['type'] = 'RepeatGroupDTO'
-
-    if 'stepType' in normalized and 'displayOrder' not in normalized['stepType']:
-        normalized['stepType']['displayOrder'] = 6
-
-    if 'endCondition' not in normalized:
-        normalized['endCondition'] = {
-            'conditionTypeId': 7,
-            'conditionTypeKey': 'iterations',
-            'displayOrder': 7,
-            'displayable': False
-        }
-
-    if 'numberOfIterations' in normalized and 'endConditionValue' not in normalized:
-        normalized['endConditionValue'] = float(normalized['numberOfIterations'])
-
-    normalized.setdefault('skipLastRestStep', True)
-    normalized.setdefault('smartRepeat', False)
-
-    if 'workoutSteps' in normalized:
-        normalized['workoutSteps'] = _normalize_steps(normalized['workoutSteps'], step_id_counter)
-
-    return normalized
-
-
-def _normalize_executable_step(step: dict, step_id_counter: list = None) -> dict:
-    """Normalize an executable workout step."""
-    if step_id_counter is None:
-        step_id_counter = [1]
-
-    normalized = step.copy()
-
-    if normalized.get('stepId') is None or not isinstance(normalized.get('stepId'), int):
-        normalized['stepId'] = step_id_counter[0]
-        step_id_counter[0] += 1
-
-    normalized['type'] = 'ExecutableStepDTO'
-
-    step_type_id_map = {
-        'warmup': 1, 'cooldown': 2, 'interval': 3, 'recovery': 4,
-        'rest': 5, 'repeat': 6, 'other': 7
-    }
-
-    if 'stepType' in normalized:
-        step_type_key = normalized['stepType'].get('stepTypeKey', '')
-        if step_type_key in step_type_id_map:
-            correct_id = step_type_id_map[step_type_key]
-            if normalized['stepType'].get('stepTypeId') != correct_id:
-                normalized['stepType']['stepTypeId'] = correct_id
-        if 'displayOrder' not in normalized['stepType']:
-            if step_type_key in step_type_id_map:
-                normalized['stepType']['displayOrder'] = step_type_id_map[step_type_key]
-
-    if 'endCondition' in normalized:
-        if 'displayOrder' not in normalized['endCondition']:
-            condition_key = normalized['endCondition'].get('conditionTypeKey', '')
-            condition_display_map = {'lap.button': 1, 'time': 2, 'distance': 3, 'calories': 4, 'heart.rate': 6}
-            if condition_key in condition_display_map:
-                normalized['endCondition']['displayOrder'] = condition_display_map[condition_key]
-        if 'displayable' not in normalized['endCondition']:
-            normalized['endCondition']['displayable'] = True
-
-    # Garmin API requires targetType on every step — default to no.target
-    if 'targetType' not in normalized:
-        normalized['targetType'] = {
-            'workoutTargetTypeId': 1,
-            'workoutTargetTypeKey': 'no.target',
-            'displayOrder': 1,
-        }
-
-    if 'displayOrder' not in normalized['targetType']:
-        target_key = normalized['targetType'].get('workoutTargetTypeKey', '')
-        target_display_map = {'no.target': 1, 'speed.zone': 2, 'cadence': 3, 'heart.rate.zone': 4, 'power.zone': 5, 'pace.zone': 6}
-        normalized['targetType']['displayOrder'] = target_display_map.get(target_key, 1)
-
-    if True:
-        target_key = normalized['targetType'].get('workoutTargetTypeKey', '')
-        if target_key == 'heart.rate.zone':
-            target_one = normalized.get('targetValueOne')
-            target_two = normalized.get('targetValueTwo')
-            if (target_one is not None and target_two is not None and
-                target_one == target_two and 1 <= target_one <= 5):
-                normalized['zoneNumber'] = int(target_one)
-                normalized['targetValueOne'] = None
-                normalized['targetValueTwo'] = None
-        elif target_key == 'power.zone':
-            target_one = normalized.get('targetValueOne')
-            target_two = normalized.get('targetValueTwo')
-            if (target_one is not None and target_two is not None and
-                target_one == target_two and 1 <= target_one <= 7):
-                normalized['zoneNumber'] = int(target_one)
-                normalized['targetValueOne'] = None
-                normalized['targetValueTwo'] = None
-
-    # Garmin API expects numeric 0 defaults, not null — null values cause silent step rejection
-    if 'strokeType' not in normalized:
-        normalized['strokeType'] = {'strokeTypeId': 0, 'displayOrder': 0}
-    if 'equipmentType' not in normalized:
-        normalized['equipmentType'] = {'equipmentTypeId': 0, 'displayOrder': 0}
-
-    return normalized
+    The steps are rendered from the payload itself (paces read back from m/s),
+    with the estimated duration and distance. An estimate that a step does not
+    give is absent, and `not_estimated` names the steps and why (lap, no pace).
+    """
+    native = prepare_workout(workout)
+    totals = workout_format.estimate(native["workoutSegments"][0]["workoutSteps"])
+    not_estimated = {}
+    if totals.duration_s is None:
+        not_estimated["duration_s"] = totals.no_duration
+    if totals.distance_m is None:
+        not_estimated["distance_m"] = totals.no_distance
+    return clean_nones({
+        "workout": workout_format.from_garmin(native),
+        "estimated_duration_s": totals.duration_s,
+        "estimated_distance_m": totals.distance_m,
+        "not_estimated": not_estimated or None,
+    })
 
 
 # =============================================================================
 # CURATION — extract coaching-relevant fields from raw Garmin responses
 # =============================================================================
+
+
+def _whole(value) -> Optional[int]:
+    """An estimate as an integer; Garmin's 0 means no estimate."""
+    return round(value) if value else None
+
+
+def _estimates(raw: dict) -> dict:
+    return {
+        "estimated_duration_s": _whole(raw.get('estimatedDurationInSecs')),
+        "estimated_distance_m": _whole(raw.get('estimatedDistanceInMeters')),
+    }
+
 
 def _curate_workout_summary(workout: dict) -> dict:
     """Extract essential workout metadata for list views."""
@@ -491,9 +179,9 @@ def _curate_workout_summary(workout: dict) -> dict:
         "description": workout.get('description'),
         "provider": workout.get('workoutProvider'),
         "created_date": workout.get('createdDate'),
-        "updated_date": workout.get('updatedDate'),
-        "estimated_duration_seconds": workout.get('estimatedDuration'),
-        "estimated_distance_meters": workout.get('estimatedDistance'),
+        # The list says `updateDate`, the detail `updatedDate`.
+        "updated_date": workout.get('updatedDate') or workout.get('updateDate'),
+        **_estimates(workout),
     })
 
 
@@ -510,71 +198,13 @@ def _curate_scheduled_workout(scheduled: dict) -> dict:
         "name": scheduled.get('workoutName'),
         "sport": scheduled.get('workoutType'),
         "completed": scheduled.get('associatedActivityId') is not None,
-        "estimated_duration_seconds": scheduled.get('estimatedDurationInSecs'),
-        "estimated_distance_meters": scheduled.get('estimatedDistanceInMeters'),
+        **_estimates(scheduled),
     })
 
 
 # =============================================================================
 # PUBLIC API FUNCTIONS
 # =============================================================================
-
-_KNOWN_WORKOUT_KEYS = {
-    'workoutName', 'name', 'description', 'sport', 'sportType',
-    'steps', 'workoutSteps', 'workoutSegments', 'segments',
-}
-_KNOWN_STEP_KEYS = {
-    'type', 'stepId', 'stepOrder', 'stepType', 'endCondition', 'endConditionType',
-    'endConditionValue', 'targetType', 'targetValueOne', 'targetValueTwo',
-    'targetValueHigh', 'targetValueLow', 'zoneNumber', 'description',
-    'numberOfIterations', 'workoutSteps', 'childStepId',
-    'strokeType', 'equipmentType', 'skipLastRestStep', 'smartRepeat',
-}
-
-
-def validate_workout_keys(workout_data: dict) -> list[str]:
-    """Check for unknown keys that would be silently ignored. Returns list of warnings."""
-    warnings = []
-    top_unknown = set(workout_data.keys()) - _KNOWN_WORKOUT_KEYS
-    if top_unknown:
-        warnings.append(f"Unknown top-level keys (will be ignored): {', '.join(sorted(top_unknown))}")
-
-    # Check steps in all accepted locations
-    all_steps = []
-    for key in ('steps', 'workoutSteps'):
-        all_steps.extend(workout_data.get(key, []))
-    for seg in (workout_data.get('workoutSegments') or workout_data.get('segments') or []):
-        all_steps.extend(seg.get('workoutSteps', []))
-
-    for i, step in enumerate(all_steps):
-        step_unknown = set(step.keys()) - _KNOWN_STEP_KEYS
-        if step_unknown:
-            warnings.append(f"Step {i+1}: unknown keys: {', '.join(sorted(step_unknown))}")
-
-    # Check for empty steps
-    total_steps = len(all_steps)
-    if total_steps == 0:
-        warnings.append("Workout has no steps — will create an empty workout")
-
-    return warnings
-
-
-def prepare_workout_json(workout_data: dict) -> str:
-    """Preprocess, validate, and normalize workout data → JSON string for SDK."""
-    warnings = validate_workout_keys(workout_data)
-    for w in warnings:
-        logger.warning("workout validation: %s", w)
-    logger.debug("prepare_workout_json input: %s", json.dumps(workout_data, default=str))
-    preprocessed = preprocess_workout_input(workout_data)
-    validated = WorkoutData(**preprocessed)
-    data_dict = validated.model_dump(exclude_none=True)
-    normalized = normalize_workout_structure(data_dict)
-    result = json.dumps(normalized)
-    # Log step count for debugging workout creation issues
-    steps = normalized.get('workoutSegments', [{}])[0].get('workoutSteps', []) if normalized.get('workoutSegments') else []
-    logger.info("prepare_workout_json: %d segments, %d steps", len(normalized.get('workoutSegments', [])), len(steps))
-    logger.debug("prepare_workout_json output: %s", result)
-    return result
 
 
 def get_workouts(client) -> dict:
@@ -586,24 +216,27 @@ def get_workouts(client) -> dict:
     }
 
 
-def get_workout_by_id(client, workout_id: int) -> dict:
-    """Get detailed workout info. Returns full structure for editing."""
+def get_workout_by_id(client, workout_id: int, raw: bool = False) -> dict:
+    """A workout in the readable format, ready to edit and give to create or update.
+
+    `raw`: Garmin's own JSON, unchanged. `warnings` names what the readable
+    format cannot say and the targets stored in the reverse of Garmin Connect's order.
+    """
     workout = client.get_workout_by_id(workout_id)
     if not workout:
         raise NotFound(f"No workout {workout_id}")
-    sport_type = workout.get('sportType', {})
+    if raw:
+        return workout
+    readable = workout_format.from_garmin(workout)
+    warnings = readable.pop("warnings", None)
     return clean_nones({
         "id": workout.get('workoutId'),
-        "name": workout.get('workoutName'),
-        "sport": sport_type.get('sportTypeKey'),
-        "description": workout.get('description'),
-        "provider": workout.get('workoutProvider'),
+        **readable,
+        **_estimates(workout),
         "created_date": workout.get('createdDate'),
         "updated_date": workout.get('updatedDate'),
-        "estimated_duration_seconds": workout.get('estimatedDuration'),
-        "estimated_distance_meters": workout.get('estimatedDistance'),
-        "avg_training_speed_mps": workout.get('avgTrainingSpeed'),
-        "segments": workout.get('workoutSegments'),
+        "provider": workout.get('workoutProvider'),
+        "warnings": warnings,
     })
 
 
@@ -618,13 +251,12 @@ def get_scheduled_workouts(client, start_date: str, end_date: str) -> dict:
 
 
 def create_workout(client, workout_data: dict, date: str = None) -> dict:
-    """Create a workout and optionally schedule it: upload, then schedule.
+    """Create a workout (readable format) and optionally schedule it: upload, then schedule.
 
     If the upload works but the scheduling fails, the workout is in the library:
     the error gives its id, so that it gets scheduled, not created twice.
     """
-    workout_json = prepare_workout_json(workout_data)
-    upload_result = client.upload_workout(workout_json)
+    upload_result = client.upload_workout(prepare_workout(workout_data))
 
     workout_id = upload_result.get('workoutId') if isinstance(upload_result, dict) else None
     if not workout_id:
@@ -655,14 +287,11 @@ def create_workout(client, workout_data: dict, date: str = None) -> dict:
 
 
 def update_workout(client, workout_id: int, workout_data: dict) -> dict:
-    """Replace an existing workout's definition."""
+    """Replace an existing workout's definition with a readable workout."""
+    normalized = {**prepare_workout(workout_data), 'workoutId': workout_id}
     existing = client.get_workout_by_id(workout_id)
     if not existing:
         raise NotFound(f"No workout {workout_id}")
-
-    workout_json_str = prepare_workout_json(workout_data)
-    normalized = json.loads(workout_json_str)
-    normalized['workoutId'] = workout_id
 
     url = f"/workout-service/workout/{workout_id}"
     response = client.garth.put("connectapi", url, json=normalized, api=True)

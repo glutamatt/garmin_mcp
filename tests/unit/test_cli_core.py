@@ -51,37 +51,19 @@ class TestValidateCommand:
         with pytest.raises(ValueError, match="Control character"):
             _validate_command("activities\x00list")
 
-    def test_rejects_semicolon(self):
-        with pytest.raises(ValueError, match="Shell metacharacter"):
-            _validate_command("activities list; rm -rf /")
+    def test_rejects_carriage_return(self):
+        with pytest.raises(ValueError, match="Control character"):
+            _validate_command("activities list\r")
 
-    def test_rejects_pipe(self):
-        with pytest.raises(ValueError, match="Shell metacharacter"):
-            _validate_command("activities list | grep run")
+    def test_keeps_newlines_and_tabs(self):
+        assert _validate_command('workouts create --json {"name":\n"a\tb"}') == 'workouts create --json {"name":\n"a\tb"}'
 
-    def test_rejects_and(self):
-        with pytest.raises(ValueError, match="Shell metacharacter"):
-            _validate_command("activities list && echo pwned")
-
-    def test_rejects_or(self):
-        with pytest.raises(ValueError, match="Shell metacharacter"):
-            _validate_command("activities list || true")
-
-    def test_rejects_backtick(self):
-        with pytest.raises(ValueError, match="Shell metacharacter"):
-            _validate_command("activities list `whoami`")
-
-    def test_rejects_dollar_paren(self):
-        with pytest.raises(ValueError, match="Shell metacharacter"):
-            _validate_command("activities list $(id)")
-
-    def test_rejects_dollar_brace(self):
-        with pytest.raises(ValueError, match="Shell metacharacter"):
-            _validate_command("activities list ${HOME}")
-
-    def test_rejects_redirect(self):
-        with pytest.raises(ValueError, match="Shell metacharacter"):
-            _validate_command("activities list > /etc/passwd")
+    @pytest.mark.parametrize("text", ["FC < 160", "a > b", "a | b", "a; b", "a && b", "a || b",
+                                      "`id`", "$(id)", "${HOME}"])
+    def test_shell_characters_are_plain_text(self, text):
+        """No shell: shlex + Click. A note like "FC < 160" must go through."""
+        command = f'workouts create --json {{"note": "{text}"}}'
+        assert _validate_command(command) == command
 
 
 class TestHoistGlobalFlags:
@@ -178,10 +160,11 @@ class TestSessionSandbox:
 
 
 class TestExecuteValidation:
-    def test_rejects_shell_injection(self):
+    def test_no_shell(self):
+        """`;` is a character of the word `list;`: Click knows no such command, nothing runs."""
         result = execute("activities list; rm -rf /", "fake_token")
         assert result["exit_code"] == 2
-        assert "Shell metacharacter" in result["stderr"]
+        assert "No such command 'list;'" in result["stderr"]
 
     def test_rejects_control_chars(self):
         result = execute("activities\x00list", "fake_token")
@@ -194,31 +177,51 @@ class TestExecuteValidation:
         assert "Empty command" in result["stderr"]
 
 
+EASY_JSON = '{"name":"Test","sport":"running","steps":[{"run":"30:00"}]}'
+
+
 class TestJsonExtraction:
-    """Test that --json values survive shlex.split (unquoted JSON from AI agents)."""
+    """`--json` values survive shlex.split: bare or single-quoted, with any character inside."""
+
+    def _dry_run(self, command):
+        result = execute(command, "fake")
+        assert result["exit_code"] == 0, result["stderr"]
+        return json.loads(result["stdout"])
 
     def test_unquoted_json_create(self):
-        result = execute('--dry-run workouts create --json {"workoutName":"Test","steps":[]}', "fake")
-        assert result["exit_code"] == 0
-        data = json.loads(result["stdout"])
-        assert data["name"] == "Test"
+        data = self._dry_run(f"--dry-run workouts create --json {EASY_JSON}")
+        assert data["workout"]["name"] == "Test"
 
     def test_nested_json(self):
-        result = execute('--dry-run workouts create --json {"workoutName":"Tempo","sportType":{"sportTypeId":1}}', "fake")
-        assert result["exit_code"] == 0
-        data = json.loads(result["stdout"])
-        assert data["name"] == "Tempo"
+        data = self._dry_run('--dry-run workouts create --json {"name":"Reps","sport":"running","steps":'
+                             '[{"repeat":2,"steps":[{"run":"1km","pace":"4:30"}]}]}')
+        assert data["workout"]["steps"][0]["repeat"] == 2
 
     def test_json_with_trailing_flags(self):
-        result = execute('workouts create --json {"workoutName":"Test","steps":[]} --dry-run --date 2026-03-15', "fake")
-        assert result["exit_code"] == 0
-        data = json.loads(result["stdout"])
+        data = self._dry_run(f"workouts create --json {EASY_JSON} --dry-run --date 2026-03-15")
         assert data["dry_run"] is True
         assert data["date"] == "2026-03-15"
 
-    def test_quoted_json_still_works(self):
-        result = execute("--dry-run workouts create --json '{}'", "fake")
-        assert result["exit_code"] == 0
+    def test_single_quoted_json_with_an_apostrophe(self):
+        """A French note: shlex alone would choke on the apostrophe inside single quotes."""
+        data = self._dry_run("""workouts create --json '{"name":"Test","sport":"running","steps":"""
+                             """[{"run":"30:00","note":"garde l'allure"}]}' --dry-run""")
+        assert data["workout"]["steps"][0]["note"] == "garde l'allure"
+
+    def test_shell_characters_in_a_note(self):
+        data = self._dry_run('--dry-run workouts create --json {"name":"Test","sport":"running","steps":'
+                             '[{"run":"30:00","note":"FC < 160 | > 140; ok"}]}')
+        assert data["workout"]["steps"][0]["note"] == "FC < 160 | > 140; ok"
+
+    def test_json_on_several_lines(self):
+        data = self._dry_run('--dry-run workouts create --json {"name": "Test",\n "sport": "running",\n'
+                             ' "steps": [{"run": "30:00"}]}')
+        assert data["workout"]["name"] == "Test"
+
+    def test_escaped_quotes_in_a_string(self):
+        data = self._dry_run('--dry-run workouts create --json {"name":"Test \\"A\\"","sport":"running",'
+                             '"steps":[{"run":"30:00"}]}')
+        assert data["workout"]["name"] == 'Test "A"'
 
 
 class TestDryRun:
@@ -231,14 +234,14 @@ class TestDryRun:
             "--token", "fake_token_for_dry_run",
             "--dry-run",
             "workouts", "create",
-            "--json", json.dumps({"workoutName": "Test", "steps": []}),
+            "--json", EASY_JSON,
         ], catch_exceptions=True)
         # Should succeed (dry_run intercepts before API call)
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["dry_run"] is True
         assert data["action"] == "create_workout"
-        assert data["name"] == "Test"
+        assert data["workout"]["name"] == "Test"
 
     def test_dry_run_delete(self):
         runner = _runner()
@@ -292,55 +295,53 @@ class TestDryRun:
         # but the point is it DOESN'T short-circuit with dry_run preview
         assert result.exit_code != 0  # No client, so errors
 
-    def test_dry_run_warns_unknown_keys(self):
-        """--dry-run should surface unknown key warnings."""
-        runner = _runner()
-        result = runner.invoke(garmin, [
-            "--token", "fake",
-            "--dry-run",
-            "workouts", "create",
-            "--json", json.dumps({
-                "workoutName": "Test",
-                "sport": "running",
-                "bogusField": 42,
-                "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "endConditionValue": 600}],
-            }),
-        ], catch_exceptions=True)
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert data["dry_run"] is True
-        assert "warnings" in data
-        assert any("bogusField" in w for w in data["warnings"])
+    def test_dry_run_runs_the_whole_pipeline(self):
+        """The audit's case (C3): each mistake used to give `dry_run: true`, exit 0."""
+        result = execute("--dry-run workouts create --json " + json.dumps({
+            "name": "Test", "sport": "running", "steps": [
+                {"intervall": "30:00"},
+                {"run": "30000:00"},
+                {"run": "5:00", "pace": "2.47"},
+            ]}), "fake")
+        assert result["exit_code"] == 2
+        assert result["stdout"] == ""
+        assert "Invalid workout (3 errors)" in result["stderr"]
+        assert "steps[0].intervall: unknown key" in result["stderr"]
+        assert "steps[1].run" in result["stderr"]
+        assert "steps[2].pace" in result["stderr"]
 
-    def test_dry_run_warns_empty_steps(self):
-        """--dry-run should warn about workouts with no steps."""
-        runner = _runner()
-        result = runner.invoke(garmin, [
-            "--token", "fake",
-            "--dry-run",
-            "workouts", "create",
-            "--json", json.dumps({"workoutName": "Empty", "sport": "running"}),
-        ], catch_exceptions=True)
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert any("no steps" in w for w in data.get("warnings", []))
+    def test_invalid_workout_is_refused_without_dry_run_too(self):
+        """Exit 2 before any Garmin call: the fake token is never used."""
+        result = execute('workouts create --json {"name":"Test","sport":"running","steps":[{"run":1800}]}', "fake")
+        assert result["exit_code"] == 2
+        assert "steps[0].run" in result["stderr"]
 
-    def test_dry_run_no_warnings_for_valid_workout(self):
-        """Valid workout should have no warnings in dry-run."""
-        runner = _runner()
-        result = runner.invoke(garmin, [
-            "--token", "fake",
-            "--dry-run",
-            "workouts", "create",
-            "--json", json.dumps({
-                "workoutName": "Good Workout",
-                "sport": "running",
-                "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "endConditionValue": 600}],
-            }),
-        ], catch_exceptions=True)
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert "warnings" not in data
+    def test_native_format_is_refused(self):
+        result = execute('--dry-run workouts create --json {"workoutName":"Test","steps":[]}', "fake")
+        assert result["exit_code"] == 2
+        assert "Garmin's native format is not accepted" in result["stderr"]
+
+    def test_dry_run_reads_the_steps_back(self):
+        result = execute("--dry-run workouts create --json " + json.dumps({
+            "name": "Test", "sport": "running", "steps": [
+                {"warmup": "10:00"},
+                {"repeat": 4, "steps": [{"run": "1km", "pace": "4:40-4:30"}, {"recover": "2:00"}]},
+                {"cooldown": "lap"},
+            ]}), "fake")
+        assert result["exit_code"] == 0, result["stderr"]
+        data = json.loads(result["stdout"])
+        assert data["workout"]["steps"][1] == {
+            "repeat": 4, "steps": [{"run": "1km", "pace": "4:30-4:40"}, {"recover": "2:00"}]}
+        assert "estimated_duration_s" not in data
+        assert data["not_estimated"]["duration_s"] == ["steps[2] (lap)"]
+
+    def test_dry_run_update(self):
+        result = execute(f"--dry-run workouts update 999 --json {EASY_JSON}", "fake")
+        assert result["exit_code"] == 0, result["stderr"]
+        data = json.loads(result["stdout"])
+        assert data["action"] == "update_workout"
+        assert data["workout_id"] == 999
+        assert data["estimated_duration_s"] == 1800
 
 
 class TestInputFile:
@@ -348,7 +349,7 @@ class TestInputFile:
 
     def test_create_from_input_file(self, tmp_path):
         """--input reads workout JSON from a file."""
-        workout = {"workoutName": "From File", "sport": "running", "steps": []}
+        workout = {"name": "From File", "sport": "running", "steps": [{"run": "30:00"}]}
         f = tmp_path / "workout.json"
         f.write_text(json.dumps(workout))
 
@@ -363,11 +364,11 @@ class TestInputFile:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["dry_run"] is True
-        assert data["name"] == "From File"
+        assert data["workout"]["name"] == "From File"
 
     def test_update_from_input_file(self, tmp_path):
         """--input works for update too."""
-        workout = {"workoutName": "Updated From File", "steps": []}
+        workout = {"name": "Updated From File", "sport": "running", "steps": [{"run": "30:00"}]}
         f = tmp_path / "workout.json"
         f.write_text(json.dumps(workout))
 
@@ -382,7 +383,7 @@ class TestInputFile:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["dry_run"] is True
-        assert data["name"] == "Updated From File"
+        assert data["workout"]["name"] == "Updated From File"
         assert data["workout_id"] == 999
 
     def test_input_and_json_mutually_exclusive(self, tmp_path):
@@ -459,9 +460,11 @@ class TestInputFile:
 
         # Mock a workout get that writes to file
         workout_data = {
-            "workoutName": "Round Trip",
+            "id": 12,
+            "name": "Round Trip",
             "sport": "running",
-            "steps": [{"stepOrder": 1, "stepType": "warmup", "endCondition": "time", "endConditionValue": 300}],
+            "steps": [{"warmup": "5:00"}],
+            "created_date": "2026-10-01T14:23:37.0",
         }
         out_file = tmp_path / "exported.json"
         out_file.write_text(json.dumps(workout_data))
@@ -477,11 +480,11 @@ class TestInputFile:
         ], catch_exceptions=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["name"] == "Round Trip"
+        assert data["workout"]["name"] == "Round Trip"
 
     def test_input_via_execute(self, tmp_path):
         """--input works through the execute() function too."""
-        workout = {"workoutName": "Via Execute", "steps": []}
+        workout = {"name": "Via Execute", "sport": "running", "steps": [{"run": "30:00"}]}
         f = tmp_path / "workout.json"
         f.write_text(json.dumps(workout))
 
@@ -492,7 +495,7 @@ class TestInputFile:
         )
         assert result["exit_code"] == 0
         data = json.loads(result["stdout"])
-        assert data["name"] == "Via Execute"
+        assert data["workout"]["name"] == "Via Execute"
 
 
 class TestDescribe:
