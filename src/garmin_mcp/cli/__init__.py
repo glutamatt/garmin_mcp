@@ -143,7 +143,10 @@ def _out(ctx, data, field_set: FieldSet | None = None):
 
     if fields and not is_unavailable(data):
         if field_set is not None:
-            data = field_set.select(data, fields, lambda feature: missing_reason(_client(ctx), feature))
+            def reason(feature: str) -> str:
+                return missing_reason(_client(ctx), feature)
+
+            data = _call(lambda: field_set.select(data, fields, reason))
         else:
             missing = find_missing_fields(data, fields)
             if missing:

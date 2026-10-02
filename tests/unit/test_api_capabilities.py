@@ -2,7 +2,13 @@
 
 import pytest
 from unittest.mock import Mock
+from garminconnect import (
+    GarminConnectAuthenticationError,
+    GarminConnectConnectionError,
+    GarminConnectTooManyRequestsError,
+)
 from garmin_mcp.api import capabilities as api
+from garmin_mcp.api.contract import AuthError, GarminError, NotFound
 
 
 @pytest.fixture
@@ -164,10 +170,22 @@ class TestMissingReason:
         client.get_usage_indicators.return_value = indicators
         assert api.missing_reason(client, api.TRAINING_STATUS) == "no_data"
 
-    def test_flags_not_read_is_no_data(self, client):
+    @pytest.mark.parametrize("error", [
+        GarminConnectConnectionError("timeout"), GarminConnectTooManyRequestsError("429"), NotFound("gone"),
+    ])
+    def test_flags_garmin_does_not_give_is_no_data(self, client, error):
         """The answer stays true: `no_data`, only less precise."""
-        client.get_usage_indicators.side_effect = Exception("Network error")
+        client.get_usage_indicators.side_effect = error
         assert api.missing_reason(client, api.TRAINING_STATUS) == "no_data"
+
+    @pytest.mark.parametrize("error, raised", [
+        (GarminConnectAuthenticationError("401"), AuthError),
+        (KeyError("deviceBasedIndicators"), GarminError),  # a bug: never hidden behind no_data
+    ])
+    def test_other_failures_are_raised(self, client, error, raised):
+        client.get_usage_indicators.side_effect = error
+        with pytest.raises(raised):
+            api.missing_reason(client, api.TRAINING_STATUS)
 
     def test_feature_flags_are_garmin_flags(self):
         """Names seen in Garmin's `deviceBasedIndicators` answer (02/10/2026)."""

@@ -304,6 +304,15 @@ class TestDeviceReason:
         result = _run("activities get 1 --fields distance_m,training_load", client)
         assert json.loads(result["stdout"])["empty_fields"] == {"training_load": "not_supported_by_device"}
 
+    def test_an_auth_error_on_the_capabilities_fails_the_command(self):
+        client = Mock()
+        client.get_activities_by_date.return_value = [{"activityId": 1}]
+        client.get_usage_indicators.side_effect = _http_error(401)
+        result = _run("activities list --from 2024-01-01 --to 2024-01-07 --fields id,training_load", client)
+        assert result["exit_code"] == 1
+        assert result["stdout"] == ""
+        assert "Garmin login refused" in result["stderr"]
+
     def test_a_field_with_a_value_reads_no_capabilities(self):
         client = Mock()
         client.get_activities_by_date.return_value = [{"activityId": 1, "activityTrainingLoad": 80.0}]

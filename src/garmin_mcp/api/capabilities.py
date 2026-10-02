@@ -19,7 +19,15 @@ import logging
 
 from garminconnect import Garmin
 
-from garmin_mcp.api.contract import NO_DATA, NOT_SUPPORTED_BY_DEVICE, has_data, unavailable
+from garmin_mcp.api.contract import (
+    NO_DATA,
+    NOT_SUPPORTED_BY_DEVICE,
+    NotFound,
+    Unavailable,
+    as_garmin_error,
+    has_data,
+    unavailable,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +50,16 @@ FEATURE_FLAGS = {
 def missing_reason(client: Garmin, feature: str) -> str:
     """Why `feature` has no data: `not_supported_by_device`, or `no_data`.
 
-    When the flags cannot be read, the reason is `no_data`: true, only less precise.
+    When Garmin does not give the flags (`Unavailable`, `NotFound`), the reason
+    is `no_data`: true, only less precise. Any other failure (auth, a bug) is raised.
     """
     try:
         flags = _device_flags(client)
-    except Exception as e:  # noqa: BLE001 — the answer stays true without the flags
-        logger.warning("Device capabilities not read, reason left as no_data: %s", e)
+    except Exception as e:
+        error = as_garmin_error(e)
+        if not isinstance(error, (Unavailable, NotFound)):
+            raise error from e
+        logger.warning("Device capabilities not read, reason left as no_data: %s", error)
         return NO_DATA
     return NOT_SUPPORTED_BY_DEVICE if flags.get(FEATURE_FLAGS[feature]) is False else NO_DATA
 
