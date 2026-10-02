@@ -16,29 +16,22 @@ multipart-in. ``ingest`` is also multipart-out (updated DB + stats), which we
 parse with a small custom decoder.
 """
 
-import io
 import json
 import os
 import re
-import zipfile
 from datetime import date, timedelta
 
 import duckdb
-import requests
 from garminconnect import Garmin
-from garmin_mcp.api.contract import Unavailable, http_failure
+from garmin_mcp.api import geo_runner
+from garmin_mcp.api.activities import download_fit
+from garmin_mcp.api.contract import Unavailable
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
 USER_DB_DIR = "/tmp/neural-runner/geo-history"
 WINDOW_DAYS = 365
 BATCH_LIMIT = 10
-REQUEST_TIMEOUT_S = 120  # ingest is N FITs heavy ; allow generous timeout
-
-# Default to the production geo-runner. Overridable for local dev / testing.
-DEFAULT_GEO_RUNNER_URL = os.environ.get(
-    "GEO_RUNNER_URL", "https://glutamatt-geo-runner.hf.space"
-)
 
 
 # ── Path resolution ──────────────────────────────────────────────────────────
@@ -118,36 +111,6 @@ def latest_day_in_db(path: str) -> str | None:
         conn.close()
 
 
-# ── FIT download (shared with geographic.py) ─────────────────────────────────
-
-
-def _download_fit(client: Garmin, activity_id: int) -> bytes:
-    """Pull the ORIGINAL FIT from Garmin Connect and unwrap the ``.fit`` file
-    from the surrounding zip.
-    """
-    try:
-        zip_bytes = client.download_activity(
-            str(activity_id),
-            dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL,
-        )
-    except Exception as e:
-        raise Unavailable(
-            f"Garmin download failed for activity {activity_id}: {e}"
-        )
-    try:
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-            fit_names = [n for n in zf.namelist() if n.endswith(".fit")]
-            if not fit_names:
-                raise Unavailable(
-                    f"No .fit file inside the activity {activity_id} zip"
-                )
-            return zf.read(fit_names[0])
-    except zipfile.BadZipFile as e:
-        raise Unavailable(
-            f"Invalid zip from Garmin (activity {activity_id}): {e}"
-        )
-
-
 # ── Multipart decode ────────────────────────────────────────────────────────
 
 
@@ -181,11 +144,7 @@ def _parse_multipart(body: bytes, boundary: str) -> dict[str, bytes]:
 # ── Update orchestrator ─────────────────────────────────────────────────────
 
 
-def update(
-    client: Garmin,
-    geo_runner_url: str | None = None,
-    limit: int = BATCH_LIMIT,
-) -> dict:
+def update(client: Garmin, limit: int = BATCH_LIMIT) -> dict:
     """Pull the user DB locally, list new Garmin activities since the
     convergent floor, download their FITs, batch-ingest into the user DB
     via geo-runner, and write the updated DB back.
@@ -201,7 +160,6 @@ def update(
     ``errors``, ``start``, ``batch_size``, ``activities_remaining``,
     ``is_caught_up``.
     """
-    url = geo_runner_url or DEFAULT_GEO_RUNNER_URL
     user_id = current_user_id(client)
     path = user_db_path(user_id)
     _ensure_user_db(path)
@@ -243,7 +201,7 @@ def update(
     for a in batch:
         aid = a.get("activityId")
         try:
-            fit_bytes = _download_fit(client, aid)
+            fit_bytes = download_fit(client, aid)
         except Exception as e:
             errors.append({"activity_id": aid, "error": str(e)})
             continue
@@ -278,24 +236,7 @@ def update(
         files.append(("fits", (name, body, "application/octet-stream")))
     data = {"metadata": json.dumps(metadata)}
 
-    try:
-        resp = requests.post(
-            f"{url}/api/history/ingest",
-            files=files,
-            data=data,
-            timeout=REQUEST_TIMEOUT_S,
-        )
-    except requests.RequestException as e:
-        raise Unavailable(f"geo-runner ingest request failed: {e}")
-
-    if not resp.ok:
-        # geo-runner returns `{"error": "..."}` on 4xx ; surface that field
-        # when present, otherwise truncate raw text.
-        try:
-            err = resp.json().get("error", resp.text)
-        except ValueError:
-            err = resp.text[:300]
-        raise http_failure(resp.status_code, f"geo-runner ingest {resp.status_code}: {err}")
+    resp = geo_runner.post("/api/history/ingest", "geo-runner ingest", files=files, data=data)
 
     # Decode multipart response : updated user_db + stats JSON.
     ct = resp.headers.get("Content-Type", "")
@@ -327,8 +268,9 @@ def update(
 # ── Query ───────────────────────────────────────────────────────────────────
 
 
-def _query_filename(kind: str, params: dict, include_anonymous: bool) -> str:
-    """Encode ALL discriminating params into the filename so successive
+def query_filename(kind: str, params: dict, include_anonymous: bool) -> str:
+    """Default file name of a query: it encodes ALL discriminating params
+    (since/until/exclusive/entity_types/include_anonymous), so successive
     queries with different filters DON'T overwrite each other silently.
     """
     bits = [kind]
@@ -350,30 +292,26 @@ def _query_filename(kind: str, params: dict, include_anonymous: bool) -> str:
 def query_to_tsv(
     client: Garmin,
     kind: str,
+    path: str,
     params: dict | None = None,
-    sandbox: str = "/tmp/garmin",
-    geo_runner_url: str | None = None,
     include_anonymous: bool = False,
 ) -> dict:
     """Run a heatmap query and write the (geometry-stripped, optionally
-    anonymous-stripped) results to a TSV file. Returns a metadata dict —
-    same shape as ``geographic activity`` so Apex's context stays light.
+    anonymous-stripped) results to a TSV file at `path`. Returns a metadata
+    dict — same shape as ``geographic activity`` so Apex's context stays light.
 
-    Filename encodes ALL discriminating params (since/until/exclusive/
-    entity_types/include_anonymous) so concurrent or successive queries
-    never silently clobber each other.
+    Default file name: :func:`query_filename`.
     """
     params = params or {}
     resp = query(
-        client, kind, params=params, geo_runner_url=geo_runner_url,
+        client, kind, params=params,
         include_anonymous=include_anonymous,
         with_geometry=False,
     )
     results = resp.get("results") or []
     data_as_of = resp.get("data_as_of") or "never"
 
-    os.makedirs(sandbox, exist_ok=True)
-    path = os.path.join(sandbox, _query_filename(kind, params, include_anonymous))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
 
     columns = ["count", "last_day", "entity_type", "relation", "entity_id", "display"]
     with open(path, "w", encoding="utf-8") as f:
@@ -448,7 +386,6 @@ def query(
     client: Garmin,
     kind: str,
     params: dict | None = None,
-    geo_runner_url: str | None = None,
     include_anonymous: bool = False,
     with_geometry: bool = False,
 ) -> dict:
@@ -474,7 +411,6 @@ def query(
         Only flip to True for direct rendering (the web UI hits the HTTP
         endpoint directly, not this helper).
     """
-    url = geo_runner_url or DEFAULT_GEO_RUNNER_URL
     user_id = current_user_id(client)
     path = user_db_path(user_id)
     _ensure_user_db(path)
@@ -492,22 +428,7 @@ def query(
         ),
     }
 
-    try:
-        resp = requests.post(
-            f"{url}/api/history/query",
-            files=files,
-            timeout=REQUEST_TIMEOUT_S,
-        )
-    except requests.RequestException as e:
-        raise Unavailable(f"geo-runner query request failed: {e}")
-
-    if not resp.ok:
-        try:
-            err = resp.json().get("error", resp.text)
-        except ValueError:
-            err = resp.text[:300]
-        raise http_failure(resp.status_code, f"geo-runner query {resp.status_code}: {err}")
-
+    resp = geo_runner.post("/api/history/query", "geo-runner query", files=files)
     data = resp.json()
     results = data.get("results") or []
     if not include_anonymous:

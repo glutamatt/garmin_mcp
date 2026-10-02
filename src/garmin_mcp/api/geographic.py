@@ -11,104 +11,38 @@ human-readable in `column -t -s $'\\t'`, and Sheets-safe (h:mm:ss durations).
 No alternate formats — TSV covers every downstream use we have.
 """
 
-import io
 import os
-import zipfile
 
-import requests
 from garminconnect import Garmin
-from garmin_mcp.api.contract import Unavailable, http_failure
-
-# Service URL is hard-coded for now ; will move to env/flag once we have a
-# concrete need (local geo-runner during dev, alternate Spaces, …).
-GEO_RUNNER_URL = "https://glutamatt-geo-runner.hf.space"
-
-# HF Space free tier sleeps after inactivity ; first call can wake-up cold
-# (~30-60 s). Keep a generous timeout so the agent gets a clean error message
-# rather than a connection abort mid-flight.
-REQUEST_TIMEOUT_S = 90
+from garmin_mcp.api import geo_runner
+from garmin_mcp.api.activities import download_fit
 
 
-def analyze_activity(
-    client: Garmin,
-    activity_id: int,
-    sandbox: str = "/tmp/garmin",
-) -> dict:
-    """Download the activity's FIT, POST to geo-runner, write the TSV
-    narrative to disk in the sandbox.
+def analyze_activity(client: Garmin, activity_id: int, path: str) -> dict:
+    """Download the activity's FIT, POST it to geo-runner, write the TSV
+    narrative at `path`.
 
     Returns metadata only (path, size, columns, rows, separator, meta_comment)
     — same design as `activities download`. The agent's context stays light ;
     a `pd.read_csv(path, sep='\\t', comment='#')` opens the file in one line.
 
-    Raises `Unavailable` with context on any failure (Garmin download
-    error, malformed zip, geo-runner non-2xx response, network timeout).
+    Failures (Garmin download, geo-runner still waking up, geo-runner error):
+    see `api/geo_runner.py` and `api/contract.py`.
     """
-    fit_bytes = _download_fit(client, activity_id)
-    text = _post_to_geo_runner(activity_id, fit_bytes)
-    return _write_and_describe(text, activity_id, sandbox)
+    fit_bytes = download_fit(client, activity_id)
+    resp = geo_runner.post(
+        "/api/analyze",
+        "geo-runner analyze",
+        params={"format": "tsv"},
+        files={
+            "fit": (f"activity_{activity_id}.fit", fit_bytes, "application/octet-stream")
+        },
+    )
+    return _write_and_describe(resp.text, activity_id, path)
 
 
-def _download_fit(client: Garmin, activity_id: int) -> bytes:
-    """Pull the ORIGINAL FIT from Garmin Connect and extract the .fit file
-    from the surrounding zip. In-memory only."""
-    try:
-        zip_bytes = client.download_activity(
-            str(activity_id),
-            dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL,
-        )
-    except Exception as e:
-        raise Unavailable(
-            f"Garmin download failed for activity {activity_id}: {e}"
-        )
-
-    try:
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-            fit_names = [n for n in zf.namelist() if n.endswith(".fit")]
-            if not fit_names:
-                raise Unavailable(
-                    f"No .fit file inside the activity {activity_id} zip"
-                )
-            return zf.read(fit_names[0])
-    except zipfile.BadZipFile as e:
-        raise Unavailable(
-            f"Invalid zip from Garmin (activity {activity_id}): {e}"
-        )
-
-
-def _post_to_geo_runner(activity_id: int, fit_bytes: bytes) -> str:
-    """POST the FIT bytes as multipart to geo-runner ; return the TSV body.
-    Surfaces geo-runner's own error JSON when the call returns non-2xx."""
-    try:
-        resp = requests.post(
-            f"{GEO_RUNNER_URL}/api/analyze",
-            params={"format": "tsv"},
-            files={
-                "fit": (
-                    f"activity_{activity_id}.fit",
-                    fit_bytes,
-                    "application/octet-stream",
-                )
-            },
-            timeout=REQUEST_TIMEOUT_S,
-        )
-    except requests.RequestException as e:
-        raise Unavailable(f"geo-runner request failed: {e}")
-
-    if not resp.ok:
-        # geo-runner responds with a `{"error": "..."}` body on 4xx ; surface
-        # that field when present, otherwise truncate the raw text.
-        try:
-            err = resp.json().get("error", resp.text)
-        except ValueError:
-            err = resp.text[:300]
-        raise http_failure(resp.status_code, f"geo-runner {resp.status_code}: {err}")
-
-    return resp.text
-
-
-def _write_and_describe(text: str, activity_id: int, sandbox: str) -> dict:
-    """Persist the TSV to the session sandbox and build a metadata dict
+def _write_and_describe(text: str, activity_id: int, file_path: str) -> dict:
+    """Persist the TSV at `file_path` and build a metadata dict
     that's tight enough to fit in an agent's context.
 
     The TSV body is structured as :
@@ -117,8 +51,7 @@ def _write_and_describe(text: str, activity_id: int, sandbox: str) -> dict:
         row1\\t…
         ...
     """
-    os.makedirs(sandbox, exist_ok=True)
-    file_path = os.path.join(sandbox, f"geographic_{activity_id}.tsv")
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(text)
 
