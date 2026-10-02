@@ -26,6 +26,7 @@ from datetime import date, timedelta
 import duckdb
 import requests
 from garminconnect import Garmin
+from garmin_mcp.api.contract import Unavailable, http_failure
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
@@ -74,7 +75,7 @@ def current_user_id(client: Garmin) -> str:
         profile = getattr(client.garth, "profile", None) or {}
         email = profile.get("userName") or profile.get("emailAddress")
     if not email:
-        raise RuntimeError(
+        raise Unavailable(
             "Cannot derive user_id : garth client has no username "
             "(token may be malformed or not yet hydrated)"
         )
@@ -130,19 +131,19 @@ def _download_fit(client: Garmin, activity_id: int) -> bytes:
             dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL,
         )
     except Exception as e:
-        raise RuntimeError(
+        raise Unavailable(
             f"Garmin download failed for activity {activity_id}: {e}"
         )
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             fit_names = [n for n in zf.namelist() if n.endswith(".fit")]
             if not fit_names:
-                raise RuntimeError(
+                raise Unavailable(
                     f"No .fit file inside the activity {activity_id} zip"
                 )
             return zf.read(fit_names[0])
     except zipfile.BadZipFile as e:
-        raise RuntimeError(
+        raise Unavailable(
             f"Invalid zip from Garmin (activity {activity_id}): {e}"
         )
 
@@ -218,7 +219,7 @@ def update(
             start, date.today().isoformat(), activitytype="running"
         )
     except Exception as e:
-        raise RuntimeError(f"Garmin list_activities failed: {e}")
+        raise Unavailable(f"Garmin list_activities failed: {e}")
 
     activities.sort(key=lambda a: a.get("startTimeLocal", ""))
     batch = activities[:limit]
@@ -285,7 +286,7 @@ def update(
             timeout=REQUEST_TIMEOUT_S,
         )
     except requests.RequestException as e:
-        raise RuntimeError(f"geo-runner ingest request failed: {e}")
+        raise Unavailable(f"geo-runner ingest request failed: {e}")
 
     if not resp.ok:
         # geo-runner returns `{"error": "..."}` on 4xx ; surface that field
@@ -294,18 +295,18 @@ def update(
             err = resp.json().get("error", resp.text)
         except ValueError:
             err = resp.text[:300]
-        raise RuntimeError(f"geo-runner ingest {resp.status_code}: {err}")
+        raise http_failure(resp.status_code, f"geo-runner ingest {resp.status_code}: {err}")
 
     # Decode multipart response : updated user_db + stats JSON.
     ct = resp.headers.get("Content-Type", "")
     m = re.search(r"boundary=([^;]+)", ct)
     if not m:
-        raise RuntimeError(
+        raise Unavailable(
             f"ingest response has no multipart boundary; Content-Type={ct!r}"
         )
     parts = _parse_multipart(resp.content, m.group(1))
     if "user_db" not in parts or "stats" not in parts:
-        raise RuntimeError(
+        raise Unavailable(
             f"ingest response missing parts: got {list(parts.keys())}"
         )
 
@@ -498,14 +499,14 @@ def query(
             timeout=REQUEST_TIMEOUT_S,
         )
     except requests.RequestException as e:
-        raise RuntimeError(f"geo-runner query request failed: {e}")
+        raise Unavailable(f"geo-runner query request failed: {e}")
 
     if not resp.ok:
         try:
             err = resp.json().get("error", resp.text)
         except ValueError:
             err = resp.text[:300]
-        raise RuntimeError(f"geo-runner query {resp.status_code}: {err}")
+        raise http_failure(resp.status_code, f"geo-runner query {resp.status_code}: {err}")
 
     data = resp.json()
     results = data.get("results") or []

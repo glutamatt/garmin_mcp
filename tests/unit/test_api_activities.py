@@ -1,8 +1,12 @@
 """Unit tests for garmin_mcp.api.activities — curation logic with mock client."""
 
+import io
+import zipfile
+
 import pytest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from garmin_mcp.api import activities as api
+from garmin_mcp.api.contract import InvalidInput, NotFound, Unavailable
 
 
 @pytest.fixture
@@ -46,15 +50,22 @@ class TestGetActivities:
         assert result["has_more"] is True
         assert result["next_start"] == 5
 
-    def test_no_data_date_range(self, client):
+    def test_no_data_date_range_is_an_empty_list(self, client):
         client.get_activities_by_date.return_value = []
         result = api.get_activities(client, "2024-01-01", "2024-01-15")
-        assert "error" in result
+        assert result == {
+            "count": 0,
+            "date_range": {"start": "2024-01-01", "end": "2024-01-15"},
+            "activities": [],
+        }
+        client.query_garmin_graphql.assert_not_called()
 
-    def test_no_data_pagination(self, client):
+    def test_no_data_pagination_is_an_empty_list(self, client):
         client.get_activities.return_value = []
         result = api.get_activities(client)
-        assert "error" in result
+        assert result["count"] == 0
+        assert result["activities"] == []
+        assert result["has_more"] is False
 
     def test_limit_capped(self, client):
         client.get_activities.return_value = []
@@ -163,10 +174,10 @@ class TestGetActivity:
         assert result["training_load"] == 85
         assert result["lap_count"] == 5
 
-    def test_no_data(self, client):
+    def test_no_data_is_not_found(self, client):
         client.get_activity.return_value = None
-        result = api.get_activity(client, 99999)
-        assert "error" in result
+        with pytest.raises(NotFound, match="99999"):
+            api.get_activity(client, 99999)
 
 
 class TestGetActivitySplits:
@@ -197,8 +208,55 @@ class TestGetActivitySplits:
         assert result["laps"][0]["lap_number"] == 1
         assert result["laps"][1]["avg_hr_bpm"] == 160
 
+    def test_no_splits_is_an_empty_list(self, client):
+        client.get_activity_splits.return_value = None
+        assert api.get_activity_splits(client, 12345) == {
+            "activity_id": 12345, "lap_count": 0, "laps": [],
+        }
+
+
+class TestGetActivityHrInTimezones:
+    def test_no_zones_is_an_empty_list(self, client):
+        client.get_activity_hr_in_timezones.return_value = None
+        assert api.get_activity_hr_in_timezones(client, 12345) == []
+
+
+class TestDownloadActivity:
+    def test_unsupported_format_is_invalid_input(self, client, tmp_path):
+        with pytest.raises(InvalidInput, match="Unsupported format"):
+            api.download_activity(client, 1, "pdf", str(tmp_path))
+        client.download_activity.assert_not_called()
+
+    @staticmethod
+    def _zip(names: list[str]) -> bytes:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as zf:
+            for name in names:
+                zf.writestr(name, b"fit bytes")
+        return buffer.getvalue()
+
+    def test_zip_without_fit_is_unavailable(self, client, tmp_path):
+        client.download_activity.return_value = self._zip(["activity.txt"])
+        with pytest.raises(Unavailable, match="no .fit file"):
+            api.download_activity(client, 1, "fit", str(tmp_path))
+
+    def test_fit_without_samples_is_an_empty_csv(self, client, tmp_path):
+        """A manual activity has no record: an empty file and `rows: 0`, not an error."""
+        client.download_activity.return_value = self._zip(["1_ACTIVITY.fit"])
+        fit = Mock()
+        fit.get_messages.return_value = []
+        with patch("fitparse.FitFile", return_value=fit):
+            result = api.download_activity(client, 1, "fit", str(tmp_path))
+        assert result["rows"] == 0
+        assert result["columns"] == []
+        assert open(result["path"]).read() == ""
+
 
 class TestGetActivityTypes:
+    def test_no_types_is_an_empty_list(self, client):
+        client.get_activity_types.return_value = None
+        assert api.get_activity_types(client) == {"count": 0, "activity_types": []}
+
     def test_curates_list(self, client):
         client.get_activity_types.return_value = [
             {"typeId": 1, "typeKey": "running", "displayName": "Running", "parentTypeId": 17},

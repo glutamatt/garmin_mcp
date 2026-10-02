@@ -46,7 +46,7 @@ async def test_get_workouts_no_data(app, mock_garmin_client):
     result = await app.call_tool("get_workouts", {})
     data = _parse(result)
 
-    assert "error" in data
+    assert data == {"count": 0, "workouts": []}
 
 
 # ── get_workout_by_id ─────────────────────────────────────────────────────────

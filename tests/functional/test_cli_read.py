@@ -72,7 +72,7 @@ class TestActivities:
             cli, readonly_token,
             "activities", "list", "--from", month_ago(), "--to", today()
         )
-        assert "activities" in data or "error" in data
+        assert "activities" in data
 
     def test_list_with_fields(self, cli, readonly_token):
         data = invoke_json(
@@ -114,7 +114,7 @@ class TestActivities:
         activity_id = data["activities"][0]["id"]
 
         splits = invoke_json(cli, readonly_token, "activities", "splits", str(activity_id))
-        assert "laps" in splits or "error" in splits
+        assert "laps" in splits
 
     def test_types(self, cli, readonly_token):
         data = invoke_json(cli, readonly_token, "activities", "types")
@@ -182,7 +182,7 @@ class TestHealth:
 
     def test_stats(self, cli, readonly_token):
         data = invoke_json(cli, readonly_token, "health", "stats", yesterday())
-        assert "date" in data or "error" in data
+        assert "date" in data
 
     def test_sleep(self, cli, readonly_token):
         data = invoke_json(cli, readonly_token, "health", "sleep", yesterday())
@@ -206,7 +206,7 @@ class TestHealth:
             cli, readonly_token,
             "health", "body-battery", "--from", week_ago(), "--to", today(),
         )
-        assert "days" in data or "error" in data
+        assert "days" in data
 
     def test_spo2(self, cli, readonly_token):
         data = invoke_json(cli, readonly_token, "health", "spo2", yesterday())
@@ -248,7 +248,7 @@ class TestTraining:
             "training", "progress",
             "--from", month_ago(), "--to", today(), "--metric", "distance",
         )
-        assert "metric" in data or "error" in data
+        assert "metric" in data
 
     def test_race_predictions(self, cli, readonly_token):
         data = invoke_json(cli, readonly_token, "training", "race-predictions")
@@ -275,11 +275,11 @@ class TestProfile:
     def test_info(self, cli, readonly_token):
         data = invoke_json(cli, readonly_token, "profile", "info")
         # Profile may have display_name, user_profile_id, or settings
-        assert "user_profile_id" in data or "display_name" in data or "settings" in data or "error" in data
+        assert "user_profile_id" in data or "display_name" in data or "settings" in data
 
     def test_devices(self, cli, readonly_token):
         data = invoke_json(cli, readonly_token, "profile", "devices")
-        assert "devices" in data or "error" in data
+        assert "devices" in data
 
 
 # ── Calendar ─────────────────────────────────────────────────────────────────
@@ -292,7 +292,7 @@ class TestCalendar:
             cli, readonly_token,
             "calendar", "month", str(now.year), str(now.month),
         )
-        assert "items" in data or "error" in data
+        assert "items" in data
 
     def test_upcoming(self, cli, readonly_token):
         data = invoke_json(cli, readonly_token, "calendar", "upcoming")

@@ -124,7 +124,7 @@ class TestBodyData:
                 cli, dev_token,
                 "body", "weigh-ins", "--from", today_str, "--to", today_str,
             )
-            assert weigh_data.get("measurements") or weigh_data.get("error")
+            assert "measurements" in weigh_data
         finally:
             # 3. Delete
             invoke(cli, dev_token, "body", "delete-weight", today_str)

@@ -83,7 +83,7 @@ async def test_get_devices_no_data(app, mock_garmin_client):
     result = await app.call_tool("get_devices", {})
     data = _parse(result)
 
-    assert "error" in data
+    assert data == {"count": 0, "devices": []}
 
 
 # ── get_device_capabilities ──────────────────────────────────────────────────

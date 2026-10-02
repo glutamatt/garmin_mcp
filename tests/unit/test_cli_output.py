@@ -46,6 +46,11 @@ class TestFilterFields:
         assert result["date_range"] == {"start": "2025-01-01", "end": "2025-01-31"}
         assert result["items"] == [{"id": 1, "name": "X"}]
 
+    def test_empty_list_answer_keeps_its_shape(self):
+        """`count: 0` with `--fields`: still a list answer, not filtered down to `{}`."""
+        data = {"count": 0, "date_range": {"start": "2025-01-01"}, "activities": []}
+        assert filter_fields(data, ["id", "name"]) == data
+
     def test_nonexistent_fields(self):
         data = {"id": 1, "name": "Run"}
         result = filter_fields(data, ["nonexistent"])
@@ -87,6 +92,11 @@ class TestFindMissingFields:
         assert find_missing_fields([], ["id"]) == []
         assert find_missing_fields({}, ["id"]) == []
 
+    def test_empty_list_answer_has_no_missing_field(self):
+        """No item to compare with: no field can be called unknown."""
+        data = {"count": 0, "date_range": {"start": "2025-01-01"}, "activities": []}
+        assert find_missing_fields(data, ["id", "name"]) == []
+
 
 class TestFormatOutput:
     def test_json_format(self):
@@ -117,11 +127,6 @@ class TestFormatOutput:
         # Should have header separator
         assert "---" in result
 
-    def test_table_error(self):
-        data = {"error": "No data found"}
-        result = format_output(data, "table")
-        assert "Error: No data found" in result
-
     def test_table_duration_formatting(self):
         data = {"duration_seconds": 3661}
         result = format_output(data, "table")
@@ -131,6 +136,7 @@ class TestFormatOutput:
         data = {"count": 0, "activities": []}
         result = format_output(data, "table")
         assert "count: 0" in result
+        assert "(empty)" in result
 
 
 def _read_csv(path):

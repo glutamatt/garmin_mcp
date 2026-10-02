@@ -2,7 +2,7 @@
 Activities API — curated activity data.
 
 Pure functions: (Garmin client, params) → dict.
-Returns {"error": "..."} for missing data.
+Output contract (empty answers, failures): see `api/contract.py`.
 """
 
 import logging
@@ -10,6 +10,7 @@ import os
 import zipfile
 
 from garminconnect import Garmin
+from garmin_mcp.api.contract import InvalidInput, NotFound, Unavailable
 from garmin_mcp.utils import clean_nones
 
 logger = logging.getLogger(__name__)
@@ -34,27 +35,19 @@ def get_activities(
     limit = min(max(1, limit), 100)
 
     if start_date and end_date:
-        raw = client.get_activities_by_date(start_date, end_date, activity_type)
-        if not raw:
-            msg = f"No activities between {start_date} and {end_date}"
-            if activity_type:
-                msg += f" for type '{activity_type}'"
-            return {"error": msg}
-
+        raw = client.get_activities_by_date(start_date, end_date, activity_type) or []
         activities = [_curate_activity_summary(a) for a in raw]
         if include_hr_zones:
             _enrich_hr_zones(client, activities, raw)
-        _maybe_enrich_graphql(client, activities, start_date, end_date, fields)
+        if activities:
+            _maybe_enrich_graphql(client, activities, start_date, end_date, fields)
         return {
             "count": len(activities),
             "date_range": {"start": start_date, "end": end_date},
             "activities": activities,
         }
     else:
-        raw = client.get_activities(start, limit)
-        if not raw:
-            return {"error": f"No activities found at index {start}"}
-
+        raw = client.get_activities(start, limit) or []
         activities = [_curate_activity_summary(a) for a in raw]
         if include_hr_zones:
             _enrich_hr_zones(client, activities, raw)
@@ -75,7 +68,7 @@ def get_activity(client: Garmin, activity_id: int) -> dict:
     """Curated single activity detail: timing, distance, HR, cadence, power, training effect."""
     raw = client.get_activity(activity_id)
     if not raw:
-        return {"error": f"No activity found with ID {activity_id}"}
+        raise NotFound(f"No activity {activity_id}")
 
     summary = raw.get("summaryDTO", {})
     activity_type = raw.get("activityTypeDTO", {})
@@ -148,13 +141,10 @@ def get_activity(client: Garmin, activity_id: int) -> dict:
 
 def get_activity_splits(client: Garmin, activity_id: int) -> dict:
     """Per-lap splits: distance, duration, pace, HR, cadence, power."""
-    raw = client.get_activity_splits(activity_id)
-    if not raw:
-        return {"error": f"No splits for activity {activity_id}"}
-
-    laps = raw.get("lapDTOs", [])
+    raw = client.get_activity_splits(activity_id) or {}
+    laps = raw.get("lapDTOs") or []
     return {
-        "activity_id": raw.get("activityId"),
+        "activity_id": raw.get("activityId", activity_id),
         "lap_count": len(laps),
         "laps": [
             clean_nones({
@@ -177,18 +167,13 @@ def get_activity_splits(client: Garmin, activity_id: int) -> dict:
 
 
 def get_activity_hr_in_timezones(client: Garmin, activity_id: int) -> dict:
-    """HR zone distribution for an activity."""
-    raw = client.get_activity_hr_in_timezones(activity_id)
-    if not raw:
-        return {"error": f"No HR zone data for activity {activity_id}"}
-    return raw
+    """HR zone distribution for an activity: Garmin's list, one entry per zone."""
+    return client.get_activity_hr_in_timezones(activity_id) or []
 
 
 def get_activity_types(client: Garmin) -> dict:
     """All available activity type codes."""
-    raw = client.get_activity_types()
-    if not raw:
-        return {"error": "No activity types found"}
+    raw = client.get_activity_types() or []
     return {
         "count": len(raw),
         "activity_types": [
@@ -222,7 +207,7 @@ def download_activity(client: Garmin, activity_id: int, fmt: str = "fit", sandbo
         "tcx": Garmin.ActivityDownloadFormat.TCX,
     }
     if fmt not in format_map:
-        return {"error": f"Unsupported format '{fmt}'. Use: fit, gpx, tcx"}
+        raise InvalidInput(f"Unsupported format '{fmt}'. Use: fit, gpx, tcx")
 
     content = client.download_activity(str(activity_id), dl_fmt=format_map[fmt])
     os.makedirs(sandbox, exist_ok=True)
@@ -255,7 +240,7 @@ def _fit_to_csv(zip_bytes: bytes, activity_id: int, sandbox: str) -> dict:
         with zipfile.ZipFile(zip_path, "r") as zf:
             fit_names = [n for n in zf.namelist() if n.endswith(".fit")]
             if not fit_names:
-                return {"error": "No .fit file found in downloaded zip"}
+                raise Unavailable(f"Garmin's download of activity {activity_id} has no .fit file")
             fit_bytes = zf.read(fit_names[0])
     finally:
         os.remove(zip_path)
@@ -330,15 +315,14 @@ def _fit_to_csv(zip_bytes: bytes, activity_id: int, sandbox: str) -> dict:
 
         rows.append(row)
 
-    if not rows:
-        return {"error": "No record data found in FIT file"}
+    # A FIT without samples (a manual activity) gives an empty CSV: an empty answer, not an error.
 
     # Fix half-cadence glitch — running only (cycling 80rpm is valid)
-    if is_running and cadence_label in rows[0]:
+    if is_running and rows and cadence_label in rows[0]:
         _fix_half_cadence_glitch(rows, cadence_label)
 
     # Drop columns that are entirely None
-    all_keys = list(rows[0].keys())
+    all_keys = list(rows[0].keys()) if rows else []
     drop_keys = {k for k in all_keys if all(r.get(k) is None for r in rows)}
     if drop_keys:
         for r in rows:
@@ -349,13 +333,14 @@ def _fit_to_csv(zip_bytes: bytes, activity_id: int, sandbox: str) -> dict:
     csv_path = os.path.join(sandbox, f"activity_{activity_id}.csv")
     columns = [k for k in all_keys if k not in drop_keys]
     with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=columns)
-        writer.writeheader()
-        writer.writerows(rows)
+        if columns:
+            writer = csv.DictWriter(f, fieldnames=columns)
+            writer.writeheader()
+            writer.writerows(rows)
 
     size_kb = round(os.path.getsize(csv_path) / 1024, 1)
-    last = rows[-1]
-    return {
+    last = rows[-1] if rows else {}
+    return clean_nones({
         "activity_id": activity_id,
         "format": "csv",
         "path": csv_path,
@@ -364,7 +349,7 @@ def _fit_to_csv(zip_bytes: bytes, activity_id: int, sandbox: str) -> dict:
         "duration_s": last.get("elapsed_s"),
         "distance_m": last.get("distance_m"),
         "size_kb": size_kb,
-    }
+    })
 
 
 # ── Private helpers ──────────────────────────────────────────────────────────

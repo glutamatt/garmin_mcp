@@ -10,6 +10,7 @@ import pytest
 from unittest.mock import Mock
 
 from garmin_mcp.api import gear as api
+from garmin_mcp.api.contract import Unavailable
 
 
 # Real filterGear objects: displayName is null, the name lives in customMakeModel,
@@ -80,6 +81,7 @@ class TestGetGear:
         client.get_gear.return_value = []
         assert api.get_gear(client) == {"count": 0, "gear": []}
 
-    def test_missing_profile_id_returns_error(self, client):
+    def test_missing_profile_id_fails(self, client):
         client.garth.profile = {}
-        assert "error" in api.get_gear(client)
+        with pytest.raises(Unavailable, match="profile id"):
+            api.get_gear(client)

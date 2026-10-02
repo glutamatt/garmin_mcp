@@ -3,11 +3,20 @@
 import pytest
 from unittest.mock import Mock
 from garmin_mcp.api import health as api
+from garmin_mcp.api.contract import AuthError, RateLimited
+from garminconnect import (
+    GarminConnectAuthenticationError,
+    GarminConnectConnectionError,
+    GarminConnectTooManyRequestsError,
+)
 
 
 @pytest.fixture
 def client():
     return Mock()
+
+
+NO_DATA_DAY = {"date": "2024-01-15", "available": False, "reason": "no_data"}
 
 
 # ── get_sleep ────────────────────────────────────────────────────────────────
@@ -39,16 +48,14 @@ class TestGetSleep:
         assert "dailySleepDTO" not in result
         assert "wellnessSpO2SleepSummaryDTO" not in result
 
-    def test_no_data(self, client):
+    def test_no_data_is_unavailable(self, client):
         client.get_sleep_data.return_value = None
         result = api.get_sleep(client, "2024-01-15")
-        assert "error" in result
+        assert result == NO_DATA_DAY
 
-    def test_empty_dto(self, client):
+    def test_empty_dto_is_unavailable(self, client):
         client.get_sleep_data.return_value = {"dailySleepDTO": {}}
-        result = api.get_sleep(client, "2024-01-15")
-        # Should return a dict (possibly empty), not crash
-        assert isinstance(result, dict)
+        assert api.get_sleep(client, "2024-01-15") == NO_DATA_DAY
 
 
 # ── get_stats ────────────────────────────────────────────────────────────────
@@ -74,10 +81,14 @@ class TestGetStats:
         assert "privacyProtected" not in result
         assert "calendarDate" not in result or result.get("date") is not None
 
-    def test_no_data(self, client):
+    def test_no_data_is_unavailable(self, client):
         client.get_user_summary.return_value = None
-        result = api.get_stats(client, "2024-01-15")
-        assert "error" in result
+        assert api.get_stats(client, "2024-01-15") == NO_DATA_DAY
+
+    def test_only_a_date_is_unavailable(self, client):
+        """A day Garmin knows but has no value for (future day, watch not worn)."""
+        client.get_user_summary.return_value = {"calendarDate": "2024-01-15", "totalSteps": None}
+        assert api.get_stats(client, "2024-01-15") == NO_DATA_DAY
 
 
 # ── get_stress ───────────────────────────────────────────────────────────────
@@ -98,10 +109,9 @@ class TestGetStress:
         assert "rest_percent" in result
         assert "high_stress_percent" in result
 
-    def test_no_data(self, client):
+    def test_no_data_is_unavailable(self, client):
         client.get_stress_data.return_value = None
-        result = api.get_stress(client, "2024-01-15")
-        assert "error" in result
+        assert api.get_stress(client, "2024-01-15") == NO_DATA_DAY
 
 
 # ── get_heart_rate ───────────────────────────────────────────────────────────
@@ -178,26 +188,33 @@ class TestGetBodyBattery:
 
 
 class TestGetCoachingSnapshot:
-    def test_composites_all_fields(self, client):
-        client.get_coaching_snapshot.return_value = {
-            "date": "2024-01-15",
-            "stats": {"calendarDate": "2024-01-15", "totalSteps": 8000, "restingHeartRate": 55},
-            "sleep": {
-                "dailySleepDTO": {
-                    "sleepTimeSeconds": 25200,
-                    "sleepScores": {"overall": {"value": 80}},
-                    "deepSleepSeconds": 6000,
-                    "lightSleepSeconds": 12000,
-                    "remSleepSeconds": 5400,
-                    "awakeSleepSeconds": 1800,
-                },
-            },
-            "training_readiness": [
-                {"calendarDate": "2024-01-15", "score": 65, "level": "MODERATE"}
-            ],
-            "body_battery": [{"date": "2024-01-15", "charged": 40, "drained": 25}],
-            "hrv": {"hrvSummary": {"lastNightAvg": 45, "weeklyAvg": 48, "status": "BALANCED"}},
+    @pytest.fixture
+    def client(self):
+        """One answer per section endpoint, called with the date."""
+        client = Mock()
+        client.get_user_summary.return_value = {
+            "calendarDate": "2024-01-15", "totalSteps": 8000, "restingHeartRate": 55,
         }
+        client.get_sleep_data.return_value = {
+            "dailySleepDTO": {
+                "sleepTimeSeconds": 25200,
+                "sleepScores": {"overall": {"value": 80}},
+                "deepSleepSeconds": 6000,
+                "lightSleepSeconds": 12000,
+                "remSleepSeconds": 5400,
+                "awakeSleepSeconds": 1800,
+            },
+        }
+        client.get_training_readiness.return_value = [
+            {"calendarDate": "2024-01-15", "score": 65, "level": "MODERATE"}
+        ]
+        client.get_body_battery.return_value = [{"date": "2024-01-15", "charged": 40, "drained": 25}]
+        client.get_hrv_data.return_value = {
+            "hrvSummary": {"lastNightAvg": 45, "weeklyAvg": 48, "status": "BALANCED"},
+        }
+        return client
+
+    def test_composites_all_fields(self, client):
         result = api.get_coaching_snapshot(client, "2024-01-15")
         assert result["date"] == "2024-01-15"
         assert result["stats"]["total_steps"] == 8000
@@ -205,24 +222,53 @@ class TestGetCoachingSnapshot:
         assert result["training_readiness"]["score"] == 65
         assert result["body_battery"]["charged"] == 40
         assert result["hrv"]["status"] == "BALANCED"
+        client.get_hrv_data.assert_called_once_with("2024-01-15")
 
-    def test_handles_partial_data(self, client):
-        client.get_coaching_snapshot.return_value = {
-            "date": "2024-01-15",
-            "stats": {"calendarDate": "2024-01-15", "totalSteps": 5000},
-            "sleep": None,
-            "training_readiness": None,
-            "body_battery": None,
-            "hrv": None,
-        }
+    def test_section_without_data_says_no_data(self, client):
+        client.get_sleep_data.return_value = None
+        client.get_training_readiness.return_value = []
+        client.get_body_battery.return_value = None
+        client.get_hrv_data.return_value = {}
         result = api.get_coaching_snapshot(client, "2024-01-15")
-        assert result["date"] == "2024-01-15"
-        assert result["stats"]["total_steps"] == 5000
-        # Unavailable sections should be explicitly marked, not silently dropped
-        assert result["sleep"] == {"unavailable": True}
-        assert result["hrv"] == {"unavailable": True}
-        assert result["training_readiness"] == {"unavailable": True}
-        assert result["body_battery"] == {"unavailable": True}
+        assert result["stats"]["total_steps"] == 8000
+        for section in ("sleep", "training_readiness", "body_battery", "hrv"):
+            assert result[section] == {"available": False, "reason": "no_data"}
+
+    def test_failed_section_says_why(self, client):
+        """A 429 on one endpoint is not "no data": the reason carries the error."""
+        client.get_hrv_data.side_effect = GarminConnectTooManyRequestsError("Rate limit exceeded")
+        result = api.get_coaching_snapshot(client, "2024-01-15")
+        assert result["stats"]["total_steps"] == 8000
+        assert result["hrv"]["available"] is False
+        assert result["hrv"]["reason"].startswith("error: Garmin rate limit (HTTP 429)")
+
+    def test_curation_error_stays_in_its_section(self, client):
+        client.get_sleep_data.return_value = {"dailySleepDTO": "not a dict"}
+        result = api.get_coaching_snapshot(client, "2024-01-15")
+        assert result["sleep"]["reason"].startswith("error: AttributeError")
+        assert result["stats"]["total_steps"] == 8000
+
+    def test_auth_error_fails_the_snapshot(self, client):
+        client.get_user_summary.side_effect = GarminConnectAuthenticationError("401")
+        with pytest.raises(AuthError):
+            api.get_coaching_snapshot(client, "2024-01-15")
+        client.get_hrv_data.assert_not_called()
+
+    def test_every_section_failing_fails_the_snapshot(self, client):
+        error = GarminConnectTooManyRequestsError("Rate limit exceeded")
+        for method in ("get_user_summary", "get_sleep_data", "get_training_readiness",
+                       "get_body_battery", "get_hrv_data"):
+            getattr(client, method).side_effect = error
+        with pytest.raises(RateLimited):
+            api.get_coaching_snapshot(client, "2024-01-15")
+
+    def test_some_failures_and_no_data_is_an_answer(self, client):
+        client.get_user_summary.side_effect = GarminConnectConnectionError("timeout")
+        client.get_sleep_data.return_value = None
+        result = api.get_coaching_snapshot(client, "2024-01-15")
+        assert result["stats"]["reason"] == "error: Garmin did not answer: timeout"
+        assert result["sleep"]["reason"] == "no_data"
+        assert result["hrv"]["status"] == "BALANCED"
 
 
 # ── get_spo2 ─────────────────────────────────────────────────────────────────
@@ -262,3 +308,26 @@ class TestGetTrainingReadiness:
         assert result["score"] == 72
         assert result["level"] == "MODERATE"
         assert result["recovery_time_hours"] == 2.0
+
+    def test_no_data_is_unavailable(self, client):
+        client.get_training_readiness.return_value = []
+        assert api.get_training_readiness(client, "2024-01-15") == NO_DATA_DAY
+
+
+# ── Days without data ────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("function, method", [
+    (api.get_heart_rate, "get_heart_rates"),
+    (api.get_respiration, "get_respiration_data"),
+    (api.get_spo2, "get_spo2_data"),
+])
+def test_day_without_data_is_unavailable(client, function, method):
+    """No data for a day is an answer that says so (exit 0), not an error."""
+    getattr(client, method).return_value = None
+    assert function(client, "2024-01-15") == NO_DATA_DAY
+
+
+def test_body_battery_without_data_is_an_empty_list(client):
+    client.get_body_battery.return_value = []
+    assert api.get_body_battery(client, "2024-01-15", "2024-01-16") == {"count": 0, "days": []}

@@ -99,7 +99,8 @@ async def test_get_activities_no_data(app, mock_garmin_client):
     result = await app.call_tool("get_activities", {})
     data = _parse(result)
 
-    assert "error" in data
+    assert data["count"] == 0
+    assert data["activities"] == []
 
 
 # ── get_activities — enriched fields (training effect, power, HR zones) ──────

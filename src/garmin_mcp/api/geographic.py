@@ -17,6 +17,7 @@ import zipfile
 
 import requests
 from garminconnect import Garmin
+from garmin_mcp.api.contract import Unavailable, http_failure
 
 # Service URL is hard-coded for now ; will move to env/flag once we have a
 # concrete need (local geo-runner during dev, alternate Spaces, …).
@@ -40,7 +41,7 @@ def analyze_activity(
     — same design as `activities download`. The agent's context stays light ;
     a `pd.read_csv(path, sep='\\t', comment='#')` opens the file in one line.
 
-    Raises a `RuntimeError` with context on any failure (Garmin download
+    Raises `Unavailable` with context on any failure (Garmin download
     error, malformed zip, geo-runner non-2xx response, network timeout).
     """
     fit_bytes = _download_fit(client, activity_id)
@@ -57,7 +58,7 @@ def _download_fit(client: Garmin, activity_id: int) -> bytes:
             dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL,
         )
     except Exception as e:
-        raise RuntimeError(
+        raise Unavailable(
             f"Garmin download failed for activity {activity_id}: {e}"
         )
 
@@ -65,12 +66,12 @@ def _download_fit(client: Garmin, activity_id: int) -> bytes:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             fit_names = [n for n in zf.namelist() if n.endswith(".fit")]
             if not fit_names:
-                raise RuntimeError(
+                raise Unavailable(
                     f"No .fit file inside the activity {activity_id} zip"
                 )
             return zf.read(fit_names[0])
     except zipfile.BadZipFile as e:
-        raise RuntimeError(
+        raise Unavailable(
             f"Invalid zip from Garmin (activity {activity_id}): {e}"
         )
 
@@ -92,7 +93,7 @@ def _post_to_geo_runner(activity_id: int, fit_bytes: bytes) -> str:
             timeout=REQUEST_TIMEOUT_S,
         )
     except requests.RequestException as e:
-        raise RuntimeError(f"geo-runner request failed: {e}")
+        raise Unavailable(f"geo-runner request failed: {e}")
 
     if not resp.ok:
         # geo-runner responds with a `{"error": "..."}` body on 4xx ; surface
@@ -101,7 +102,7 @@ def _post_to_geo_runner(activity_id: int, fit_bytes: bytes) -> str:
             err = resp.json().get("error", resp.text)
         except ValueError:
             err = resp.text[:300]
-        raise RuntimeError(f"geo-runner {resp.status_code}: {err}")
+        raise http_failure(resp.status_code, f"geo-runner {resp.status_code}: {err}")
 
     return resp.text
 

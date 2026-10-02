@@ -2,10 +2,12 @@
 Training & Performance API — curated fitness metrics.
 
 Pure functions: (Garmin client, params) → dict.
-Returns {"error": "..."} for missing data.
+A day without data is `{"date", "available": False, "reason": "no_data"}`;
+failures are exceptions (see `api/contract.py`).
 """
 
 from garminconnect import Garmin
+from garmin_mcp.api.contract import NO_DATA, day_answer, unavailable
 from garmin_mcp.utils import clean_nones
 
 
@@ -13,7 +15,7 @@ def get_max_metrics(client: Garmin, date: str) -> dict:
     """Enriched max metrics: VO2 max + fitness age + lactate threshold."""
     raw = client.get_max_metrics(date)
     if not raw:
-        return {"error": f"No max metrics for {date}"}
+        return day_answer(date, None)
 
     metrics_list = raw if isinstance(raw, list) else [raw]
     results = []
@@ -37,19 +39,19 @@ def get_max_metrics(client: Garmin, date: str) -> dict:
             "ftp_watts": m.get("functionalThresholdPower"),
         }))
 
-    return results[0] if len(results) == 1 else {"metrics": results}
+    return day_answer(date, results[0]) if len(results) == 1 else {"metrics": results}
 
 
 def get_hrv_data(client: Garmin, date: str) -> dict:
     """HRV overnight summary: last night avg, weekly avg, baseline, status."""
     raw = client.get_hrv_data(date)
     if not raw:
-        return {"error": f"No HRV data for {date}"}
+        return day_answer(date, None)
 
     summary = raw.get("hrvSummary") or raw
     baseline = summary.get("baseline") or {}
 
-    return clean_nones({
+    return day_answer(date, clean_nones({
         "date": summary.get("calendarDate") or date,
         "last_night_avg_hrv_ms": summary.get("lastNightAvg"),
         "last_night_5min_high_hrv_ms": summary.get("lastNight5MinHigh"),
@@ -58,14 +60,14 @@ def get_hrv_data(client: Garmin, date: str) -> dict:
         "baseline_balanced_upper_ms": baseline.get("balancedUpper"),
         "status": summary.get("status"),
         "feedback": summary.get("feedbackPhrase"),
-    })
+    }))
 
 
 def get_training_status(client: Garmin, date: str) -> dict:
     """Training status: productive/maintaining/detraining, ACWR, VO2, load balance."""
     raw = client.get_training_status(date)
     if not raw:
-        return {"error": f"No training status for {date}"}
+        return day_answer(date, None)
 
     recent_status = raw.get("mostRecentTrainingStatus") or {}
     latest_data = recent_status.get("latestTrainingStatusData") or {}
@@ -87,7 +89,7 @@ def get_training_status(client: Garmin, date: str) -> dict:
         load_data = data
         break
 
-    return clean_nones({
+    return day_answer(date, clean_nones({
         "date": device_data.get("calendarDate", date),
         # Training status
         "training_status": device_data.get("trainingStatus"),
@@ -110,7 +112,7 @@ def get_training_status(client: Garmin, date: str) -> dict:
         "monthly_load_aerobic_high": load_data.get("monthlyLoadAerobicHigh"),
         "monthly_load_anaerobic": load_data.get("monthlyLoadAnaerobic"),
         "training_balance_feedback": load_data.get("trainingBalanceFeedbackPhrase"),
-    })
+    }))
 
 
 def get_progress_summary(
@@ -121,10 +123,7 @@ def get_progress_summary(
     SDK returns: [{date, countOfActivities, stats: {running: {<metric>: {count, min, max, avg, sum}}, ...}}]
     We flatten per-sport stats into a clean list.
     """
-    raw = client.get_progress_summary_between_dates(start_date, end_date, metric)
-    if not raw:
-        return {"error": f"No progress data for {metric} between {start_date} and {end_date}"}
-
+    raw = client.get_progress_summary_between_dates(start_date, end_date, metric) or []
     entries = raw if isinstance(raw, list) else [raw]
 
     # Aggregate across all periods, grouped by sport
@@ -178,23 +177,14 @@ def get_progress_summary(
 
 def get_race_predictions(client: Garmin) -> dict:
     """Race time predictions (5K, 10K, half, marathon)."""
-    raw = client.get_race_predictions()
-    if not raw:
-        return {"error": "No race predictions available"}
-    return raw
+    return client.get_race_predictions() or unavailable(NO_DATA)
 
 
 def get_goals(client: Garmin, goal_type: str = "active") -> dict:
     """Garmin Connect goals (active, future, or past)."""
-    raw = client.get_goals(goal_type)
-    if not raw:
-        return {"error": f"No {goal_type} goals found"}
-    return raw
+    return client.get_goals(goal_type) or []
 
 
 def get_personal_record(client: Garmin) -> dict:
     """Personal records across all activities."""
-    raw = client.get_personal_record()
-    if not raw:
-        return {"error": "No personal records found"}
-    return raw
+    return client.get_personal_record() or []

@@ -14,6 +14,7 @@ make/model). Merging the stats endpoint + picking the right name field is the
 whole point of this layer.
 """
 
+from garmin_mcp.api.contract import Unavailable
 from garmin_mcp.utils import clean_nones
 
 
@@ -63,7 +64,7 @@ def get_gear(client, user_profile_id: str | None = None) -> dict:
     if not user_profile_id:
         user_profile_id = _resolve_profile_id(client)
         if not user_profile_id:
-            return {"error": "Could not resolve user profile id from auth context."}
+            raise Unavailable("Could not resolve user profile id from auth context.")
 
     gear_list = client.get_gear(str(user_profile_id))
     if not gear_list:

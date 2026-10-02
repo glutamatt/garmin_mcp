@@ -5,6 +5,7 @@ Every function returns a clean dict the LLM can reason about.
 Composes with the garminconnect SDK (Layer 1) internally.
 
 Modules:
+    contract    — Output contract     (empty answers, unavailable, typed failures)
     health      — How are you?        (stats, sleep, stress, HR, body battery, SpO2, respiration)
     activities  — What have you done?  (past sessions, laps, HR zones)
     training    — How fit are you?     (VO2, HRV, training status, goals, race predictions)

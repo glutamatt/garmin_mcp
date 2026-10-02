@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import Mock
 from garmin_mcp.api import profile as api
+from garmin_mcp.api.contract import Unavailable
 
 
 @pytest.fixture
@@ -58,10 +59,11 @@ class TestGetUserProfile:
         assert len(result["hr_zones"]) == 1
         assert result["hr_zones"][0]["low_bpm"] == 100
 
-    def test_no_profile(self, client):
+    def test_no_profile_fails(self, client):
+        """Every athlete has a profile: an empty answer is Garmin failing, not "no data"."""
         client.get_user_profile.return_value = None
-        result = api.get_user_profile(client)
-        assert "error" in result
+        with pytest.raises(Unavailable, match="no user profile"):
+            api.get_user_profile(client)
 
     def test_no_userdata_doesnt_crash(self, client):
         client.get_user_profile.return_value = {"displayName": "Test"}
@@ -127,18 +129,16 @@ class TestGetHrZones:
         assert len(result["power_zones"]) == 2
         assert result["power_zones"][1] == {"zone": 2, "low_watts": 120}
 
-    def test_no_activities(self, client):
+    def test_no_activities_is_unavailable(self, client):
         client.get_activities.return_value = []
-        result = api.get_hr_zones(client)
-        assert "error" in result
+        assert api.get_hr_zones(client) == {"available": False, "reason": "no_data"}
 
-    def test_no_zone_data(self, client):
+    def test_no_zone_data_is_unavailable(self, client):
         client.get_activities.return_value = [{"activityId": 12345}]
         client.get_activity_hr_in_timezones.return_value = None
         client.get_activity_power_in_timezones.return_value = None
 
-        result = api.get_hr_zones(client)
-        assert "error" in result
+        assert api.get_hr_zones(client) == {"available": False, "reason": "no_data"}
 
 
 class TestGetDevices:
@@ -159,10 +159,9 @@ class TestGetDevices:
         assert "is_last_used" not in result["devices"][1]
         assert "is_primary_training" not in result["devices"][1]
 
-    def test_no_devices(self, client):
+    def test_no_devices_is_an_empty_list(self, client):
         client.get_devices.return_value = None
-        result = api.get_devices(client)
-        assert "error" in result
+        assert api.get_devices(client) == {"count": 0, "devices": []}
 
     def test_enrichment_failure_doesnt_crash(self, client):
         client.get_devices.return_value = [

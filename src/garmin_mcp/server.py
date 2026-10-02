@@ -6,6 +6,7 @@ Registers all MCP tools + the /cli HTTP endpoint.
 """
 
 import json
+import logging
 import os
 import sys
 
@@ -18,6 +19,14 @@ def create_app() -> FastMCP:
     """Create and configure the Garmin MCP server with all tools and endpoints."""
 
     print("Garmin MCP v2: 3-layer architecture, per-request token loading.", file=sys.stderr)
+
+    # Server log for library warnings (SDK, garth), bound to the process stderr now.
+    # Without a handler, Python's last-resort handler writes to the *current*
+    # sys.stderr, which `cli.execute()` swaps: tracebacks landed in the CLI's stderr.
+    logging.basicConfig(
+        level=logging.WARNING, stream=sys.stderr,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
 
     # Ensure CLI sandbox directory exists
     os.makedirs("/tmp/garmin", exist_ok=True)
