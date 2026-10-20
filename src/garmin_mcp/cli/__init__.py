@@ -506,20 +506,21 @@ def activities_download(ctx, activity_id):
     Downloads the original FIT recording, parses second-by-second data,
     fixes all gotchas, and writes a clean CSV. Ready for pd.read_csv().
 
-    Columns (when available):
-      timestamp, elapsed_s, distance_m, heart_rate, cadence_spm,
-      speed_ms, pace_min_km, altitude_m, lat, lon, temperature_c,
-      vertical_oscillation_mm, ground_contact_time_ms, step_length_cm,
+    \b
+    Columns (when available; the answer lists them):
+      timestamp, elapsed_s, distance_m, heart_rate,
+      cadence_spm (cadence_rpm on a bike), speed_ms, pace_min_km,
+      altitude_m, lat, lon, temperature_c, vertical_oscillation_mm,
+      ground_contact_time_ms, ground_contact_balance_pct, step_length_cm,
       vertical_ratio_pct, power_w
 
+    \b
     Preprocessing applied:
-      - cadence: RPM×2 → steps/min
+      - cadence: RPM×2 → steps/min when running, half-cadence glitch fixed
       - speed: enhanced_speed (m/s), not deprecated field
-      - pace: computed min/km
+      - pace_min_km: decimal minutes per km (5.5 = 5:30)
       - GPS: semicircles → degrees
       - columns with all-null values dropped
-
-    Load skill 'fit-analysis' for analysis patterns.
 
     \b
     File: <sandbox>/activity_<id>.csv, or the global --output name.
