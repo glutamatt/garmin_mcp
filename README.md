@@ -8,45 +8,19 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 
 ## Features
 
-- List recent activities with pagination support
-- Get detailed activity information
-- Access health metrics (steps, heart rate, sleep, stress, respiration)
-- View body composition data
-- Track training status and readiness
-- Manage gear and equipment
-- Access workouts and training plans
-- Weekly health aggregates (steps, stress, intensity minutes)
+This fork serves the [Neural Runner](https://github.com/glutamatt/neural-runner) coach.
+The data goes through a bash-style CLI, not through MCP tools:
 
-### Tool Coverage
+- **`POST /cli`** — `garmin <group> <command> …` (activities, health, training, workouts,
+  calendar, gear, body, profile, history, geographic, describe). Accepts `{command, token, display_name?, tmp_dir?}`,
+  returns `{stdout, stderr, exit_code}`. `garmin help` lists the commands.
+- **MCP tools (login only)** — `garmin_login`, `garmin_logout` (`auth_tool.py`) and
+  `get_device_capabilities` (`capabilities_tool.py`), called by the frontend at login.
 
-This MCP server implements **95+ tools** covering ~88% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.2.38):
+Layers: SDK (`garminconnect` fork) → `garmin_mcp.api` (clean dicts) → `garmin_mcp.cli`.
 
-- ✅ Activity Management (14 tools)
-- ✅ Health & Wellness (30 tools) - includes custom lightweight summary tools
-- ✅ Training & Performance (9 tools)
-- ✅ Workouts (9 tools)
-- ✅ Devices (7 tools)
-- ✅ Gear Management (5 tools)
-- ✅ Weight Tracking (5 tools)
-- ✅ Challenges & Badges (10 tools)
-- ✅ Women's Health (3 tools)
-- ✅ User Profile (3 tools)
-
-### Intentionally Skipped Endpoints
-
-Some endpoints are not implemented due to performance or complexity considerations:
-
-**High Data Volume:**
-- `get_activity_details()` - Returns large GPS tracks and chart data (50KB-500KB). Use `get_activity()` for summaries instead.
-
-**Specialized Workout Formats:**
-- `upload_running_workout()`, `upload_cycling_workout()`, `upload_swimming_workout()` - Sport-specific workout uploads. Use `upload_workout()` for general workouts.
-
-**Maintenance & Destructive Operations:**
-- `delete_activity()`, `delete_blood_pressure()` - Destructive operations require careful consideration.
-- Internal/Auth methods: `login()`, `resume_login()`, `connectapi()`, `download()` - Handled automatically by the library.
-
-If you need any of these endpoints, please [open an issue](https://github.com/Taxuspt/garmin_mcp/issues).
+The Claude Desktop sections below come from the upstream project. With this fork, an MCP
+client only sees the 3 login tools.
 
 ## Setup
 
@@ -487,25 +461,13 @@ garmin-mcp-auth --verify
 
 ## Testing
 
-This project includes comprehensive tests for all 81 MCP tools. **All 96 tests are currently passing (100%)**.
-
-### Running Tests
-
 ```bash
-# Run all integration tests (default - uses mocked Garmin API)
-uv run pytest tests/integration/
+# Unit tests (mocked Garmin API): api/, cli/, MCP tools of the real server
+uv run pytest tests/unit
 
-# Run tests with verbose output
-uv run pytest tests/integration/ -v
+# Functional tests (real Garmin accounts, see tests/functional/conftest.py)
+uv run pytest tests/functional -v
 
-# Run a specific test module
-uv run pytest tests/integration/test_health_wellness_tools.py -v
-
-# Run end-to-end tests (requires real Garmin credentials)
+# End-to-end test (starts the server over stdio, lists its tools)
 uv run pytest tests/e2e/ -m e2e -v
 ```
-
-### Test Structure
-
-- **Integration tests** (96 tests): Test all MCP tools using FastMCP integration with mocked Garmin API responses
-- **End-to-end tests** (4 tests): Test with real MCP server and Garmin API (requires valid credentials)

@@ -2,7 +2,7 @@
 Shared MCP server factory — single source of truth for app creation.
 
 Used by both __main__.py (module entry) and __init__.py (main()).
-Registers all MCP tools + the /cli HTTP endpoint.
+Registers the MCP tools (auth, device capabilities) + the /cli HTTP endpoint.
 """
 
 import json
@@ -34,22 +34,11 @@ def create_app() -> FastMCP:
     # Create the MCP app
     app = FastMCP("Garmin Connect v2.0")
 
-    # Register all MCP tools (3-layer architecture)
-    from garmin_mcp import (
-        health, activities, training,
-        workouts, profile,
-        gear, body_data,
-        calendar, auth_tool,
-    )
+    # MCP tools: login/logout and the device capabilities read at login.
+    # Everything else goes through the /cli endpoint below.
+    from garmin_mcp import auth_tool, capabilities_tool
     app = auth_tool.register_tools(app)
-    app = health.register_tools(app)
-    app = activities.register_tools(app)
-    app = training.register_tools(app)
-    app = workouts.register_tools(app)
-    app = profile.register_tools(app)
-    app = gear.register_tools(app)
-    app = body_data.register_tools(app)
-    app = calendar.register_tools(app)
+    app = capabilities_tool.register_tools(app)
 
     # ── CLI endpoint ─────────────────────────────────────────────────────
     # Direct HTTP endpoint bypassing MCP JSON-RPC.
