@@ -2,6 +2,8 @@
 
 import io
 import zipfile
+from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 from unittest.mock import Mock, patch
@@ -366,6 +368,36 @@ class TestDownloadActivity:
         assert result["rows"] == 0
         assert result["columns"] == []
         assert open(result["path"]).read() == ""
+
+    @staticmethod
+    def _fit(sport: str) -> Mock:
+        """A FIT whose one record has every field the CSV reads."""
+        def message(**fields):
+            return SimpleNamespace(fields=[SimpleNamespace(name=k, value=v) for k, v in fields.items()])
+
+        record = message(
+            timestamp=datetime(2026, 10, 1, 7, 0, 0), distance=1.0, heart_rate=140,
+            cadence=85, fractional_cadence=0.5, enhanced_speed=3.0, enhanced_altitude=50.0,
+            position_lat=580000000, position_long=27000000, temperature=18,
+            vertical_oscillation=80.0, stance_time=250.0, stance_time_balance=50.1,
+            step_length=1100.0, vertical_ratio=7.5, power=250,
+        )
+        messages = {"sport": [message(sport=sport)], "record": [record]}
+        fit = Mock()
+        fit.get_messages.side_effect = lambda name: messages.get(name, [])
+        return fit
+
+    @pytest.mark.parametrize("sport", ["running", "cycling"])
+    def test_help_lists_every_column(self, client, tmp_path, sport):
+        """`activities download --help` is the column reference: no CSV column is missing from it."""
+        from garmin_mcp.cli import activities_download
+
+        client.download_activity.return_value = self._zip(["1_ACTIVITY.fit"])
+        with patch("fitparse.FitFile", return_value=self._fit(sport)):
+            result = api.download_activity(client, 1, str(tmp_path / "a.csv"))
+        assert len(result["columns"]) >= 16
+        missing = [c for c in result["columns"] if c not in activities_download.help]
+        assert missing == []
 
 
 class TestGetActivityTypes:
