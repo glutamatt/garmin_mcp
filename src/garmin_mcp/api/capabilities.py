@@ -77,9 +77,9 @@ def _device_flags(client: Garmin) -> dict:
 
 
 # ── MCP tool `get_device_capabilities` ───────────────────────────────────────
-# Called by the frontend at login. Its `disabled_tools` name MCP tools that the
-# frontend does not offer any more (garmin_cli replaces them): kept until these
-# tools are removed (audit PR 11).
+# Called by the frontend at login. Its `disabled_tools` name the old Garmin MCP
+# tools: garmin_cli replaced them and they are gone (neural-runner #75), so the
+# frontend has nothing left to filter with this list.
 
 CAPABILITY_TOOL_MAP = {
     "hasTrainingStatusCapableDevice": ["get_training_status", "get_training_readiness"],

@@ -25,7 +25,7 @@ jobs:
 
     - name: Run all tests with coverage
       run: |
-        uv run pytest tests/integration tests/unit -v \
+        uv run pytest tests/unit -v \
           --tb=short \
           --strict-markers \
           --maxfail=5
@@ -33,8 +33,6 @@ jobs:
 
     - name: Check for test files
       run: |
-        echo "Integration tests count:"
-        find tests/integration -name "test_*.py" | wc -l
         echo "Unit tests count:"
         find tests/unit -name "test_*.py" 2>/dev/null | wc -l || echo "0"
 

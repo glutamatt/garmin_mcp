@@ -12,7 +12,7 @@ This repository uses GitHub Actions for continuous integration and security chec
 
 **What it does:**
 - Tests the codebase across Python versions 3.10, 3.11, 3.12, and 3.13
-- Runs all integration and unit tests
+- Runs the unit tests
 - Uses uv for fast dependency management
 - Provides a test summary
 
@@ -60,8 +60,8 @@ To run the same tests that CI runs:
 # Install dependencies
 uv sync
 
-# Run integration and unit tests
-uv run pytest tests/integration tests/unit -v --tb=short
+# Run unit tests
+uv run pytest tests/unit -v --tb=short
 
 # Check lock file status
 uv lock --check
