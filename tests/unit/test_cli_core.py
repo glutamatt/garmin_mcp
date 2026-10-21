@@ -525,6 +525,11 @@ class TestDescribe:
         assert entry["output"]["."]["gap_s_per_km"].startswith("Grade-adjusted pace")
         assert entry["params"] == ["ACTIVITY_ID <integer>"]
 
+    def test_weather_section_of_get(self):
+        """`weather` is an object: its own fields, not the activity's `temperature_celsius`."""
+        [entry] = self._describe("activities", "get")["commands"]
+        assert entry["output"]["weather"]["temperature_celsius"] == "Air temperature"
+
     def test_sections_of_the_snapshot(self):
         [entry] = self._describe("health", "snapshot")["commands"]
         assert set(entry["output"]) == {"stats", "sleep", "training_readiness", "hrv"}

@@ -243,7 +243,7 @@ FIELDS: tuple[Field, ...] = (
            list="lapCount", detail="metadataDTO.lapCount"),
     _field("has_splits", "", "True when the activity has laps",
            list="hasSplits", detail="metadataDTO.hasSplits"),
-    _field("weather", "", "Weather at the start, from the nearest weather station (see WEATHER_FIELDS)",
+    _field("weather", "", "Weather at the start, from the nearest weather station",
            detail="weather",  # added by get_activity, from get_activity_weather
            convert=_weather),
 )
