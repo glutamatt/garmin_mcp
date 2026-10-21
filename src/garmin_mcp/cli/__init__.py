@@ -21,6 +21,7 @@ def _today():
     return _date.today().isoformat()
 
 from garmin_mcp.api.activity_fields import DETAIL_FIELDS, LAP_FIELDS, LIST_EFFORT_FIELDS, LIST_FIELDS
+from garmin_mcp.api.calendar_fields import CALENDAR_ITEMS, EVENT_ITEMS
 from garmin_mcp.api.capabilities import missing_reason
 from garmin_mcp.api.contract import GarminError, InvalidInput, as_garmin_error, is_unavailable
 from garmin_mcp.api.fields import FieldSet
@@ -1643,7 +1644,7 @@ def body_delete_weight(ctx, date, delete_all):
 @garmin.group()
 @click.pass_context
 def calendar(ctx):
-    """Calendar: month overview, race events."""
+    """Calendar: month overview, upcoming days, races."""
     pass
 
 
@@ -1652,103 +1653,39 @@ def calendar(ctx):
 @click.argument("month", type=int)
 @click.pass_context
 def calendar_month(ctx, year, month):
-    """Month overview: activities, workouts, events, rest days."""
-    from garmin_mcp.utils import clean_nones
+    """One month: activities, scheduled workouts, races.
 
-    def _fetch():
-        raw = _client(ctx).get_calendar_month(year, month) or {}
-        items = []
-        for item in raw.get("calendarItems", []):
-            curated = clean_nones({
-                "date": item.get("date"),
-                "type": item.get("itemType"),
-                "title": item.get("title"),
-                "activity_type_id": item.get("activityTypeId"),
-                "distance_meters": item.get("distance"),
-                "duration_seconds": item.get("duration"),
-                "event_type": item.get("eventType"),
-            })
-            items.append(curated)
-        return {"year": year, "month": month, "count": len(items), "items": items}
+    \b
+    Per item: date, type (activity, workout, event…), name, and the ids to
+    go further: activity_id (`activities get`), schedule_id (`workouts
+    reschedule|unschedule`), workout_id (`workouts get`).
+    """
+    from garmin_mcp.api import calendar as api
 
-    _run(ctx, _fetch)
+    _run(ctx, lambda: api.get_month(_client(ctx), year, month), field_set=CALENDAR_ITEMS)
 
 
 @calendar.command("events")
 @click.option("--from", "start_date", required=True, help="Start date YYYY-MM-DD")
 @click.option("--to", "end_date", required=True, help="End date YYYY-MM-DD")
-@click.option("--limit", default=20, type=int)
+@click.option("--limit", default=20, type=int, help="Max races")
 @click.pass_context
 def calendar_events(ctx, start_date, end_date, limit):
-    """Race events within a date range."""
-    url = "/calendar-service/events"
-    params = {
-        "startDate": start_date,
-        "endDate": end_date,
-        "limit": limit,
-        "pageIndex": 1,
-        "sortOrder": "eventDate_asc",
-    }
+    """Races within a date range: distance, start time, the athlete's goal time,
+    and the race's activity once run (activity_id)."""
+    from garmin_mcp.api import calendar as api
 
-    def _fetch():
-        raw = _client(ctx).garth.connectapi(url, params=params)
-        return _curate_events(raw) if raw else []
-
-    _run(ctx, _fetch)
+    _run(ctx, lambda: api.get_events(_client(ctx), start_date, end_date, limit), field_set=EVENT_ITEMS)
 
 
 @calendar.command("upcoming")
 @click.option("--days", default=7, type=int, help="Days forward to look")
 @click.pass_context
 def calendar_upcoming(ctx, days):
-    """Upcoming calendar items: workouts, activities, events, rest days."""
-    from datetime import date, timedelta
-    from garmin_mcp.utils import clean_nones
+    """From today to today + days: scheduled workouts, races, activities (same fields as `calendar month`)."""
+    from garmin_mcp.api import calendar as api
 
-    start = date.today().strftime("%Y-%m-%d")
-    end = (date.today() + timedelta(days=days)).strftime("%Y-%m-%d")
-
-    def _fetch():
-        items = _client(ctx).get_calendar_items_for_range(start, end) or []
-        curated = []
-        for item in items:
-            curated.append(clean_nones({
-                "date": item.get("date"),
-                "type": item.get("itemType"),
-                "title": item.get("title"),
-                "activity_type_id": item.get("activityTypeId"),
-                "distance_meters": item.get("distance"),
-                "duration_seconds": item.get("duration"),
-                "event_type": item.get("eventType"),
-            }))
-        return {"from": start, "to": end, "count": len(curated), "items": curated}
-
-    _run(ctx, _fetch)
-
-
-def _curate_events(events_data):
-    """Curate events API response."""
-    from garmin_mcp.utils import clean_nones
-
-    events_list = events_data
-    if isinstance(events_data, dict):
-        events_list = events_data.get("events", events_data.get("items", [events_data]))
-    if not isinstance(events_list, list):
-        return events_data
-
-    return [
-        clean_nones({
-            "event_id": e.get("uuid") or e.get("id"),
-            "name": e.get("eventName") or e.get("name") or e.get("title"),
-            "date": e.get("eventDate") or e.get("date"),
-            "event_type": e.get("eventType") or e.get("sportType"),
-            "distance_meters": e.get("distance"),
-            "location": e.get("location"),
-            "goal_time_seconds": e.get("goalTime"),
-            "url": e.get("url"),
-        })
-        for e in events_list
-    ]
+    _run(ctx, lambda: api.get_upcoming(_client(ctx), _today(), days), field_set=CALENDAR_ITEMS)
 
 
 # ── Execute helper (for HTTP handler / programmatic use) ────────────────────
