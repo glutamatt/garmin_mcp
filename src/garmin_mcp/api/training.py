@@ -7,12 +7,20 @@ A day without data is `{"date", "available": False, "reason": "no_data"}`
 failures are exceptions (see `api/contract.py`).
 """
 
+import logging
 import re
 from datetime import date as _date, timedelta as _timedelta
 
 from garminconnect import Garmin
 from garmin_mcp.api import capabilities
-from garmin_mcp.api.contract import NO_DATA, NOT_SUPPORTED_BY_DEVICE, day_answer, unavailable
+from garmin_mcp.api.contract import (
+    NO_DATA,
+    NOT_SUPPORTED_BY_DEVICE,
+    AuthError,
+    as_garmin_error,
+    day_answer,
+    unavailable,
+)
 from garmin_mcp.api.health_fields import HRV_FIELDS
 from garmin_mcp.api.training_fields import (
     ENDURANCE_FIELDS,
@@ -24,6 +32,8 @@ from garmin_mcp.api.training_fields import (
 )
 from garmin_mcp.utils import clean_nones
 
+logger = logging.getLogger(__name__)
+
 
 def get_max_metrics(client: Garmin, date: str) -> dict:
     """VO2max (running, cycling), fitness age, heat and altitude acclimation.
@@ -33,9 +43,20 @@ def get_max_metrics(client: Garmin, date: str) -> dict:
     """
     raw = client.get_max_metrics(date)
     entry = (raw[0] if isinstance(raw, list) and raw else raw) or {}
-    fitness_age = client.get_fitnessage_data(date)
-    curated = MAX_METRICS_FIELDS.curate({**entry, "fitness_age": fitness_age or {}})
+    curated = MAX_METRICS_FIELDS.curate({**entry, "fitness_age": _fitness_age(client, date)})
     return day_answer(date, {"date": date, **curated} if curated else None)
+
+
+def _fitness_age(client: Garmin, date: str) -> dict:
+    """Garmin's fitness age of the day, or {} when its call fails: VO2max does not depend on it."""
+    try:
+        return client.get_fitnessage_data(date) or {}
+    except Exception as e:  # noqa: BLE001 — logged, the answer has no fitness age
+        error = as_garmin_error(e)
+        if isinstance(error, AuthError):
+            raise error from e
+        logger.warning("Fitness age of %s not read: %s", date, error)
+        return {}
 
 
 def get_hrv_data(client: Garmin, date: str) -> dict:

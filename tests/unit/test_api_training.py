@@ -36,6 +36,13 @@ class TestGetMaxMetrics:
         client.get_fitnessage_data.return_value = None
         assert api.get_max_metrics(client, "2024-01-15") == NO_DATA_DAY
 
+    def test_fitness_age_failure_keeps_the_vo2max(self, client):
+        from garminconnect import GarminConnectConnectionError
+
+        client.get_max_metrics.return_value = [{"generic": {"calendarDate": "2024-01-15", "vo2MaxValue": 50.0}}]
+        client.get_fitnessage_data.side_effect = GarminConnectConnectionError("404")
+        assert api.get_max_metrics(client, "2024-01-15") == {"date": "2024-01-15", "vo2_max": 50.0}
+
 
 class TestGetHrvData:
     def test_curates_summary(self, client):
