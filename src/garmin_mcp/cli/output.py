@@ -121,7 +121,8 @@ def _filter_dict(d: dict, fields: list[str]) -> dict:
 def format_output(data, fmt: str = "json") -> str:
     if fmt == "table":
         return _format_table(data)
-    return json.dumps(data, indent=2, ensure_ascii=False)
+    # Compact: read by a model, every space is a token.
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
 
 def _format_table(data) -> str:

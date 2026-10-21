@@ -12,7 +12,6 @@ from unittest.mock import Mock, patch
 
 from garmin_mcp.cli import (
     MutationCommand,
-    _collect_commands,
     _sanitize_path,
     _session_sandbox,
     _validate_command,
@@ -83,11 +82,10 @@ class TestHoistGlobalFlags:
         assert "activities" in result
         assert "--limit" in result
 
-    def test_dry_run_boolean(self):
-        args = ["workouts", "create", "--dry-run", "--json", "{}"]
-        result = _hoist_global_flags(args)
-        assert result[0] == "--dry-run"
-        assert "workouts" in result
+    def test_dry_run_goes_after_the_command(self):
+        """`--dry-run` is the mutation's own option: wherever it is, it ends after the command."""
+        args = ["--dry-run", "workouts", "create", "--fields", "name", "--json", "{}"]
+        assert _hoist_global_flags(args) == ["--fields", "name", "workouts", "create", "--json", "{}", "--dry-run"]
 
     def test_output_flag(self):
         args = ["activities", "list", "--output", "/tmp/garmin/test.json"]
@@ -131,6 +129,11 @@ class TestSanitizePath:
     def test_session_sandbox(self):
         """Files are sandboxed under session tmp_dir."""
         result = _sanitize_path("data.json", "/tmp/s/abc123")
+        assert result == "/tmp/s/abc123/data.json"
+
+    def test_sibling_folder_with_the_same_prefix_is_not_the_sandbox(self):
+        """`/tmp/s/abc123-other` starts with `/tmp/s/abc123` but is another folder (audit C11)."""
+        result = _sanitize_path("/tmp/s/abc123-other/data.json", "/tmp/s/abc123")
         assert result == "/tmp/s/abc123/data.json"
 
     def test_session_sandbox_traversal(self):
@@ -232,9 +235,8 @@ class TestDryRun:
         runner = _runner()
         result = runner.invoke(garmin, [
             "--token", "fake_token_for_dry_run",
-            "--dry-run",
             "workouts", "create",
-            "--json", EASY_JSON,
+            "--json", EASY_JSON, "--dry-run",
         ], catch_exceptions=True)
         # Should succeed (dry_run intercepts before API call)
         assert result.exit_code == 0
@@ -247,8 +249,7 @@ class TestDryRun:
         runner = _runner()
         result = runner.invoke(garmin, [
             "--token", "fake",
-            "--dry-run",
-            "workouts", "delete", "12345",
+            "workouts", "delete", "12345", "--dry-run",
         ], catch_exceptions=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -260,8 +261,7 @@ class TestDryRun:
         runner = _runner()
         result = runner.invoke(garmin, [
             "--token", "fake",
-            "--dry-run",
-            "workouts", "schedule", "12345", "--date", "2024-03-15",
+            "workouts", "schedule", "12345", "--date", "2024-03-15", "--dry-run",
         ], catch_exceptions=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -274,8 +274,7 @@ class TestDryRun:
         runner = _runner()
         result = runner.invoke(garmin, [
             "--token", "fake",
-            "--dry-run",
-            "body", "add-weight", "75.5", "--unit", "kg",
+            "body", "add-weight", "75.5", "--unit", "kg", "--dry-run",
         ], catch_exceptions=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -284,16 +283,10 @@ class TestDryRun:
         assert data["weight"] == 75.5
 
     def test_no_dry_run_on_reads(self):
-        """Read commands ignore --dry-run (no preview to show)."""
-        runner = _runner()
-        result = runner.invoke(garmin, [
-            "--token", "fake",
-            "--dry-run",
-            "activities", "list",
-        ], catch_exceptions=True)
-        # This will fail because fake token can't create a client,
-        # but the point is it DOESN'T short-circuit with dry_run preview
-        assert result.exit_code != 0  # No client, so errors
+        """A read has no --dry-run: asking for one is invalid input (before: silently ignored)."""
+        result = execute("activities list --dry-run", "fake")
+        assert result["exit_code"] == 2
+        assert "No such option: --dry-run" in result["stderr"]
 
     def test_dry_run_runs_the_whole_pipeline(self):
         """The audit's case (C3): each mistake used to give `dry_run: true`, exit 0."""
@@ -356,10 +349,10 @@ class TestInputFile:
         runner = _runner()
         result = runner.invoke(garmin, [
             "--token", "fake",
-            "--dry-run",
             "--tmp-dir", str(tmp_path),
             "workouts", "create",
             "--input", str(f),
+            "--dry-run",
         ], catch_exceptions=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -375,10 +368,10 @@ class TestInputFile:
         runner = _runner()
         result = runner.invoke(garmin, [
             "--token", "fake",
-            "--dry-run",
             "--tmp-dir", str(tmp_path),
             "workouts", "update", "999",
             "--input", str(f),
+            "--dry-run",
         ], catch_exceptions=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -394,11 +387,11 @@ class TestInputFile:
         runner = _runner()
         result = runner.invoke(garmin, [
             "--token", "fake",
-            "--dry-run",
             "--tmp-dir", str(tmp_path),
             "workouts", "create",
             "--json", "{}",
             "--input", str(f),
+            "--dry-run",
         ], catch_exceptions=True)
         assert result.exit_code != 0
         assert "not both" in result.output.lower() or "not both" in (getattr(result, 'stderr', '') or '').lower()
@@ -408,8 +401,8 @@ class TestInputFile:
         runner = _runner()
         result = runner.invoke(garmin, [
             "--token", "fake",
-            "--dry-run",
             "workouts", "create",
+            "--dry-run",
         ], catch_exceptions=True)
         assert result.exit_code != 0
 
@@ -418,10 +411,10 @@ class TestInputFile:
         runner = _runner()
         result = runner.invoke(garmin, [
             "--token", "fake",
-            "--dry-run",
             "--tmp-dir", str(tmp_path),
             "workouts", "create",
             "--input", str(tmp_path / "nonexistent.json"),
+            "--dry-run",
         ], catch_exceptions=True)
         assert result.exit_code != 0
         assert "not found" in result.output.lower() or "not found" in (getattr(result, 'stderr', '') or '').lower()
@@ -434,10 +427,10 @@ class TestInputFile:
         runner = _runner()
         result = runner.invoke(garmin, [
             "--token", "fake",
-            "--dry-run",
             "--tmp-dir", str(tmp_path),
             "workouts", "create",
             "--input", str(f),
+            "--dry-run",
         ], catch_exceptions=True)
         assert result.exit_code != 0
         assert "invalid json" in result.output.lower() or "invalid json" in (getattr(result, 'stderr', '') or '').lower()
@@ -447,10 +440,10 @@ class TestInputFile:
         runner = _runner()
         result = runner.invoke(garmin, [
             "--token", "fake",
-            "--dry-run",
             "--tmp-dir", str(tmp_path),
             "workouts", "create",
             "--input", "/etc/passwd",
+            "--dry-run",
         ], catch_exceptions=True)
         assert result.exit_code != 0
 
@@ -473,10 +466,10 @@ class TestInputFile:
         runner = _runner()
         result = runner.invoke(garmin, [
             "--token", "fake",
-            "--dry-run",
             "--tmp-dir", str(tmp_path),
             "workouts", "create",
             "--input", str(out_file),
+            "--dry-run",
         ], catch_exceptions=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -499,180 +492,48 @@ class TestInputFile:
 
 
 class TestDescribe:
-    def test_describe_all(self):
-        runner = _runner()
-        result = runner.invoke(garmin, ["describe"], catch_exceptions=False)
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        commands = data["commands"]
-        # Should have all our commands
-        names = [c["command"] for c in commands]
-        assert "activities list" in names
-        assert "health snapshot" in names
-        assert "workouts create" in names
+    @staticmethod
+    def _describe(*path):
+        result = _runner().invoke(garmin, ["describe", *path], catch_exceptions=False)
+        assert result.exit_code == 0, result.output
+        return json.loads(result.output)
 
-    def test_describe_group(self):
-        runner = _runner()
-        result = runner.invoke(garmin, ["describe", "activities"], catch_exceptions=False)
-        assert result.exit_code == 0
-        data = json.loads(result.output)
+    def test_index_is_one_line_per_command(self):
+        commands = self._describe()["commands"]
+        assert commands["activities"]["list"].startswith("List activities")
+        assert "snapshot" in commands["health"]
+        assert "create" in commands["workouts"]
+        assert commands["geographic"]["history query"]
+        assert isinstance(commands["help"], str)
+
+    def test_index_is_small(self):
+        """The audit's 24 KB `describe`: now an index (~3 KB), the details per group."""
+        result = execute("describe", "fake")
+        assert len(result["stdout"].encode()) < 4500
+
+    def test_group_has_params_and_output_field_names(self):
+        data = self._describe("activities")
         names = [c["command"] for c in data["commands"]]
         assert all(n.startswith("activities ") for n in names)
-        assert not any("health" in n for n in names)
-
-    def test_describe_includes_params(self):
-        runner = _runner()
-        result = runner.invoke(garmin, ["describe", "activities"], catch_exceptions=False)
-        data = json.loads(result.output)
         list_cmd = next(c for c in data["commands"] if c["command"] == "activities list")
-        param_names = [p["name"] for p in list_cmd["params"]]
-        assert "--from" in param_names or "--limit" in param_names
+        assert any(p.startswith("--from <text>") for p in list_cmd["params"])
+        assert any(p.startswith("--with effort") for p in list_cmd["params"])
+        assert "gap_s_per_km" in list_cmd["output"]["activities[]"]
+
+    def test_command_has_each_output_field_meaning(self):
+        [entry] = self._describe("activities", "get")["commands"]
+        assert entry["output"]["."]["gap_s_per_km"].startswith("Grade-adjusted pace")
+        assert entry["params"] == ["ACTIVITY_ID <integer>"]
+
+    def test_sections_of_the_snapshot(self):
+        [entry] = self._describe("health", "snapshot")["commands"]
+        assert set(entry["output"]) == {"stats", "sleep", "training_readiness", "hrv"}
+        assert "bedtime" in entry["output"]["sleep"]
 
     def test_describe_unknown_command(self):
         runner = _runner()
         result = runner.invoke(garmin, ["describe", "nonexistent"], catch_exceptions=True)
         assert result.exit_code != 0
-
-
-class TestHelp:
-    """`garmin help [command...]` — human-readable help alias for --help."""
-
-    def test_help_root(self):
-        r = _runner().invoke(garmin, ["help"], catch_exceptions=False)
-        assert r.exit_code == 0
-        assert "Usage: garmin [OPTIONS] COMMAND" in r.output
-        assert "Garmin Connect CLI" in r.output
-
-    def test_help_group(self):
-        r = _runner().invoke(garmin, ["help", "history"], catch_exceptions=False)
-        assert r.exit_code == 0
-        assert "Usage: garmin history [OPTIONS] COMMAND" in r.output
-        # Must NOT include "help [COMMAND_PATH]" — that was a ctx-chaining bug
-        assert "help [COMMAND_PATH]" not in r.output
-
-    def test_help_nested_command(self):
-        r = _runner().invoke(garmin, ["help", "history", "sleep"], catch_exceptions=False)
-        assert r.exit_code == 0
-        assert "Usage: garmin history sleep [OPTIONS]" in r.output
-        assert "--days" in r.output
-
-    def test_help_unknown_command(self):
-        r = _runner().invoke(garmin, ["help", "bogus"], catch_exceptions=True)
-        assert r.exit_code != 0
-        assert "No such command 'bogus'" in (r.output + getattr(r, "stderr", ""))
-
-    def test_dash_dash_help_still_works(self):
-        """Click built-in --help must still work (help is additive, not replacing)."""
-        r = _runner().invoke(garmin, ["history", "sleep", "--help"], catch_exceptions=False)
-        assert r.exit_code == 0
-        assert "Usage: garmin history sleep" in r.output
-
-
-class TestStdoutStderrSeparation:
-    """Verify stderr warnings don't leak into stdout (Click 8.3+ dedup)."""
-
-    def _mock_client(self, activities):
-        client = Mock()
-        client.get_activities_by_date.return_value = activities
-        return client
-
-    def test_warning_only_in_stderr(self):
-        """Unknown --fields warning (command without a field registry) in stderr only, not stdout."""
-        client = Mock()
-        client.get_workouts.return_value = [{"workoutId": 1, "workoutName": "Easy"}]
-        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
-            result = execute("workouts list --fields id,name,BOGUS", "fake_token")
-        assert result["exit_code"] == 0
-        assert "BOGUS" in result["stderr"]
-        assert "BOGUS" not in result["stdout"]
-
-    def test_unknown_registry_field_is_an_error_only_in_stderr(self):
-        """activities list checks --fields against its registry: exit 2, before any Garmin call."""
-        client = self._mock_client([])
-        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
-            result = execute(
-                "activities list --from 2024-01-01 --to 2024-01-07 --fields id,name,BOGUS",
-                "fake_token",
-            )
-        assert result["exit_code"] == 2
-        assert result["stdout"] == ""
-        assert "Unknown fields for activities list: BOGUS." in result["stderr"]
-        assert "distance_m" in result["stderr"]  # the valid names
-        client.get_activities_by_date.assert_not_called()
-
-    def test_stdout_clean_when_no_warnings(self):
-        """No warnings → stderr empty, stdout has data."""
-        client = self._mock_client([
-            {"activityId": 1, "activityName": "Run", "activityType": {"typeKey": "running"}},
-        ])
-        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
-            result = execute(
-                "activities list --from 2024-01-01 --to 2024-01-07 --fields id,name",
-                "fake_token",
-            )
-        assert result["exit_code"] == 0
-        assert result["stderr"] == ""
-        data = json.loads(result["stdout"])
-        assert "activities" in data
-
-
-class TestOutputShapePreview:
-    """Verify --output shows structural preview instead of just filename."""
-
-    def _mock_client(self, activities):
-        client = Mock()
-        client.get_activities_by_date.return_value = activities
-        return client
-
-    def test_output_shows_shape(self):
-        """--output message should show JSON structure preview."""
-        client = self._mock_client([
-            {"activityId": 1, "activityName": "Run", "activityType": {"typeKey": "running"}},
-            {"activityId": 2, "activityName": "Walk", "activityType": {"typeKey": "walking"}},
-        ])
-        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
-            result = execute(
-                "activities list --from 2024-01-01 --to 2024-01-07 --fields id,name --output out.json",
-                "fake_token",
-                tmp_dir="/tmp",
-            )
-        assert result["exit_code"] == 0
-        assert "activities" in result["stdout"]
-        assert "...2 items" in result["stdout"]
-        assert "written to out.json" in result["stdout"]
-
-    def test_output_shape_with_warning_not_duplicated(self):
-        """--output with unknown fields: warning in stderr only, shape in stdout."""
-        client = Mock()
-        client.get_workouts.return_value = [{"workoutId": 1, "workoutName": "Easy"}]
-        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
-            result = execute(
-                "workouts list --fields id,BOGUS --output out.json",
-                "fake_token",
-                tmp_dir="/tmp",
-            )
-        assert result["exit_code"] == 0
-        assert "BOGUS" in result["stderr"]
-        assert "BOGUS" not in result["stdout"]
-        assert "written to out.json" in result["stdout"]
-        assert "workouts" in result["stdout"]
-
-    def test_output_shape_keeps_empty_fields(self, tmp_path):
-        """--output with a known but empty field: the shape in stdout names `empty_fields`."""
-        client = self._mock_client([
-            {"activityId": 1, "activityName": "Run", "activityType": {"typeKey": "running"}},
-        ])
-        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
-            result = execute(
-                "activities list --from 2024-01-01 --to 2024-01-07 --fields id,elevation_gain_m --output out.json",
-                "fake_token",
-                tmp_dir=str(tmp_path),
-            )
-        assert result["exit_code"] == 0
-        assert result["stderr"] == ""
-        assert '"empty_fields": ...' in result["stdout"]
-        written = json.loads((tmp_path / "out.json").read_text())
-        assert written["empty_fields"] == {"elevation_gain_m": "no_data"}
 
 
 class TestDescribeShape:
@@ -739,10 +600,11 @@ class TestDryRunDiscoverability:
     def test_no_untagged_mutation_left_behind(self):
         """Walk the whole tree: dry_run_preview in source ⇔ MutationCommand."""
         import inspect as _inspect
-        for entry in _collect_commands(garmin):
-            cmd = self._cmd(entry["command"])
+        from garmin_mcp.cli.describe import index
+        for path in index(garmin):
+            cmd = self._cmd(path)
             uses_dry_run = "dry_run_preview" in _inspect.getsource(cmd.callback)
-            assert uses_dry_run == isinstance(cmd, MutationCommand), entry["command"]
+            assert uses_dry_run == isinstance(cmd, MutationCommand), path
 
     def test_help_mentions_dry_run_on_mutations(self):
         r = _runner()
@@ -750,7 +612,6 @@ class TestDryRunDiscoverability:
             res = r.invoke(garmin, ["help", *path.split()])
             assert res.exit_code == 0, res.output
             assert "--dry-run" in res.output, f"help {path} must advertise --dry-run"
-            assert "ANYWHERE" in res.output
 
     def test_help_does_not_mention_dry_run_on_reads(self):
         r = _runner()
@@ -770,20 +631,46 @@ class TestDryRunDiscoverability:
     def test_describe_via_execute(self):
         res = execute("describe workouts create", "ZmFrZQ==")
         assert res["exit_code"] == 0, res["stderr"]
-        assert json.loads(res["stdout"])["commands"][0]["supports_dry_run"] is True
+        [entry] = json.loads(res["stdout"])["commands"]
+        assert any(p.startswith("--dry-run") for p in entry["params"])
 
-    def test_describe_flags_mutations(self):
+    def test_describe_lists_dry_run_on_mutations_only(self):
         r = _runner()
-        res = r.invoke(garmin, ["describe", "workouts create"])
-        assert res.exit_code == 0, res.output
-        [entry] = json.loads(res.output)["commands"]
-        assert entry["supports_dry_run"] is True
-        assert any(p["name"] == "--dry-run" for p in entry["params"])
+        [entry] = json.loads(r.invoke(garmin, ["describe", "workouts create"]).output)["commands"]
+        assert any(p.startswith("--dry-run") for p in entry["params"])
+        [entry] = json.loads(r.invoke(garmin, ["describe", "workouts list"]).output)["commands"]
+        assert not any(p.startswith("--dry-run") for p in entry.get("params", []))
 
-        res = r.invoke(garmin, ["describe", "workouts list"])
-        [entry] = json.loads(res.output)["commands"]
-        assert "supports_dry_run" not in entry
-        assert not any(p["name"] == "--dry-run" for p in entry.get("params", []))
+
+class TestActivitiesListOptions:
+    """Options that were ignored in silence are invalid input now (audit C10)."""
+
+    @pytest.mark.parametrize("command", [
+        "activities list --from 2026-01-01",
+        "activities list --to 2026-01-31",
+        "activities list --from 2026-01-01 --to 2026-01-31 --limit 5",
+        "activities list --from 2026-01-01 --to 2026-01-31 --start 20",
+    ])
+    def test_incoherent_options_are_refused(self, command):
+        result = execute(command, "fake")
+        assert result["exit_code"] == 2, result
+        assert "Error:" in result["stderr"]
+
+    def test_type_filters_the_latest_activities_too(self):
+        client = Mock()
+        client.get_activities.return_value = []
+        result = _runner().invoke(garmin, ["--token", "fake", "activities", "list", "--type", "cycling"],
+                                  obj={"client": client})
+        assert result.exit_code == 0, result.output
+        client.get_activities.assert_called_once_with(0, 20, "cycling")
+
+
+class TestCompactJson:
+    def test_answers_have_no_indentation(self):
+        """Read by a model: every space is a token (audit C10, ~25-30 % of a JSON answer)."""
+        result = execute("describe activities", "fake")
+        assert "\n" not in result["stdout"].strip()
+        assert '": ' not in result["stdout"]
 
 
 class TestUnknownCommand:

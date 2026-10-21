@@ -317,6 +317,7 @@ HEART_RATE_FIELDS = FieldSet(HEART_RATE, HEALTH_REGISTRY)
 RESPIRATION_FIELDS = FieldSet(RESPIRATION, HEALTH_REGISTRY)
 SPO2_FIELDS = FieldSet(SPO2, HEALTH_REGISTRY)
 BODY_BATTERY_FIELDS = FieldSet(BODY_BATTERY, HEALTH_REGISTRY, items_key="days")
+DAILY_FIELDS = FieldSet(DAILY, HEALTH_REGISTRY)
 
 # `health snapshot`: the overview of each section. The rest is in the section's own command.
 SNAPSHOT_STATS = FieldSet(SUMMARY, HEALTH_REGISTRY, only=(
