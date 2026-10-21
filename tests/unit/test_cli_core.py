@@ -526,7 +526,7 @@ class TestDescribe:
         assert entry["params"] == ["ACTIVITY_ID <integer>"]
 
     def test_weather_section_of_get(self):
-        """`weather` is an object: its own fields, not the activity's `temperature_celsius`."""
+        """`weather` is an object: describe gives its own fields."""
         [entry] = self._describe("activities", "get")["commands"]
         assert entry["output"]["weather"]["temperature_celsius"] == "Air temperature"
 

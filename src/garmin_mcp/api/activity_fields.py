@@ -233,8 +233,6 @@ FIELDS: tuple[Field, ...] = (
     _field("body_battery_impact", "", "Body Battery change during the activity (negative = drain)",
            list="differenceBodyBattery", detail="summaryDTO.differenceBodyBattery"),
     # ── Context ──
-    _field("temperature_celsius", "°C", "Starting temperature",
-           detail="summaryDTO.startingTemperatureInFahrenheit", convert=fahrenheit_to_celsius, digits=1),
     _field("stops", "", "Stops (Garmin's run / walk / stand detection): {count, total_s, longest_s}",
            detail=_segments("RWD_STAND")),
     _field("walks", "", "Walking segments: {count, total_s, longest_s}",
