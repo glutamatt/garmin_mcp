@@ -9,10 +9,10 @@ Two sources:
   with the goal and the link to the race's activity.
 
 Raw keys and units checked on real answers (neural-runner `tests/garmin-fixtures/`):
-a calendar activity has its distance in cm, its duration in ms and its calories
-in kJ (326 kcal in the activity list = 1365 here). Its `startTimestampLocal` is
-on a 12-hour clock without AM/PM (00:45 for 12:45), and its `totalAscent` is not
-the activity's elevation gain: both are left out (`activities get <activity_id>`).
+a calendar activity has its distance in cm and its duration in ms. The calendar
+is an overview: the rest of an activity is in `activities get <activity_id>`
+(the calendar's own `startTimestampLocal` is on a 12-hour clock without AM/PM,
+and its `totalAscent` is not the activity's elevation gain).
 
 Naming and unit rule: `api/fields.py`.
 """
@@ -25,8 +25,6 @@ from garmin_mcp.api.fields import Field, FieldSet, Source, dig
 
 CALENDAR = Source("calendar", "calendar month|upcoming")
 EVENT = Source("event", "calendar events")
-
-_KJ_PER_KCAL = 4.184
 
 # Distance units of an event's `completionTarget` → metres.
 _METRES = {"meter": 1, "kilometer": 1000, "mile": 1609.344}
@@ -91,14 +89,11 @@ CALENDAR_REGISTRY: tuple[Field, ...] = (
            calendar=_calendar_distance, event=_target_metres("completionTarget"), digits=0),
     _field("duration_s", "s", "activity duration",
            calendar=_of_type("activity", "duration"), convert=lambda ms: ms / 1000, digits=0),
-    _field("calories_kcal", "kcal", "activity calories",
-           calendar=_of_type("activity", "calories"), convert=lambda kj: kj / _KJ_PER_KCAL, digits=0),
-    _field("avg_hr_bpm", "bpm", "activity average heart rate", calendar="averageHR", digits=0),
     _field("start_time", "", "race start, local time of the race", calendar=_start_time, event=_start_time),
     _field("location", "", "race location", calendar="location", event="location"),
     _field("goal_time_s", "s", "the athlete's goal time for the race", event=_goal_seconds, digits=0),
     _field("primary_event", "", "the athlete's main race", event="eventCustomization.isPrimaryEvent"),
-    _field("url", "", "race page", calendar="url", event="url"),
+    _field("url", "", "race page", event="url"),
 )
 
 CALENDAR_ITEMS = FieldSet(CALENDAR, CALENDAR_REGISTRY, items_key="items")

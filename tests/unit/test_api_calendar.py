@@ -35,7 +35,7 @@ class TestCalendarItems:
         [activity] = [i for i in api.get_month(client, 2026, 4)["items"] if i["type"] == "activity"]
         assert activity == {
             "date": "2026-04-08", "type": "activity", "name": "Morning Run", "activity_id": 101,
-            "distance_m": 4780, "duration_s": 2041, "calories_kcal": 326, "avg_hr_bpm": 140,
+            "distance_m": 4780, "duration_s": 2041,
         }
 
     def test_workout_has_its_schedule_and_workout_ids(self, client):
@@ -46,8 +46,7 @@ class TestCalendarItems:
     def test_race(self, client):
         [race] = [i for i in api.get_month(client, 2026, 4)["items"] if i["type"] == "event"]
         assert race == {"date": "2026-04-12", "type": "event", "name": "Half", "distance_m": 21100,
-                        "start_time": "2026-04-12T09:00:00", "location": "Somewhere",
-                        "url": "https://example.org/half"}
+                        "start_time": "2026-04-12T09:00:00", "location": "Somewhere"}
 
     def test_month_asks_for_its_own_days_only_and_sorts_by_date(self, client):
         out = api.get_month(client, 2026, 2)
