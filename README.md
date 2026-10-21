@@ -12,15 +12,16 @@ This fork serves the [Neural Runner](https://github.com/glutamatt/neural-runner)
 The data goes through a bash-style CLI, not through MCP tools:
 
 - **`POST /cli`** — `garmin <group> <command> …` (activities, health, training, workouts,
-  calendar, gear, body, profile, history, geographic, describe). Accepts `{command, token, display_name?, tmp_dir?}`,
+  calendar, gear, body, profile, history, geographic, describe). Accepts `{command, token, display_name?, tmp_dir?, timezone?}`
+  (`timezone`: the athlete's IANA zone, for "today"),
   returns `{stdout, stderr, exit_code}`. `garmin help` lists the commands.
-- **MCP tools (login only)** — `garmin_login`, `garmin_logout` (`auth_tool.py`) and
-  `get_device_capabilities` (`capabilities_tool.py`), called by the frontend at login.
+- **MCP tools (login only)** — `garmin_login`, `garmin_logout` (`auth_tool.py`), called by
+  the frontend at login. No MCP tool reads a Garmin token.
 
 Layers: SDK (`garminconnect` fork) → `garmin_mcp.api` (clean dicts) → `garmin_mcp.cli`.
 
 The Claude Desktop sections below come from the upstream project. With this fork, an MCP
-client only sees the 3 login tools.
+client only sees the 2 login tools.
 
 ## Setup
 
