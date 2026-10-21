@@ -90,6 +90,21 @@ class TestGetStats:
         client.get_user_summary.return_value = {"calendarDate": "2024-01-15", "totalSteps": None}
         assert api.get_stats(client, "2024-01-15") == NO_DATA_DAY
 
+    def test_partial_day_says_synced_until(self, client):
+        """The watch has sent the day up to 08:20 only: the steps are not the day's total."""
+        client.get_user_summary.return_value = {
+            "calendarDate": "2024-01-15", "totalSteps": 21,
+            "wellnessEndTimeLocal": "2024-01-15T08:20:00.0",
+        }
+        assert api.get_stats(client, "2024-01-15")["synced_until"] == "2024-01-15T08:20:00"
+
+    def test_complete_day_has_no_synced_until(self, client):
+        client.get_user_summary.return_value = {
+            "calendarDate": "2024-01-15", "totalSteps": 10000,
+            "wellnessEndTimeLocal": "2024-01-16T00:00:00.0",
+        }
+        assert "synced_until" not in api.get_stats(client, "2024-01-15")
+
 
 # ── get_stress ───────────────────────────────────────────────────────────────
 

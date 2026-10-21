@@ -559,7 +559,7 @@ class TestHelp:
     def test_help_unknown_command(self):
         r = _runner().invoke(garmin, ["help", "bogus"], catch_exceptions=True)
         assert r.exit_code != 0
-        assert "Unknown command" in (r.output + getattr(r, "stderr", ""))
+        assert "No such command 'bogus'" in (r.output + getattr(r, "stderr", ""))
 
     def test_dash_dash_help_still_works(self):
         """Click built-in --help must still work (help is additive, not replacing)."""
@@ -784,3 +784,26 @@ class TestDryRunDiscoverability:
         [entry] = json.loads(res.output)["commands"]
         assert "supports_dry_run" not in entry
         assert not any(p["name"] == "--dry-run" for p in entry.get("params", []))
+
+
+class TestUnknownCommand:
+    """An unknown command names the commands close to it (audit C5)."""
+
+    @pytest.mark.parametrize("command, expected", [
+        ("steps get --date 2026-09-01", "No such command 'steps'. Did you mean: history daily, health stats?"),
+        ("history steps", "No such command 'steps' in 'history'. Did you mean: history daily, health stats"),
+        ("activities lst", "Did you mean: activities list"),
+        ("sleep", "Did you mean: health sleep, history sleep?"),
+        ("geographic histry query heatmap", "Did you mean: geographic history?"),
+        ("help steps", "Did you mean: history daily, health stats?"),
+        ("describe health stas", "Did you mean: health stats"),
+    ])
+    def test_suggests_close_commands(self, command, expected):
+        result = execute(command, "fake-token")
+        assert result["exit_code"] == 2
+        assert expected in result["stderr"]
+
+    def test_no_suggestion_for_nonsense(self):
+        result = execute("zzqx", "fake-token")
+        assert result["exit_code"] == 2
+        assert "No such command 'zzqx'. All commands: `help`." in result["stderr"]

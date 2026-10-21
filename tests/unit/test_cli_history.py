@@ -344,3 +344,98 @@ class TestHistoryDescribe:
         assert "history hrv" not in out  # dropped — HRV is in history_sleep.csv
         assert "history vo2max" in out
         assert "history race-predictions" in out
+        assert "history daily" in out
+
+
+def _daily_client(*, summary_end="2026-04-16T00:00:00.0", fail=None):
+    """Mock of the six ranged endpoints of `history daily` (3 days, 2026-04-13 is empty)."""
+    from unittest.mock import Mock
+    from garmin_mcp.api.history import _daterange
+
+    c = Mock()
+    calls = []
+
+    def _connectapi(path, params=None, **_):
+        calls.append((path, params))
+        if fail and fail in path:
+            raise RuntimeError("boom")
+        if path == "/wellness-service/wellness/bodyBattery/reports/daily":
+            return [
+                {"date": d, "charged": 50, "drained": 40,
+                 "bodyBatteryValuesArray": [[1, 30], [2, 80], [3, None], [4, 25]]}
+                for d in _daterange(params["startDate"], params["endDate"]) if d != "2026-04-13"
+            ]
+        s, e = path.rsplit("/", 2)[-2:]
+        days = [d for d in _daterange(s, e) if d != "2026-04-13"]
+        if "/stats/steps/daily/" in path:
+            return [{"calendarDate": d, "totalSteps": 9000, "totalDistance": 7000, "stepGoal": 8000} for d in days]
+        if "/stats/floors/daily/" in path:
+            return [{"calendarDate": d, "values": {"wellnessFloorsAscended": 9, "wellnessFloorsDescended": 8}}
+                    for d in days]
+        if "/stats/im/daily/" in path:
+            # Garmin gives every day, even one without data
+            return [{"calendarDate": d, "weeklyGoal": 150, "moderateValue": None if d == "2026-04-13" else 12,
+                     "vigorousValue": None if d == "2026-04-13" else 0} for d in _daterange(s, e)]
+        if "/stats/stress/daily/" in path:
+            return [{"calendarDate": d, "values": {"overallStressLevel": -1 if d == "2026-04-14" else 27,
+                                                   "restStressDuration": 40000, "lowStressDuration": 20000,
+                                                   "mediumStressDuration": 5000, "highStressDuration": 0}}
+                    for d in days]
+        if "/stats/heartRate/daily/" in path:
+            return [{"calendarDate": d, "values": {"restingHR": 57}} for d in days]
+        raise NotImplementedError(path)
+
+    c.connectapi.side_effect = _connectapi
+    c.get_user_summary.return_value = {
+        "calendarDate": "2026-04-15", "wellnessEndTimeLocal": summary_end,
+    }
+    c.calls = calls
+    return c
+
+
+class TestHistoryDaily:
+    def test_one_row_per_day_with_data(self, tmp_path):
+        client = _daily_client()
+        result = _invoke(_runner(), client, tmp_path, "daily", "--days", "2", "--end", "2026-04-15")
+        assert result.exit_code == 0, result.output + (result.stderr or "")
+        assert "history_daily.csv — 2 rows × 19 columns [2026-04-13 → 2026-04-15]" in result.output
+        assert "partial" not in result.output
+
+        fields, rows = _read_csv(str(tmp_path / "history_daily.csv"))
+        assert fields[:3] == ["date", "steps", "step_goal"]
+        assert fields[-1] == "synced_until"
+        assert [r["date"] for r in rows] == ["2026-04-14", "2026-04-15"]  # 04-13: no data, left out
+        row = rows[1]
+        assert row["steps"] == "9000" and row["distance_m"] == "7000"
+        assert row["floors_ascended"] == "9" and row["moderate_intensity_minutes"] == "12"
+        # 0 is a value: the column is kept
+        assert row["vigorous_intensity_minutes"] == "0" and row["high_stress_s"] == "0"
+        assert row["avg_stress"] == "27" and rows[0]["avg_stress"] == ""  # -1 = not enough data
+        assert (row["body_battery_low"], row["body_battery_high"]) == ("25", "80")
+        assert (row["body_battery_charged"], row["body_battery_drained"]) == ("50", "40")
+        assert row["resting_hr_bpm"] == "57" and row["synced_until"] == ""
+
+    def test_partial_last_day(self, tmp_path):
+        client = _daily_client(summary_end="2026-04-15T08:20:00.0")
+        result = _invoke(_runner(), client, tmp_path, "daily", "--days", "2", "--end", "2026-04-15")
+        assert result.exit_code == 0, result.output
+        assert "2026-04-15 partial: synced until 08:20" in result.output
+        _, rows = _read_csv(str(tmp_path / "history_daily.csv"))
+        assert rows[-1]["synced_until"] == "2026-04-15T08:20:00"
+        # The summary of the last day with data only
+        client.get_user_summary.assert_called_once_with("2026-04-15")
+
+    def test_28_day_windows(self, tmp_path):
+        client = _daily_client()
+        result = _invoke(_runner(), client, tmp_path, "daily", "--days", "40", "--end", "2026-04-15")
+        assert result.exit_code == 0, result.output
+        assert len(client.calls) == 12  # 6 endpoints × 2 windows (41 days)
+        windows = {p.rsplit("/", 2)[-2] for p, _ in client.calls if "/stats/steps/" in p}
+        assert windows == {"2026-03-06", "2026-04-03"}
+
+    def test_a_failed_call_fails_the_command(self, tmp_path):
+        client = _daily_client(fail="/stats/stress/")
+        result = _invoke(_runner(), client, tmp_path, "daily", "--days", "2", "--end", "2026-04-15")
+        assert result.exit_code == 1
+        assert "boom" in result.stderr
+        assert not (tmp_path / "history_daily.csv").exists()
