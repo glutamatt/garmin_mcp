@@ -70,7 +70,7 @@ class TestEmpty:
         }
 
     @pytest.mark.parametrize("command, method, list_key", [
-        ("calendar month 2024 1", "get_calendar_month", "items"),
+        ("calendar month 2024 1", "get_calendar_items_for_range", "items"),
         ("calendar upcoming --days 7", "get_calendar_items_for_range", "items"),
         ("body weigh-ins --from 2024-01-01 --to 2024-01-31", "get_weigh_ins", "measurements"),
     ])
@@ -85,10 +85,10 @@ class TestEmpty:
 
     def test_no_event_is_an_empty_list(self):
         client = Mock()
-        client.garth.connectapi.return_value = None
+        client.connectapi.return_value = None
         result = _run("calendar events --from 2024-01-01 --to 2024-01-31", client)
         assert result["exit_code"] == 0
-        assert json.loads(result["stdout"]) == []
+        assert json.loads(result["stdout"]) == {"from": "2024-01-01", "to": "2024-01-31", "count": 0, "events": []}
 
 
 # ── Unavailable ──────────────────────────────────────────────────────────────
@@ -151,7 +151,7 @@ class TestFailure:
         assert "did not unschedule 99" in result["stderr"]
 
     @pytest.mark.parametrize("command, method", [
-        ("calendar month 2024 1", "get_calendar_month"),
+        ("calendar month 2024 1", "get_calendar_items_for_range"),
         ("body weigh-ins --from 2024-01-01 --to 2024-01-31", "get_weigh_ins"),
         ("profile name", "get_full_name"),
     ])
