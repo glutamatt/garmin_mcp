@@ -95,3 +95,15 @@ def get_gear(client, user_profile_id: str | None = None) -> dict:
         }))
 
     return {"count": len(items), "gear": items}
+
+
+def add_gear(client, activity_id: int, gear_uuid: str) -> dict:
+    """Associate a gear (shoes, bike) with an activity."""
+    client.add_gear_to_activity(gear_uuid, activity_id)
+    return {"status": "added", "activity_id": activity_id, "gear_uuid": gear_uuid}
+
+
+def remove_gear(client, activity_id: int, gear_uuid: str) -> dict:
+    """Remove a gear from an activity."""
+    client.remove_gear_from_activity(gear_uuid, activity_id)
+    return {"status": "removed", "activity_id": activity_id, "gear_uuid": gear_uuid}

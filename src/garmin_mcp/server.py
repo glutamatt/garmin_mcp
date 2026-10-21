@@ -34,15 +34,14 @@ def create_app() -> FastMCP:
     # Create the MCP app
     app = FastMCP("Garmin Connect v2.0")
 
-    # MCP tools: login/logout and the device capabilities read at login.
-    # Everything else goes through the /cli endpoint below.
-    from garmin_mcp import auth_tool, capabilities_tool
+    # MCP tools: login / logout. Everything else goes through the /cli endpoint below.
+    from garmin_mcp import auth_tool
     app = auth_tool.register_tools(app)
-    app = capabilities_tool.register_tools(app)
 
     # ── CLI endpoint ─────────────────────────────────────────────────────
     # Direct HTTP endpoint bypassing MCP JSON-RPC.
-    # Accepts: { command: string, token: string, display_name?: string }
+    # Accepts: { command: string, token: string, display_name?: string, tmp_dir?: string,
+    #            timezone?: string (IANA, the athlete's: "today" of the commands) }
     # Returns: { stdout: string, stderr: string, exit_code: int }
 
     @app.custom_route("/cli", methods=["POST"])
@@ -61,6 +60,7 @@ def create_app() -> FastMCP:
         token = body.get("token", "")
         display_name = body.get("display_name")
         tmp_dir = body.get("tmp_dir")
+        timezone = body.get("timezone")
 
         if not token:
             return JSONResponse(
@@ -68,7 +68,7 @@ def create_app() -> FastMCP:
                 status_code=401,
             )
 
-        result = execute(command, token, display_name, tmp_dir)
+        result = execute(command, token, display_name, tmp_dir, timezone)
         refreshed_token = result.pop("refreshed_token", None)
         response = JSONResponse(result)
         if refreshed_token:

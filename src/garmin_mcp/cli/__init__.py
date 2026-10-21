@@ -16,10 +16,6 @@ from datetime import date as _date, timedelta as _timedelta
 
 import click
 
-
-def _today():
-    return _date.today().isoformat()
-
 from garmin_mcp.api.activity_fields import (
     DETAIL_FIELDS,
     LAP_FIELDS,
@@ -68,6 +64,13 @@ from garmin_mcp.cli.suggest import SuggestingGroup, unknown_command
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _today(ctx) -> str:
+    """The athlete's today (`--timezone`, see `api/clock.py`)."""
+    from garmin_mcp.api.clock import today
+
+    return _call(lambda: today(ctx.obj.get("_timezone"))).isoformat()
 
 def _client(ctx):
     """Get Garmin client from click context (lazy creation)."""
@@ -291,8 +294,9 @@ def _run_to_file(ctx, default_name: str, fn):
     hidden=True,
     help="Session-scoped tmp directory for file I/O isolation",
 )
+@click.option("--timezone", default=None, hidden=True, help="The athlete's time zone (IANA): today's date")
 @click.pass_context
-def garmin(ctx, fmt, fields, output_path, token, display_name, tmp_dir):
+def garmin(ctx, fmt, fields, output_path, token, display_name, tmp_dir, timezone):
     """Garmin Connect CLI — query athlete data.
 
     \b
@@ -327,6 +331,11 @@ def garmin(ctx, fmt, fields, output_path, token, display_name, tmp_dir):
         ctx.obj.setdefault("_display_name", display_name)
     if tmp_dir:
         ctx.obj.setdefault("_tmp_dir", tmp_dir)
+    if timezone:
+        from garmin_mcp.api.clock import today
+
+        _call(lambda: today(timezone))  # an unknown zone is invalid input, before any Garmin call
+        ctx.obj.setdefault("_timezone", timezone)
 
 
 # ── Describe (schema introspection for agents) ──────────────────────────────
@@ -629,9 +638,9 @@ def geographic_activity(ctx, activity_id):
     ))
 
 
-@geographic.group()
+@geographic.group("history")
 @click.pass_context
-def history(ctx):
+def geo_history(ctx):
     """Long-term geographic history : auto-indexed per-user route DB.
 
     \b
@@ -649,7 +658,7 @@ def history(ctx):
     pass
 
 
-@history.command("update")
+@geo_history.command("update")
 @click.option(
     "--limit",
     type=int,
@@ -675,12 +684,12 @@ def history_update(ctx, limit):
     \b
     To backfill : call repeatedly until is_caught_up=true.
     """
-    from garmin_mcp.api import geo_history as api
+    from garmin_mcp.api import geo_history as geo_api
 
-    _run(ctx, lambda: api.update(_client(ctx), limit=limit))
+    _run(ctx, lambda: geo_api.update(_client(ctx), limit=limit))
 
 
-@history.command("query")
+@geo_history.command("query")
 @click.argument("kind", type=click.Choice(["heatmap"]))
 @click.option(
     "--since",
@@ -757,7 +766,7 @@ def history_query(ctx, kind, since, until, exclusive, entity_types,
       geographic history query heatmap --entity-types polygon,admin
       geographic history query heatmap --include-anonymous
     """
-    from garmin_mcp.api import geo_history as api
+    from garmin_mcp.api import geo_history as geo_api
 
     params: dict = {}
     if since:
@@ -772,8 +781,8 @@ def history_query(ctx, kind, since, until, exclusive, entity_types,
         ]
 
     _run_to_file(
-        ctx, api.query_filename(kind, params, include_anonymous),
-        lambda path: api.query_to_tsv(
+        ctx, geo_api.query_filename(kind, params, include_anonymous),
+        lambda path: geo_api.query_to_tsv(
             _client(ctx), kind, path, params=params,
             include_anonymous=include_anonymous,
         ),
@@ -792,7 +801,7 @@ def health(ctx):
 
 @returns(stats=SNAPSHOT_STATS, sleep=SNAPSHOT_SLEEP, training_readiness=SNAPSHOT_READINESS, hrv=HRV_FIELDS)
 @health.command("snapshot")
-@click.argument("date", default=None)
+@click.argument("date", required=False)
 @click.pass_context
 def health_snapshot(ctx, date):
     """Daily overview, each section in short: stats, sleep, training readiness, HRV.
@@ -803,12 +812,12 @@ def health_snapshot(ctx, date):
     """
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_coaching_snapshot(_client(ctx), date or _today()))
+    _run(ctx, lambda: api.get_coaching_snapshot(_client(ctx), date or _today(ctx)))
 
 
 @returns(STATS_FIELDS)
 @health.command("stats")
-@click.argument("date", default=None)
+@click.argument("date", required=False)
 @click.pass_context
 def health_stats(ctx, date):
     """Daily activity stats: steps, calories, HR, stress.
@@ -820,52 +829,52 @@ def health_stats(ctx, date):
     """
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_stats(_client(ctx), date or _today()), field_set=STATS_FIELDS)
+    _run(ctx, lambda: api.get_stats(_client(ctx), date or _today(ctx)), field_set=STATS_FIELDS)
 
 
 @returns(SLEEP_FIELDS)
 @health.command("sleep")
-@click.argument("date", default=None)
+@click.argument("date", required=False)
 @click.pass_context
 def health_sleep(ctx, date):
     """The night that ends on DATE: score and its factors, bedtime, phases, sleep need,
     resting HR, SpO2, respiration, HRV. Durations in seconds."""
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_sleep(_client(ctx), date or _today()), field_set=SLEEP_FIELDS)
+    _run(ctx, lambda: api.get_sleep(_client(ctx), date or _today(ctx)), field_set=SLEEP_FIELDS)
 
 
 @returns(STRESS_FIELDS)
 @health.command("stress")
-@click.argument("date", default=None)
+@click.argument("date", required=False)
 @click.pass_context
 def health_stress(ctx, date):
     """Stress of the day: mean, max, share of the measured time at rest / low / medium / high."""
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_stress(_client(ctx), date or _today()), field_set=STRESS_FIELDS)
+    _run(ctx, lambda: api.get_stress(_client(ctx), date or _today(ctx)), field_set=STRESS_FIELDS)
 
 
 @returns(HEART_RATE_FIELDS)
 @health.command("heart-rate")
-@click.argument("date", default=None)
+@click.argument("date", required=False)
 @click.pass_context
 def health_heart_rate(ctx, date):
     """Heart rate of the day: resting (and its 7-day mean), min, max, mean."""
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_heart_rate(_client(ctx), date or _today()), field_set=HEART_RATE_FIELDS)
+    _run(ctx, lambda: api.get_heart_rate(_client(ctx), date or _today(ctx)), field_set=HEART_RATE_FIELDS)
 
 
 @returns(RESPIRATION_FIELDS)
 @health.command("respiration")
-@click.argument("date", default=None)
+@click.argument("date", required=False)
 @click.pass_context
 def health_respiration(ctx, date):
     """Respiration of the day, breaths per minute: awake, asleep, min, max."""
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_respiration(_client(ctx), date or _today()), field_set=RESPIRATION_FIELDS)
+    _run(ctx, lambda: api.get_respiration(_client(ctx), date or _today(ctx)), field_set=RESPIRATION_FIELDS)
 
 
 @returns(BODY_BATTERY_FIELDS)
@@ -883,24 +892,24 @@ def health_body_battery(ctx, start_date, end_date):
 
 @returns(SPO2_FIELDS)
 @health.command("spo2")
-@click.argument("date", default=None)
+@click.argument("date", required=False)
 @click.pass_context
 def health_spo2(ctx, date):
     """SpO2 of the day: mean, lowest, last reading, during the sleep, 7-day mean."""
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_spo2(_client(ctx), date or _today()), field_set=SPO2_FIELDS)
+    _run(ctx, lambda: api.get_spo2(_client(ctx), date or _today(ctx)), field_set=SPO2_FIELDS)
 
 
 @returns(READINESS_FIELDS)
 @health.command("training-readiness")
-@click.argument("date", default=None)
+@click.argument("date", required=False)
 @click.pass_context
 def health_training_readiness(ctx, date):
     """Training readiness of the morning and its factors; latest_score = the day's last update."""
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_training_readiness(_client(ctx), date or _today()), field_set=READINESS_FIELDS)
+    _run(ctx, lambda: api.get_training_readiness(_client(ctx), date or _today(ctx)), field_set=READINESS_FIELDS)
 
 
 # ── Training ─────────────────────────────────────────────────────────────────
@@ -915,34 +924,34 @@ def training(ctx):
 
 @returns(MAX_METRICS_FIELDS)
 @training.command("max-metrics")
-@click.argument("date", default=None)
+@click.argument("date", required=False)
 @click.pass_context
 def training_max_metrics(ctx, date):
     """VO2max (running, cycling), fitness age, heat and altitude acclimation."""
     from garmin_mcp.api import training as api
 
-    _run(ctx, lambda: api.get_max_metrics(_client(ctx), date or _today()))
+    _run(ctx, lambda: api.get_max_metrics(_client(ctx), date or _today(ctx)))
 
 
 @returns(HRV_FIELDS)
 @training.command("hrv")
-@click.argument("date", default=None)
+@click.argument("date", required=False)
 @click.pass_context
 def training_hrv(ctx, date):
     """HRV overnight: last night, 7-night mean, the athlete's balanced band, status and why (hrv_feedback)."""
     from garmin_mcp.api import training as api
 
-    _run(ctx, lambda: api.get_hrv_data(_client(ctx), date or _today()), field_set=HRV_FIELDS)
+    _run(ctx, lambda: api.get_hrv_data(_client(ctx), date or _today(ctx)), field_set=HRV_FIELDS)
 
 
 @training.command("status")
-@click.argument("date", default=None)
+@click.argument("date", required=False)
 @click.pass_context
 def training_status(ctx, date):
     """Training status of the main device: status, acute/chronic load (ACWR), monthly load and targets."""
     from garmin_mcp.api import training as api
 
-    _run(ctx, lambda: api.get_training_status(_client(ctx), date or _today()))
+    _run(ctx, lambda: api.get_training_status(_client(ctx), date or _today(ctx)))
 
 
 @training.command("progress")
@@ -1011,14 +1020,14 @@ def training_lactate_threshold(ctx):
 
 @returns(ENDURANCE_FIELDS)
 @training.command("endurance-score")
-@click.argument("date", default=None)
+@click.argument("date", required=False)
 @click.option("--weeks", default=12, type=click.IntRange(1, 52), help="Weeks of weekly means (default 12)")
 @click.pass_context
 def training_endurance_score(ctx, date, weeks):
     """Endurance score on DATE (default today), its class (recreational … elite) and its weekly mean."""
     from garmin_mcp.api import training as api
 
-    _run(ctx, lambda: api.get_endurance_score(_client(ctx), date or _today(), weeks))
+    _run(ctx, lambda: api.get_endurance_score(_client(ctx), date or _today(ctx), weeks))
 
 
 @returns(HILL_FIELDS)
@@ -1071,13 +1080,9 @@ def history(ctx):
     pass
 
 
-def _history_window(days: int, end: str | None) -> tuple[str, str]:
-    """Compute (start, end) for a history command. Default: 365 days ending today."""
-    from garmin_mcp.api.history import default_window
-
-    if end is None:
-        return default_window(days)
-    end_d = _date.fromisoformat(end)
+def _history_window(ctx, days: int, end: str | None) -> tuple[str, str]:
+    """(start, end) of a history command: `days` days back from `end` (default: the athlete's today)."""
+    end_d = _date.fromisoformat(end or _today(ctx))
     start_d = end_d - _timedelta(days=days)
     return start_d.isoformat(), end_d.isoformat()
 
@@ -1171,7 +1176,7 @@ def history_running(ctx, days, end, agg):
     """
     from garmin_mcp.api import history as api
 
-    window = _history_window(days, end)
+    window = _history_window(ctx, days, end)
     _write_history_csv(
         ctx,
         lambda: api.get_sport_stats(_client(ctx), "running", *window, aggregation=agg),
@@ -1206,7 +1211,7 @@ def history_cycling(ctx, days, end, agg):
     """
     from garmin_mcp.api import history as api
 
-    window = _history_window(days, end)
+    window = _history_window(ctx, days, end)
     _write_history_csv(
         ctx,
         lambda: api.get_sport_stats(_client(ctx), "cycling", *window, aggregation=agg),
@@ -1233,7 +1238,7 @@ def history_sleep(ctx, days, end):
     """
     from garmin_mcp.api import history as api
 
-    window = _history_window(days, end)
+    window = _history_window(ctx, days, end)
     _write_history_csv(
         ctx,
         lambda: api.get_sleep(_client(ctx), *window),
@@ -1267,7 +1272,7 @@ def history_heart_rate(ctx, days, end, agg):
     """
     from garmin_mcp.api import history as api
 
-    window = _history_window(days, end)
+    window = _history_window(ctx, days, end)
     _write_history_csv(
         ctx,
         lambda: api.get_heart_rate(_client(ctx), *window, aggregation=agg),
@@ -1308,7 +1313,7 @@ def history_daily(ctx, days, end):
     """
     from garmin_mcp.api import history as api
 
-    window = _history_window(days, end)
+    window = _history_window(ctx, days, end)
     _write_history_csv(
         ctx,
         lambda: api.get_daily(_client(ctx), *window),
@@ -1342,7 +1347,7 @@ def history_vo2max(ctx, days, end, agg):
     """
     from garmin_mcp.api import history as api
 
-    window = _history_window(days, end)
+    window = _history_window(ctx, days, end)
     _write_history_csv(
         ctx,
         lambda: api.get_vo2max(_client(ctx), *window, aggregation=agg),
@@ -1369,7 +1374,7 @@ def history_race_predictions(ctx, days, end):
     """
     from garmin_mcp.api import history as api
 
-    window = _history_window(days, end)
+    window = _history_window(ctx, days, end)
     _write_history_csv(
         ctx,
         lambda: api.get_race_predictions(_client(ctx), *window),
@@ -1536,10 +1541,10 @@ def profile(ctx):
 @profile.command("name")
 @click.pass_context
 def profile_name(ctx):
-    """Get user's display name."""
+    """The athlete's name."""
     from garmin_mcp.api import profile as api
 
-    click.echo(_call(lambda: api.get_full_name(_client(ctx))))
+    _run(ctx, lambda: {"name": api.get_full_name(_client(ctx))})
 
 
 @profile.command("info")
@@ -1602,11 +1607,10 @@ def gear_list(ctx):
 @click.pass_context
 def gear_add(ctx, activity_id, gear_uuid):
     """Associate gear with an activity."""
-    def _do():
-        _client(ctx).add_gear_to_activity(gear_uuid, activity_id)
-        return {"status": "success", "activity_id": activity_id, "gear_uuid": gear_uuid}
+    from garmin_mcp.api import gear as api
+
     preview = {"action": "add_gear", "activity_id": activity_id, "gear_uuid": gear_uuid}
-    _run(ctx, _do, dry_run_preview=preview)
+    _run(ctx, lambda: api.add_gear(_client(ctx), activity_id, gear_uuid), dry_run_preview=preview)
 
 
 @gear.command("remove", cls=MutationCommand)
@@ -1615,11 +1619,10 @@ def gear_add(ctx, activity_id, gear_uuid):
 @click.pass_context
 def gear_remove(ctx, activity_id, gear_uuid):
     """Remove gear from an activity."""
-    def _do():
-        _client(ctx).remove_gear_from_activity(gear_uuid, activity_id)
-        return {"status": "success", "activity_id": activity_id, "gear_uuid": gear_uuid}
+    from garmin_mcp.api import gear as api
+
     preview = {"action": "remove_gear", "activity_id": activity_id, "gear_uuid": gear_uuid}
-    _run(ctx, _do, dry_run_preview=preview)
+    _run(ctx, lambda: api.remove_gear(_client(ctx), activity_id, gear_uuid), dry_run_preview=preview)
 
 
 # ── Body ─────────────────────────────────────────────────────────────────────
@@ -1720,7 +1723,7 @@ def calendar_upcoming(ctx, days):
     """From today to today + days: scheduled workouts, races, activities (same fields as `calendar month`)."""
     from garmin_mcp.api import calendar as api
 
-    _run(ctx, lambda: api.get_upcoming(_client(ctx), _today(), days), field_set=CALENDAR_ITEMS)
+    _run(ctx, lambda: api.get_upcoming(_client(ctx), _today(ctx), days), field_set=CALENDAR_ITEMS)
 
 
 # ── Execute helper (for HTTP handler / programmatic use) ────────────────────
@@ -1826,7 +1829,8 @@ def _hoist_global_flags(args: list[str]) -> list[str]:
     return global_args + rest + command_flags
 
 
-def execute(command: str, token: str, display_name: str = None, tmp_dir: str = None) -> dict:
+def execute(command: str, token: str, display_name: str = None, tmp_dir: str = None,
+            timezone: str = None) -> dict:
     """Execute a CLI command string, return {stdout, stderr, exit_code, refreshed_token?}.
 
     Used by the /cli HTTP endpoint and tests.
@@ -1859,6 +1863,8 @@ def execute(command: str, token: str, display_name: str = None, tmp_dir: str = N
         args += ["--display-name", display_name]
     if tmp_dir:
         args += ["--tmp-dir", tmp_dir]
+    if timezone:
+        args += ["--timezone", timezone]
 
     # Pre-create the garth client so we hold a local reference for token
     # comparison after execution. _client(ctx) will find it in ctx.obj["client"]
