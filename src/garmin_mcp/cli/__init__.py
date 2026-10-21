@@ -32,6 +32,7 @@ from garmin_mcp.cli.output import (
     format_output,
     write_csv_file,
 )
+from garmin_mcp.cli.suggest import SuggestingGroup, unknown_command
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -225,7 +226,7 @@ def _run_to_file(ctx, default_name: str, fn):
 # ── Main group ───────────────────────────────────────────────────────────────
 
 
-@click.group()
+@click.group(cls=SuggestingGroup)
 @click.option(
     "--format",
     "fmt",
@@ -382,7 +383,7 @@ def describe(ctx, command_path):
                 target = target.commands[part]
                 prefix = f"{prefix} {part}".strip() if prefix else part
             else:
-                raise click.UsageError(f"Unknown command: {command_path}")
+                raise click.UsageError(unknown_command(garmin, prefix, part))
 
     if isinstance(target, click.Group):
         commands = _collect_commands(target, prefix)
@@ -412,9 +413,9 @@ def help_cmd(ctx, command_path):
     # shows the full command path (e.g. "garmin history sleep"), not "help sleep".
     parent = click.Context(garmin, info_name="garmin")
     current = garmin
-    for part in command_path:
+    for i, part in enumerate(command_path):
         if not (isinstance(current, click.Group) and part in current.commands):
-            raise click.UsageError(f"Unknown command: {' '.join(command_path)}")
+            raise click.UsageError(unknown_command(garmin, " ".join(command_path[:i]), part))
         current = current.commands[part]
         parent = click.Context(current, info_name=part, parent=parent)
     # `parent` is now the ctx of the target itself; print its help
@@ -785,7 +786,13 @@ def health_snapshot(ctx, date):
 @click.argument("date", default=None)
 @click.pass_context
 def health_stats(ctx, date):
-    """Daily activity stats: steps, calories, HR, stress."""
+    """Daily activity stats: steps, calories, HR, stress.
+
+    \b
+    synced_until: only on a partial day (the watch has not sent the rest of
+    the day yet): the data ends at this local time.
+    Many days: `history daily`.
+    """
     from garmin_mcp.api import health as api
 
     _run(ctx, lambda: api.get_stats(_client(ctx), date or _today()))
@@ -971,6 +978,7 @@ def history(ctx):
     When to use `history` vs `health`/`training`:
       - `health sleep [date]` / `training hrv [date]`  → single-day snapshot
       - `history sleep` / `history heart-rate`          → multi-day trend (CSV)
+      - `health stats [date]` / `history daily`         → steps, stress, body battery
 
     \b
     Keep multiple runs: use global `--output <name>.csv` to avoid overwriting
@@ -984,8 +992,9 @@ def history(ctx):
       df = df.set_index("date").reindex(pd.date_range(df.index.min(), df.index.max(), freq="W"))
 
     \b
-    Subcommands: running, cycling, sleep, heart-rate, vo2max, race-predictions
-    (HRV columns live in `history sleep` — avgOvernightHrv, hrv7dAverage, hrvStatus.)
+    Subcommands: daily, running, cycling, sleep, heart-rate, vo2max, race-predictions
+    (daily = steps, floors, intensity minutes, stress, body battery, resting HR;
+    HRV columns live in `history sleep` — avgOvernightHrv, hrv7dAverage, hrvStatus.)
     """
     pass
 
@@ -1009,6 +1018,8 @@ def _write_history_csv(
     *,
     agg: str | None = None,
     units: str | None = None,
+    drop_empty: bool = True,
+    note=None,
 ):
     """Run `fn()` to get rows, write CSV in session sandbox, echo filename + stats.
 
@@ -1018,6 +1029,9 @@ def _write_history_csv(
 
     Echoes unit legend when provided so Apex sees Garmin's internal units
     (cm/ms/kJ/etc.) at the same moment as the filename.
+
+    `drop_empty=False` keeps every column (a fixed schema, where 0 is a value).
+    `note(rows)`: a last remark for the echo, or None.
 
     A failure of `fn()` is a CLI error, like in `_run` (a pre-flight check such
     as the race-predictions 365-day cap is invalid input: exit 2).
@@ -1030,7 +1044,7 @@ def _write_history_csv(
     )
     safe_path = _data_path(ctx, default_name)
     os.makedirs(os.path.dirname(safe_path) or sandbox, exist_ok=True)
-    meta = write_csv_file(safe_path, rows)
+    meta = write_csv_file(safe_path, rows, drop_empty=drop_empty)
     rel = os.path.relpath(safe_path, sandbox)
     start, end = window
 
@@ -1042,6 +1056,9 @@ def _write_history_csv(
         parts.append(f"({meta['dropped']} empty columns dropped)")
     if units:
         parts.append(f"[units: {units}]")
+    remark = note(rows) if note else None
+    if remark:
+        parts.append(remark)
     click.echo(" ".join(parts))
 
 
@@ -1186,6 +1203,46 @@ def history_heart_rate(ctx, days, end, agg):
         window,
         agg=agg,
         units=_UNITS_HR,
+    )
+
+
+def _partial_days(rows: list[dict]) -> str | None:
+    partial = [r for r in rows if r.get("synced_until")]
+    return "; ".join(f"{r['date']} partial: synced until {r['synced_until'][11:16]}" for r in partial) or None
+
+
+@history.command("daily")
+@click.option("--days", default=365, type=int, help="Days back from end (default 365)")
+@click.option("--end", default=None, help="End date YYYY-MM-DD (default today)")
+@click.pass_context
+def history_daily(ctx, days, end):
+    """Daily wellness: steps, floors, intensity minutes, stress, body battery, resting HR.
+
+    \b
+    One row per day (a day without data is left out). Columns:
+      date, steps, step_goal, distance_m, floors_ascended, floors_descended,
+      moderate_intensity_minutes, vigorous_intensity_minutes,
+      avg_stress (0-100), rest_stress_s, low_stress_s, medium_stress_s,
+      high_stress_s, body_battery_low, body_battery_high (most days: the
+      level at wake), body_battery_charged, body_battery_drained,
+      resting_hr_bpm, synced_until
+    synced_until: set on a partial day only (the watch has not sent the rest
+    of the day yet): its data ends at this local time. The echo names it.
+
+    \b
+    6 calls per 28 days. One day in detail: `health stats <date>`.
+    Default filename: history_daily.csv. Override with global `--output`.
+    """
+    from garmin_mcp.api import history as api
+
+    window = _history_window(days, end)
+    _write_history_csv(
+        ctx,
+        lambda: api.get_daily(_client(ctx), *window),
+        "history_daily",
+        window,
+        drop_empty=False,
+        note=_partial_days,
     )
 
 

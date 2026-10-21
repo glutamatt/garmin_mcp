@@ -18,6 +18,7 @@ from garmin_mcp.api.contract import (
     has_data,
     unavailable,
 )
+from garmin_mcp.api.wellness_fields import synced_until
 from garmin_mcp.utils import clean_nones
 
 
@@ -211,9 +212,13 @@ def get_body_composition(client: Garmin, start_date: str, end_date: str = None) 
 
 
 def _curate_stats(stats: dict) -> dict:
-    """Extract essential fields from user summary."""
+    """Extract essential fields from user summary.
+
+    `synced_until`: only on a partial day (the watch has not sent its end yet).
+    """
     return clean_nones({
         "date": stats.get("calendarDate"),
+        "synced_until": synced_until(stats),
         "total_steps": stats.get("totalSteps"),
         "daily_step_goal": stats.get("dailyStepGoal"),
         "distance_meters": stats.get("totalDistanceMeters"),

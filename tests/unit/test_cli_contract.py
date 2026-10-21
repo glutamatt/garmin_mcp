@@ -231,7 +231,7 @@ class TestInvalidInput:
     def test_unknown_describe_path(self):
         result = _run("describe nonexistent", Mock())
         assert result["exit_code"] == 2
-        assert "Unknown command" in result["stderr"]
+        assert "No such command 'nonexistent'" in result["stderr"]
 
     def test_history_window_too_long(self, tmp_path):
         result = _run("history race-predictions --days 400 --end 2024-12-31", Mock(), str(tmp_path))

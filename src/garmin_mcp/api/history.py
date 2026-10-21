@@ -402,6 +402,57 @@ def get_heart_rate(
     return deduped
 
 
+# Daily wellness series (`history daily`): one ranged endpoint per kind of data,
+# 28 days at most per call (29+ → HTTP 400, checked on each). Each entry →
+# (key in the raw row of `api/wellness_fields.py`, URL of a window, keep `values` only).
+_DAILY_MAX_WINDOW_DAYS = 28
+_DAILY_SOURCES: tuple[tuple[str, str, bool], ...] = (
+    ("steps", "/usersummary-service/stats/steps/daily/{start}/{end}", False),
+    ("floors", "/usersummary-service/stats/floors/daily/{start}/{end}", True),
+    ("intensity", "/usersummary-service/stats/im/daily/{start}/{end}", False),
+    ("stress", "/usersummary-service/stats/stress/daily/{start}/{end}", True),
+    ("body_battery", "/wellness-service/wellness/bodyBattery/reports/daily?startDate={start}&endDate={end}", False),
+    ("heart_rate", "/usersummary-service/stats/heartRate/daily/{start}/{end}", True),
+)
+
+
+def get_daily(client: Garmin, start_date: str, end_date: str) -> list[dict]:
+    """One row per day: steps, floors, intensity minutes, stress, body battery, resting HR.
+
+    Six ranged endpoints (the Garmin Connect web reports), 28-day windows, in
+    parallel, merged by date: 6 calls per 28 days. Then one daily summary, of the
+    last day with data, for `synced_until` (a day the watch has not fully synced).
+    Fields and units: `api/wellness_fields.py`. A day without any measure (watch
+    not worn) is left out. A failed call fails the command: a series with holes
+    would read as days without data.
+    """
+    from garmin_mcp.api.wellness_fields import MEASURES, daily_row
+
+    chunks = _chunk_range(start_date, end_date, _DAILY_MAX_WINDOW_DAYS)
+    calls = [(source, chunk) for source in _DAILY_SOURCES for chunk in chunks]
+
+    def _fetch(call):
+        (key, url, in_values), (s, e) = call
+        path, _, query = url.format(start=s, end=e).partition("?")
+        params = dict(p.split("=", 1) for p in query.split("&")) if query else None
+        return key, in_values, client.connectapi(path, params=params) or []
+
+    raw_days: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=_DAILY_WORKERS) as pool:
+        for key, in_values, entries in pool.map(_fetch, calls):
+            for entry in entries:
+                day = (entry.get("calendarDate") or entry.get("date")) if isinstance(entry, dict) else None
+                if day:
+                    raw_days.setdefault(day, {})[key] = (entry.get("values") or {}) if in_values else entry
+
+    rows = [daily_row(day, raw_days[day]) for day in sorted(raw_days)]
+    rows = [row for row in rows if any(row[name] is not None for name in MEASURES)]
+    if rows:
+        last = rows[-1]["date"]
+        rows[-1] = daily_row(last, {**raw_days[last], "summary": client.get_user_summary(last)})
+    return rows
+
+
 VO2MAX_AGGREGATIONS = ("daily", "weekly", "monthly")
 
 
