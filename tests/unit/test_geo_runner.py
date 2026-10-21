@@ -3,7 +3,8 @@
 - a sleeping Space (502/503/504, empty body, proxy page) is woken up and tried
   again with growing waits; `Retry-After` wins when it asks for more;
 - a 50x on the POST wakes the Space up again and sends the same body again;
-- when the ~2 min budget runs out: "geo-runner se réveille…", exit 1;
+- when the ~2 min budget runs out, the Space's stage says which: "geo-runner se
+  réveille…" (starting) or "geo-runner est en panne…" (down), exit 1;
 - 429 → `RateLimited`, exit 1, no retry; other errors keep their message, never empty;
 - `--output` names the data file of `geographic activity`, `geographic history
   query` and `activities download`; the answer goes to stdout.
@@ -93,6 +94,8 @@ def fake_time(monkeypatch):
     fake = FakeTime()
     monkeypatch.setattr(geo_runner, "_clock", fake.clock)
     monkeypatch.setattr(geo_runner, "_sleep", fake.sleep)
+    # The Space's stage when the budget runs out (see TestSpaceStage): starting.
+    monkeypatch.setattr(geo_runner, "_space_stage", lambda: "APP_STARTING")
     return fake
 
 
@@ -119,7 +122,17 @@ class TestBaseUrl:
 
     def test_production_space_by_default(self, monkeypatch):
         monkeypatch.delenv("GEO_RUNNER_URL", raising=False)
+        monkeypatch.delenv("GEO_RUNNER_SPACE_ID", raising=False)
         assert geo_runner.base_url() == "https://glutamatt-geo-runner.hf.space"
+        assert geo_runner.space_id() == "glutamatt/geo-runner"
+
+    def test_a_local_geo_runner_has_no_space(self, monkeypatch):
+        monkeypatch.setenv("GEO_RUNNER_URL", "http://localhost:7870")
+        monkeypatch.delenv("GEO_RUNNER_SPACE_ID", raising=False)
+        assert geo_runner.space_id() is None
+
+    def test_space_url_follows_hugging_face(self):
+        assert geo_runner.space_url("Some_User/my.app") == "https://some-user-my-app.hf.space"
 
 
 # ── Wake-up and retries ──────────────────────────────────────────────────────
@@ -393,3 +406,98 @@ class TestActivitiesDownloadCli:
         assert result["exit_code"] == 0, result["stderr"]
         assert json.loads(result["stdout"])["path"] == "run.csv"
         assert [p.name for p in sandbox.iterdir()] == ["run.csv"]
+
+
+# ── Starting or down: the Space's stage (issue neural-runner #100) ───────────
+
+
+class FakeHub:
+    """The Hugging Face API on localhost: `/api/spaces/<id>/runtime` answers `answer`."""
+
+    def __init__(self, status: int, body: bytes):
+        fake = self
+        self.paths: list[str] = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                fake.paths.append(self.path)
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        threading.Thread(target=self.server.serve_forever, args=(0.01,), daemon=True).start()
+
+
+@pytest.fixture
+def hub(monkeypatch):
+    hubs = []
+
+    def start(status: int = 200, stage: str | None = None, body: bytes | None = None):
+        fake = FakeHub(status, body if body is not None else json.dumps({"stage": stage}).encode())
+        hubs.append(fake)
+        monkeypatch.setattr(geo_runner, "SPACE_RUNTIME_URL", fake.url + "/api/spaces/{space_id}/runtime")
+        monkeypatch.setenv("GEO_RUNNER_SPACE_ID", "someone/geo")
+        return fake
+
+    yield start
+    for fake in hubs:
+        fake.server.shutdown()
+        fake.server.server_close()
+
+
+class TestSpaceStage:
+    """17/10: 3 × 100 s of "se réveille" while the Space was broken. The stage tells."""
+
+    @pytest.mark.parametrize("stage", ["APP_STARTING", "BUILDING", "RUNNING_APP_STARTING", "SLEEPING"])
+    def test_starting_says_try_again(self, hub, stage):
+        server = hub(stage=stage)
+        message = geo_runner._out_of_budget_message()
+        assert message.startswith(geo_runner.WAKING_MESSAGE)
+        assert stage in message
+        assert server.paths == ["/api/spaces/someone/geo/runtime"]
+
+    @pytest.mark.parametrize("stage", ["RUNTIME_ERROR", "BUILD_ERROR", "PAUSED", "STOPPED"])
+    def test_down_says_do_not_retry(self, hub, stage):
+        hub(stage=stage)
+        message = geo_runner._out_of_budget_message()
+        assert message.startswith("geo-runner est en panne : ne réessaie pas")
+        assert stage in message
+
+    def test_running_but_no_answer_is_down(self, hub):
+        hub(stage="RUNNING")
+        assert geo_runner._out_of_budget_message().startswith("geo-runner est en panne")
+
+    @pytest.mark.parametrize("status, body", [(401, b'{"error": "nope"}'), (200, b"not json"), (200, b"[]")])
+    def test_unknown_stage_says_one_more_try_then_down(self, hub, status, body):
+        hub(status=status, body=body)
+        assert geo_runner._out_of_budget_message().startswith("geo-runner ne répond pas (état du Space inconnu)")
+
+    def test_local_geo_runner_has_no_stage(self, monkeypatch):
+        monkeypatch.setenv("GEO_RUNNER_URL", "http://localhost:7870")
+        monkeypatch.delenv("GEO_RUNNER_SPACE_ID", raising=False)
+        assert geo_runner._space_stage() is None
+
+    def test_cli_down_space_is_exit_1_with_the_message(self, monkeypatch, fake_time, tmp_path):
+        """The whole command: a geo-runner that answers 503, a Space in RUNTIME_ERROR."""
+        server = FakeGeoRunner()
+        monkeypatch.setenv("GEO_RUNNER_URL", server.url)
+        monkeypatch.setattr(geo_runner, "_space_stage", lambda: "RUNTIME_ERROR")
+        server.script = [WAKING] * 20
+        sandbox = tmp_path / "session"
+        sandbox.mkdir()
+        client = Mock()
+        client.download_activity.return_value = _zip(["1_ACTIVITY.fit"])
+        with patch("garmin_mcp.cli.create_client_from_tokens", return_value=client):
+            result = execute("geographic activity 1", "token", tmp_dir=str(sandbox))
+        server.server.shutdown()
+        server.server.server_close()
+        assert result["exit_code"] == 1
+        assert "geo-runner est en panne : ne réessaie pas" in result["stderr"]
+        assert "RUNTIME_ERROR" in result["stderr"]
