@@ -66,7 +66,7 @@ def get_activities(
         raw = client.get_activities_by_date(start_date, end_date, activity_type) or []
         answer = {"count": len(raw), "date_range": {"start": start_date, "end": end_date}}
     else:
-        raw = client.get_activities(start, limit) or []
+        raw = client.get_activities(start, limit, activity_type or None) or []
         answer = {
             "start": start,
             "limit": limit,

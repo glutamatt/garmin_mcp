@@ -30,14 +30,26 @@ from garmin_mcp.api.activity_fields import (
 )
 from garmin_mcp.api.calendar_fields import CALENDAR_ITEMS, EVENT_ITEMS
 from garmin_mcp.api.health_fields import (
+    BODY_BATTERY_FIELDS,
+    DAILY_FIELDS,
     HEART_RATE_FIELDS,
     HRV_FIELDS,
     READINESS_FIELDS,
     RESPIRATION_FIELDS,
     SLEEP_FIELDS,
+    SNAPSHOT_READINESS,
+    SNAPSHOT_SLEEP,
+    SNAPSHOT_STATS,
     SPO2_FIELDS,
     STATS_FIELDS,
     STRESS_FIELDS,
+)
+from garmin_mcp.api.training_fields import (
+    ENDURANCE_FIELDS,
+    HILL_FIELDS,
+    LACTATE_THRESHOLD_FIELDS,
+    MAX_METRICS_FIELDS,
+    RACE_PREDICTION_FIELDS,
 )
 from garmin_mcp.api.capabilities import missing_reason
 from garmin_mcp.api.contract import GarminError, InvalidInput, as_garmin_error, is_unavailable
@@ -50,6 +62,8 @@ from garmin_mcp.cli.output import (
     format_output,
     write_csv_file,
 )
+from garmin_mcp.cli import describe as describing
+from garmin_mcp.cli.describe import returns
 from garmin_mcp.cli.suggest import SuggestingGroup, unknown_command
 
 
@@ -82,10 +96,11 @@ def _session_sandbox(ctx) -> str:
 
 def _sanitize_path(raw_path: str, sandbox: str = SANDBOX_DIR) -> str:
     """Sandbox output path to given sandbox dir. Reject traversals."""
-    # Resolve to absolute, collapse ..'s
-    resolved = os.path.realpath(raw_path)
-    # If not already under sandbox, treat as relative filename inside it
-    if not resolved.startswith(sandbox):
+    # Resolve to absolute, collapse ..'s. A relative path is a name inside the sandbox.
+    sandbox = os.path.realpath(sandbox)
+    resolved = os.path.realpath(os.path.join(sandbox, raw_path))
+    # Not under the sandbox (`/tmp/sessionX-other/…` shares a prefix, not a folder): its name only
+    if os.path.commonpath([resolved, sandbox]) != sandbox:
         basename = os.path.basename(resolved)
         if not basename:
             raise _fail(InvalidInput(f"Invalid path: {raw_path}"))
@@ -238,7 +253,10 @@ def _run_to_file(ctx, default_name: str, fn):
     stdout.
     """
     path = _data_path(ctx, default_name)
-    _out(ctx, _call(lambda: fn(path)), to_output=False)
+    answer = _call(lambda: fn(path))
+    if isinstance(answer, dict) and answer.get("path") == path:
+        answer = {**answer, "path": os.path.relpath(path, os.path.realpath(_session_sandbox(ctx)))}
+    _out(ctx, answer, to_output=False)
 
 
 # ── Main group ───────────────────────────────────────────────────────────────
@@ -254,7 +272,6 @@ def _run_to_file(ctx, default_name: str, fn):
 )
 @click.option("--fields", default=None, help="Comma-separated fields to include")
 @click.option("--output", "output_path", default=None, help="Write to file (auto-sandboxed to session dir); a command that writes a CSV/TSV writes it there")
-@click.option("--dry-run", is_flag=True, default=False, help="Validate without calling API (mutations only)")
 @click.option(
     "--token",
     envvar="GARMIN_TOKEN",
@@ -275,7 +292,7 @@ def _run_to_file(ctx, default_name: str, fn):
     help="Session-scoped tmp directory for file I/O isolation",
 )
 @click.pass_context
-def garmin(ctx, fmt, fields, output_path, dry_run, token, display_name, tmp_dir):
+def garmin(ctx, fmt, fields, output_path, token, display_name, tmp_dir):
     """Garmin Connect CLI — query athlete data.
 
     \b
@@ -287,7 +304,7 @@ def garmin(ctx, fmt, fields, output_path, dry_run, token, display_name, tmp_dir)
                        not_supported_by_device, or only_in: <commands>
       --format table   Human-readable table instead of JSON
       --output PATH    Write to file (auto-sandboxed); a CSV/TSV command writes its data there
-      --dry-run        Validate mutation without calling API
+    A command that changes Garmin data has --dry-run: the whole check, nothing sent.
 
     \b
     Date format: YYYY-MM-DD everywhere.
@@ -302,7 +319,7 @@ def garmin(ctx, fmt, fields, output_path, dry_run, token, display_name, tmp_dir)
     ctx.ensure_object(dict)
     ctx.obj.setdefault("format", fmt)
     ctx.obj.setdefault("output", output_path)
-    ctx.obj.setdefault("dry_run", dry_run)
+    ctx.obj.setdefault("dry_run", False)
     if fields and "fields" not in ctx.obj:
         ctx.obj["fields"] = [f.strip() for f in fields.split(",") if f.strip()]
     if token:
@@ -315,101 +332,54 @@ def garmin(ctx, fmt, fields, output_path, dry_run, token, display_name, tmp_dir)
 # ── Describe (schema introspection for agents) ──────────────────────────────
 
 
-_DRY_RUN_EPILOG = (
-    "Mutation — supports the global --dry-run flag, accepted ANYWHERE in the command "
-    "(e.g. `workouts create --input w.json --dry-run`): validates the input and prints a "
-    "preview without calling the Garmin API. It is a root-level flag, so it is not listed "
-    "under Options above — it works regardless."
-)
+def _set_dry_run(ctx, param, value):
+    if value:
+        ctx.ensure_object(dict)["dry_run"] = True
 
 
 class MutationCommand(click.Command):
-    """A command that writes to Garmin Connect.
-
-    Advertises the root-level ``--dry-run`` flag in ``help`` (epilog) and ``describe``
-    (``supports_dry_run`` + synthetic param). Without this, agents introspecting
-    ``help workouts create`` concluded the flag did not exist and skipped validation.
-    """
+    """A command that writes to Garmin Connect: it has `--dry-run` (the whole check, nothing sent)."""
 
     mutation = True
 
     def __init__(self, *args, **kwargs):
-        kwargs.setdefault("epilog", _DRY_RUN_EPILOG)
         super().__init__(*args, **kwargs)
-
-
-def _collect_commands(group, prefix=""):
-    """Recursively collect all commands with their params."""
-    result = []
-    for name, cmd in sorted(group.commands.items()):
-        full_name = f"{prefix} {name}".strip() if prefix else name
-        if isinstance(cmd, click.Group):
-            result.extend(_collect_commands(cmd, full_name))
-        else:
-            params = []
-            for p in cmd.params:
-                if isinstance(p, click.Option):
-                    if p.hidden:
-                        continue
-                    params.append({
-                        "name": p.opts[0],
-                        "type": p.type.name if hasattr(p.type, "name") else str(p.type),
-                        "required": p.required,
-                        **({"default": p.default} if p.default is not None and not p.required else {}),
-                        **({"help": p.help} if p.help else {}),
-                    })
-                elif isinstance(p, click.Argument):
-                    params.append({
-                        "name": p.name,
-                        "type": p.type.name if hasattr(p.type, "name") else str(p.type),
-                        "kind": "argument",
-                        "required": p.required,
-                    })
-            entry = {"command": full_name, "help": cmd.get_short_help_str(limit=120)}
-            if getattr(cmd, "mutation", False):
-                entry["supports_dry_run"] = True
-                params.append({
-                    "name": "--dry-run",
-                    "type": "flag",
-                    "required": False,
-                    "help": "Global flag (any position): validate + preview without calling the API",
-                })
-            if params:
-                entry["params"] = params
-            result.append(entry)
-    return result
+        self.params.append(click.Option(
+            ["--dry-run"], is_flag=True, expose_value=False, callback=_set_dry_run,
+            help="Check everything and show what would be sent; nothing is sent to Garmin",
+        ))
 
 
 @garmin.command("describe")
 @click.argument("command_path", nargs=-1)
 @click.pass_context
 def describe(ctx, command_path):
-    """Describe available commands and parameters (for agent introspection).
+    """Commands for an agent: an index, or options and output fields (JSON).
 
     \b
-    garmin describe                   List all commands
-    garmin describe activities        List commands in a group
-    garmin describe workouts create   One command (words or a single quoted string)
+    garmin describe                   Every command, one line each
+    garmin describe activities        A group: options and output field names
+    garmin describe activities get    One command: options and each output field's meaning
     """
     # Accept both `describe workouts create` and `describe "workouts create"`
-    command_path = " ".join(command_path).strip()
+    parts = " ".join(command_path).split()
     target = garmin
     prefix = ""
-    if command_path:
-        for part in command_path.split():
-            if isinstance(target, click.Group) and part in target.commands:
-                target = target.commands[part]
-                prefix = f"{prefix} {part}".strip() if prefix else part
-            else:
-                raise click.UsageError(unknown_command(garmin, prefix, part))
+    for part in parts:
+        if isinstance(target, click.Group) and part in target.commands:
+            target = target.commands[part]
+            prefix = f"{prefix} {part}".strip()
+        else:
+            raise click.UsageError(unknown_command(garmin, prefix, part))
 
-    if isinstance(target, click.Group):
-        commands = _collect_commands(target, prefix)
+    if not parts:
+        answer = {"commands": describing.grouped_index(garmin),
+                  "more": "describe <group> | describe <group> <command>: options and output fields"}
+    elif isinstance(target, click.Group):
+        answer = {"commands": describing.commands(target, prefix, field_docs=False)}
     else:
-        commands = _collect_commands(garmin)
-        commands = [c for c in commands if c["command"] == command_path]
-
-    _out(ctx, {"commands": commands})
+        answer = {"commands": [describing.command(target, prefix, field_docs=True)]}
+    _out(ctx, answer)
 
 
 @garmin.command("help")
@@ -450,6 +420,7 @@ def activities(ctx):
     pass
 
 
+@returns(LIST_FIELDS)
 @activities.command("list")
 @click.option("--from", "start_date", default=None, help="Start date YYYY-MM-DD")
 @click.option("--to", "end_date", default=None, help="End date YYYY-MM-DD")
@@ -461,13 +432,21 @@ def activities(ctx):
                    "activity's detail (one call per activity, max 100)")
 @click.pass_context
 def activities_list(ctx, start_date, end_date, activity_type, start, limit, extras):
-    """List activities by date range or pagination.
+    """List activities: every one of a date range (--from and --to), or the latest (--start, --limit).
 
     \b
     --with effort: "effort_missing" gives the activities without RPE
     and why: {"<id>": "no_data" | "error: ..."}.
     """
     from garmin_mcp.api import activities as api
+
+    if bool(start_date) != bool(end_date):
+        raise click.UsageError("--from and --to go together (a date range), or neither (the latest activities)")
+    explicit = [f"--{name}" for name in ("start", "limit")
+                if ctx.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE]
+    if start_date and explicit:
+        raise click.UsageError(f"{' and '.join(explicit)}: for the latest activities; "
+                               "a date range lists every activity of the range")
 
     with_effort = "effort" in extras
     _run(ctx, lambda: api.get_activities(
@@ -476,6 +455,7 @@ def activities_list(ctx, start_date, end_date, activity_type, start, limit, extr
     ), field_set=LIST_EFFORT_FIELDS if with_effort else LIST_FIELDS)
 
 
+@returns(DETAIL_FIELDS)
 @activities.command("get")
 @click.argument("activity_id", type=int)
 @click.pass_context
@@ -487,6 +467,7 @@ def activities_get(ctx, activity_id):
     _run(ctx, lambda: api.get_activity(_client(ctx), activity_id), field_set=DETAIL_FIELDS)
 
 
+@returns(LAP_FIELDS, INTERVAL_FIELDS, RUN_WALK_FIELDS)
 @activities.command("splits")
 @click.argument("activity_id", type=int)
 @click.option("--by", "by", default="lap", type=click.Choice(["lap", "interval", "run-walk", "km"]),
@@ -809,6 +790,7 @@ def health(ctx):
     pass
 
 
+@returns(stats=SNAPSHOT_STATS, sleep=SNAPSHOT_SLEEP, training_readiness=SNAPSHOT_READINESS, hrv=HRV_FIELDS)
 @health.command("snapshot")
 @click.argument("date", default=None)
 @click.pass_context
@@ -824,6 +806,7 @@ def health_snapshot(ctx, date):
     _run(ctx, lambda: api.get_coaching_snapshot(_client(ctx), date or _today()))
 
 
+@returns(STATS_FIELDS)
 @health.command("stats")
 @click.argument("date", default=None)
 @click.pass_context
@@ -840,6 +823,7 @@ def health_stats(ctx, date):
     _run(ctx, lambda: api.get_stats(_client(ctx), date or _today()), field_set=STATS_FIELDS)
 
 
+@returns(SLEEP_FIELDS)
 @health.command("sleep")
 @click.argument("date", default=None)
 @click.pass_context
@@ -851,6 +835,7 @@ def health_sleep(ctx, date):
     _run(ctx, lambda: api.get_sleep(_client(ctx), date or _today()), field_set=SLEEP_FIELDS)
 
 
+@returns(STRESS_FIELDS)
 @health.command("stress")
 @click.argument("date", default=None)
 @click.pass_context
@@ -861,6 +846,7 @@ def health_stress(ctx, date):
     _run(ctx, lambda: api.get_stress(_client(ctx), date or _today()), field_set=STRESS_FIELDS)
 
 
+@returns(HEART_RATE_FIELDS)
 @health.command("heart-rate")
 @click.argument("date", default=None)
 @click.pass_context
@@ -871,6 +857,7 @@ def health_heart_rate(ctx, date):
     _run(ctx, lambda: api.get_heart_rate(_client(ctx), date or _today()), field_set=HEART_RATE_FIELDS)
 
 
+@returns(RESPIRATION_FIELDS)
 @health.command("respiration")
 @click.argument("date", default=None)
 @click.pass_context
@@ -881,6 +868,7 @@ def health_respiration(ctx, date):
     _run(ctx, lambda: api.get_respiration(_client(ctx), date or _today()), field_set=RESPIRATION_FIELDS)
 
 
+@returns(BODY_BATTERY_FIELDS)
 @health.command("body-battery")
 @click.option("--from", "start_date", required=True, help="Start date YYYY-MM-DD")
 @click.option("--to", "end_date", required=True, help="End date YYYY-MM-DD")
@@ -893,6 +881,7 @@ def health_body_battery(ctx, start_date, end_date):
     _run(ctx, lambda: api.get_body_battery(_client(ctx), start_date, end_date))
 
 
+@returns(SPO2_FIELDS)
 @health.command("spo2")
 @click.argument("date", default=None)
 @click.pass_context
@@ -903,6 +892,7 @@ def health_spo2(ctx, date):
     _run(ctx, lambda: api.get_spo2(_client(ctx), date or _today()), field_set=SPO2_FIELDS)
 
 
+@returns(READINESS_FIELDS)
 @health.command("training-readiness")
 @click.argument("date", default=None)
 @click.pass_context
@@ -923,6 +913,7 @@ def training(ctx):
     pass
 
 
+@returns(MAX_METRICS_FIELDS)
 @training.command("max-metrics")
 @click.argument("date", default=None)
 @click.pass_context
@@ -933,6 +924,7 @@ def training_max_metrics(ctx, date):
     _run(ctx, lambda: api.get_max_metrics(_client(ctx), date or _today()))
 
 
+@returns(HRV_FIELDS)
 @training.command("hrv")
 @click.argument("date", default=None)
 @click.pass_context
@@ -972,6 +964,7 @@ def training_progress(ctx, start_date, end_date, metric):
     ))
 
 
+@returns(RACE_PREDICTION_FIELDS)
 @training.command("race-predictions")
 @click.pass_context
 def training_race_predictions(ctx):
@@ -1006,6 +999,7 @@ def training_personal_records(ctx):
     _run(ctx, lambda: api.get_personal_records(_client(ctx)))
 
 
+@returns(LACTATE_THRESHOLD_FIELDS)
 @training.command("lactate-threshold")
 @click.pass_context
 def training_lactate_threshold(ctx):
@@ -1015,6 +1009,7 @@ def training_lactate_threshold(ctx):
     _run(ctx, lambda: api.get_lactate_threshold(_client(ctx)))
 
 
+@returns(ENDURANCE_FIELDS)
 @training.command("endurance-score")
 @click.argument("date", default=None)
 @click.option("--weeks", default=12, type=click.IntRange(1, 52), help="Weeks of weekly means (default 12)")
@@ -1026,6 +1021,7 @@ def training_endurance_score(ctx, date, weeks):
     _run(ctx, lambda: api.get_endurance_score(_client(ctx), date or _today(), weeks))
 
 
+@returns(HILL_FIELDS)
 @training.command("hill-score")
 @click.option("--from", "start_date", required=True, help="Start date YYYY-MM-DD")
 @click.option("--to", "end_date", required=True, help="End date YYYY-MM-DD")
@@ -1287,6 +1283,7 @@ def _partial_days(rows: list[dict]) -> str | None:
     return "; ".join(f"{r['date']} partial: synced until {r['synced_until'][11:16]}" for r in partial) or None
 
 
+@returns(DAILY_FIELDS)
 @history.command("daily")
 @click.option("--days", default=365, type=int, help="Days back from end (default 365)")
 @click.option("--end", default=None, help="End date YYYY-MM-DD (default today)")
@@ -1683,6 +1680,7 @@ def calendar(ctx):
     pass
 
 
+@returns(CALENDAR_ITEMS)
 @calendar.command("month")
 @click.argument("year", type=int)
 @click.argument("month", type=click.IntRange(1, 12))
@@ -1700,6 +1698,7 @@ def calendar_month(ctx, year, month):
     _run(ctx, lambda: api.get_month(_client(ctx), year, month), field_set=CALENDAR_ITEMS)
 
 
+@returns(EVENT_ITEMS)
 @calendar.command("events")
 @click.option("--from", "start_date", required=True, help="Start date YYYY-MM-DD")
 @click.option("--to", "end_date", required=True, help="End date YYYY-MM-DD")
@@ -1713,6 +1712,7 @@ def calendar_events(ctx, start_date, end_date, limit):
     _run(ctx, lambda: api.get_events(_client(ctx), start_date, end_date, limit), field_set=EVENT_ITEMS)
 
 
+@returns(CALENDAR_ITEMS)
 @calendar.command("upcoming")
 @click.option("--days", default=7, type=click.IntRange(min=0), help="Days forward to look")
 @click.pass_context
@@ -1790,15 +1790,18 @@ def _extract_json_option(command: str) -> tuple[str, str | None]:
 # AI agents often place these after the subcommand (e.g. "activities list --fields id,name")
 # but Click requires them before the subcommand. We hoist them automatically.
 _GLOBAL_FLAGS_WITH_VALUE = ("--format", "--fields", "--output")
-_GLOBAL_FLAGS_BOOLEAN = ("--dry-run",)
+# A mutation's own flag, accepted anywhere too: moved after the command.
+_COMMAND_FLAGS = ("--dry-run",)
+
 
 def _hoist_global_flags(args: list[str]) -> list[str]:
-    """Move global flags from anywhere in args to the front.
+    """Move global flags from anywhere in args to the front, and `--dry-run` to the end.
 
-    Click requires group-level options before the subcommand.
-    AI agents consistently put them after. This fixes it transparently.
+    Click requires group-level options before the subcommand, and a command's
+    options after it. AI agents put them anywhere. This fixes it transparently.
     """
     global_args = []
+    command_flags = []
     rest = []
     i = 0
     while i < len(args):
@@ -1810,8 +1813,8 @@ def _hoist_global_flags(args: list[str]) -> list[str]:
                 i += 2
             else:
                 i += 1
-        elif arg in _GLOBAL_FLAGS_BOOLEAN:
-            global_args.append(arg)
+        elif arg in _COMMAND_FLAGS:
+            command_flags.append(arg)
             i += 1
         elif any(arg.startswith(f + "=") for f in _GLOBAL_FLAGS_WITH_VALUE):
             # Handle --fields=id,name style
@@ -1820,7 +1823,7 @@ def _hoist_global_flags(args: list[str]) -> list[str]:
         else:
             rest.append(arg)
             i += 1
-    return global_args + rest
+    return global_args + rest + command_flags
 
 
 def execute(command: str, token: str, display_name: str = None, tmp_dir: str = None) -> dict:
@@ -1830,8 +1833,8 @@ def execute(command: str, token: str, display_name: str = None, tmp_dir: str = N
 
     Input is validated: control characters are rejected. Commands are split by
     shlex and parsed by Click, not by a shell — no shell expansion occurs.
-    Global flags (--fields, --format, --output, --dry-run) are hoisted to the front
-    regardless of where the AI places them in the command.
+    Global flags (--fields, --format, --output) are hoisted to the front, and
+    --dry-run to the end, regardless of where the AI places them in the command.
 
     If garth refreshed the OAuth2 token during execution, `refreshed_token` is set
     to the new base64-encoded token blob. The caller (server.py) should propagate
@@ -1870,10 +1873,10 @@ def execute(command: str, token: str, display_name: str = None, tmp_dir: str = N
     command, json_value = _extract_json_option(command)
 
     cmd_args = shlex.split(command)
-    cmd_args = _hoist_global_flags(cmd_args)
-    # Re-inject --json with the preserved value
+    # Re-inject --json with the preserved value (before the hoisting: --dry-run stays last)
     if json_value is not None:
         cmd_args += ["--json", json_value]
+    cmd_args = _hoist_global_flags(cmd_args)
     args += cmd_args
 
     # Pass pre-created client via obj so _client(ctx) reuses it

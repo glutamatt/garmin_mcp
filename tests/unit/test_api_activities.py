@@ -74,7 +74,7 @@ class TestGetActivities:
     def test_limit_capped(self, client):
         client.get_activities.return_value = []
         api.get_activities(client, limit=999)
-        client.get_activities.assert_called_with(0, 100)
+        client.get_activities.assert_called_with(0, 100, None)
 
 
 class TestTrainingLoad:

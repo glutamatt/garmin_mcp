@@ -294,7 +294,7 @@ class TestGeographicActivityCli:
         result = _run("geographic activity 1", _client(), str(sandbox))
         assert result["exit_code"] == 0, result["stderr"]
         answer = json.loads(result["stdout"])
-        assert answer["path"] == str(sandbox / "geographic_1.tsv")
+        assert answer["path"] == "geographic_1.tsv"  # relative to the sandbox
         assert answer["rows"] == 2
         assert (sandbox / "geographic_1.tsv").read_text() == TSV
 
@@ -302,7 +302,7 @@ class TestGeographicActivityCli:
         geo.script = [AWAKE, analyzed()]
         result = _run("geographic activity 1 --output geo9.tsv", _client(), str(sandbox))
         assert result["exit_code"] == 0, result["stderr"]
-        assert json.loads(result["stdout"])["path"] == str(sandbox / "geo9.tsv")
+        assert json.loads(result["stdout"])["path"] == "geo9.tsv"
         assert (sandbox / "geo9.tsv").read_text() == TSV
         assert not (sandbox / "geographic_1.tsv").exists()
 
@@ -344,7 +344,7 @@ class TestGeographicHistoryCli:
         result = _run("geographic history query heatmap --since 2026-01-01", _client(), str(sandbox))
         assert result["exit_code"] == 0, result["stderr"]
         name = "geographic_history_heatmap_from2026-01-01.tsv"
-        assert json.loads(result["stdout"])["path"] == str(sandbox / name)
+        assert json.loads(result["stdout"])["path"] == name
         assert (sandbox / name).exists()
 
     def test_query_output_names_the_tsv(self, geo, sandbox):
@@ -352,7 +352,7 @@ class TestGeographicHistoryCli:
         result = _run("geographic history query heatmap --output places.tsv", _client(), str(sandbox))
         assert result["exit_code"] == 0, result["stderr"]
         answer = json.loads(result["stdout"])
-        assert answer["path"] == str(sandbox / "places.tsv")
+        assert answer["path"] == "places.tsv"
         assert answer["rows"] == 1  # the anonymous `(chemin piéton)` is dropped
         assert "Parc A" in (sandbox / "places.tsv").read_text()
         assert [p.name for p in sandbox.iterdir()] == ["places.tsv"]
@@ -391,5 +391,5 @@ class TestActivitiesDownloadCli:
         with patch("fitparse.FitFile", return_value=fit):
             result = _run("activities download 1 --output run.csv", _client(), str(sandbox))
         assert result["exit_code"] == 0, result["stderr"]
-        assert json.loads(result["stdout"])["path"] == str(sandbox / "run.csv")
+        assert json.loads(result["stdout"])["path"] == "run.csv"
         assert [p.name for p in sandbox.iterdir()] == ["run.csv"]
