@@ -1,7 +1,8 @@
 """
 Health & Wellness API — curated daily health data.
 
-Pure functions: (Garmin client, params) → dict.
+Pure functions: (Garmin client, params) → dict. Fields, names and units:
+`api/health_fields.py`.
 A day without data is `{"date", "available": False, "reason": "no_data"}`
 (`not_supported_by_device` for a device feature, see `api/capabilities.py`);
 failures are exceptions (see `api/contract.py`).
@@ -18,12 +19,112 @@ from garmin_mcp.api.contract import (
     has_data,
     unavailable,
 )
-from garmin_mcp.api.wellness_fields import synced_until
-from garmin_mcp.utils import clean_nones
+from garmin_mcp.api.fields import FieldSet
+from garmin_mcp.api.health_fields import (
+    BODY_BATTERY_FIELDS,
+    HEART_RATE_FIELDS,
+    HRV_FIELDS,
+    READINESS_FIELDS,
+    RESPIRATION_FIELDS,
+    SLEEP_FIELDS,
+    SNAPSHOT_READINESS,
+    SNAPSHOT_SLEEP,
+    SNAPSHOT_STATS,
+    SPO2_FIELDS,
+    STATS_FIELDS,
+    STRESS_FIELDS,
+    body_battery_events,
+)
+
+
+def _day(fields: FieldSet, date: str, raw) -> dict:
+    """A one-day answer curated by `fields`, or `no_data`."""
+    curated = fields.curate(raw) if raw else None
+    if curated and "date" not in curated:
+        curated = {"date": date, **curated}
+    return day_answer(date, curated)
+
+
+def get_stats(client: Garmin, date: str) -> dict:
+    """The day's summary: steps, calories, heart rate, stress, body battery, SpO2, respiration.
+
+    `synced_until`: only on a partial day (the watch has not sent its end yet).
+    """
+    return _day(STATS_FIELDS, date, client.get_user_summary(date))
+
+
+def get_sleep(client: Garmin, date: str) -> dict:
+    """The night that ends on `date`: score and its factors, phases, bedtime, need, HR, SpO2, HRV."""
+    raw = client.get_sleep_data(date)
+    return _day(SLEEP_FIELDS, date, raw if (raw or {}).get("dailySleepDTO") else None)
+
+
+def get_stress(client: Garmin, date: str) -> dict:
+    """The day's stress: mean, max, and the share of the measured time in each band."""
+    return _day(STRESS_FIELDS, date, client.get_stress_data(date))
+
+
+def get_heart_rate(client: Garmin, date: str) -> dict:
+    """The day's heart rate: resting (and its 7-day mean), min, max, mean."""
+    return _day(HEART_RATE_FIELDS, date, client.get_heart_rates(date))
+
+
+def get_respiration(client: Garmin, date: str) -> dict:
+    """The day's respiration, breaths per minute: awake, asleep, min, max."""
+    return _day(RESPIRATION_FIELDS, date, client.get_respiration_data(date))
+
+
+def get_spo2(client: Garmin, date: str) -> dict:
+    """The day's SpO2: mean, lowest, last reading, during the sleep, 7-day mean."""
+    return _day(SPO2_FIELDS, date, client.get_spo2_data(date))
+
+
+def get_body_battery(client: Garmin, start_date: str, end_date: str) -> dict:
+    """Body battery per day: low, high, charged, drained, Garmin's level, and the day's events."""
+    days = []
+    for raw in client.get_body_battery(start_date, end_date) or []:
+        day = BODY_BATTERY_FIELDS.curate(raw)
+        events = body_battery_events(raw)
+        if events:
+            day["events"] = events
+        if has_data(day):
+            days.append(day)
+    return {"count": len(days), "days": days}
+
+
+def get_training_readiness(client: Garmin, date: str) -> dict:
+    """The morning's training readiness, its factors, and the last update of the day."""
+    raw = _readiness(client.get_training_readiness(date))
+    curated = READINESS_FIELDS.curate(raw) if raw else None
+    if curated and raw.get("latest"):
+        curated.update(raw["latest"])
+    return capabilities.day_answer(client, capabilities.TRAINING_READINESS, date, curated)
+
+
+def _readiness(raw) -> dict | None:
+    """The reading of the morning (`inputContext` AFTER_WAKEUP_RESET, else the first of the day),
+    with `latest` = the score of the day's last update when there is a later one.
+
+    Garmin updates the readiness during the day (activity, rest): the morning's is
+    the day's reference, the last one says where the athlete is now.
+    """
+    entries = [e for e in (raw if isinstance(raw, list) else [raw]) if isinstance(e, dict)]
+    if not entries:
+        return None
+    entries.sort(key=lambda e: e.get("timestamp") or "")
+    morning = next((e for e in entries if e.get("inputContext") == "AFTER_WAKEUP_RESET"), entries[0])
+    last = entries[-1]
+    if last is morning:
+        return morning
+    latest = READINESS_FIELDS.curate(last)
+    return {**morning, "latest": {"latest_score": latest.get("score"), "latest_at": latest.get("measured_at")}}
 
 
 def get_coaching_snapshot(client: Garmin, date: str) -> dict:
-    """One-call daily overview: stats + sleep + readiness + body battery + HRV.
+    """One-call daily overview: stats + sleep + readiness + HRV, each in short.
+
+    The full section is its own command (`health stats`, `health sleep`,
+    `health training-readiness`, `training hrv`).
 
     Each section is its curated data, or `{"available": False, "reason": …}`:
     `no_data` when Garmin has nothing for that day, `not_supported_by_device`
@@ -56,297 +157,27 @@ def get_coaching_snapshot(client: Garmin, date: str) -> dict:
     return snapshot
 
 
-def get_stats(client: Garmin, date: str) -> dict:
-    """Curated daily stats: steps, calories, HR, stress, body battery, SpO2."""
-    raw = client.get_user_summary(date)
-    return day_answer(date, _curate_stats(raw) if raw else None)
+def _snapshot_stats(raw: dict) -> dict:
+    return {k: v for k, v in SNAPSHOT_STATS.curate(raw).items() if k != "date"}
 
 
-def get_sleep(client: Garmin, date: str) -> dict:
-    """Curated sleep summary: score, phases, SpO2, respiration."""
-    raw = client.get_sleep_data(date)
-    return day_answer(date, _curate_sleep(raw) if raw else None)
+def _snapshot_sleep(raw: dict) -> dict | None:
+    return SNAPSHOT_SLEEP.curate(raw) if raw.get("dailySleepDTO") else None
 
 
-def get_stress(client: Garmin, date: str) -> dict:
-    """Curated stress summary: avg/max levels, distribution percentages."""
-    raw = client.get_stress_data(date)
-    if not raw:
-        return day_answer(date, None)
-
-    summary = clean_nones({
-        "date": raw.get("calendarDate"),
-        "max_stress_level": raw.get("maxStressLevel"),
-        "avg_stress_level": raw.get("avgStressLevel"),
-    })
-
-    # Calculate distribution from time-series
-    values = raw.get("stressValuesArray", [])
-    if values:
-        valid = [v[1] for v in values if v[1] and v[1] > 0]
-        if valid:
-            total = len(valid)
-            summary["rest_percent"] = round(sum(1 for v in valid if v < 26) / total * 100, 1)
-            summary["low_stress_percent"] = round(sum(1 for v in valid if 26 <= v < 51) / total * 100, 1)
-            summary["medium_stress_percent"] = round(sum(1 for v in valid if 51 <= v < 76) / total * 100, 1)
-            summary["high_stress_percent"] = round(sum(1 for v in valid if v >= 76) / total * 100, 1)
-
-    return day_answer(date, summary)
+def _snapshot_readiness(raw) -> dict | None:
+    entry = _readiness(raw)
+    return SNAPSHOT_READINESS.curate(entry) if entry else None
 
 
-def get_heart_rate(client: Garmin, date: str) -> dict:
-    """Curated HR summary: resting, min, max, avg, 7-day trend."""
-    raw = client.get_heart_rates(date)
-    if not raw:
-        return day_answer(date, None)
-
-    summary = clean_nones({
-        "date": raw.get("calendarDate"),
-        "max_heart_rate_bpm": raw.get("maxHeartRate"),
-        "min_heart_rate_bpm": raw.get("minHeartRate"),
-        "resting_heart_rate_bpm": raw.get("restingHeartRate"),
-        "last_7_days_avg_resting_hr": raw.get("lastSevenDaysAvgRestingHeartRate"),
-    })
-
-    # Calculate average from time-series
-    hr_values = raw.get("heartRateValues", [])
-    if hr_values:
-        valid = [v[1] for v in hr_values if v[1] and v[1] > 0]
-        if valid:
-            summary["avg_heart_rate_bpm"] = round(sum(valid) / len(valid), 1)
-
-    return day_answer(date, summary)
-
-
-def get_respiration(client: Garmin, date: str) -> dict:
-    """Curated respiration summary: avg/min/max breaths per minute."""
-    raw = client.get_respiration_data(date)
-    if not raw:
-        return day_answer(date, None)
-    return day_answer(date, clean_nones({
-        "date": raw.get("calendarDate"),
-        "lowest_breaths_per_min": raw.get("lowestRespirationValue"),
-        "highest_breaths_per_min": raw.get("highestRespirationValue"),
-        "avg_waking_breaths_per_min": raw.get("avgWakingRespirationValue"),
-        "avg_sleep_breaths_per_min": raw.get("avgSleepRespirationValue"),
-    }))
-
-
-def get_body_battery(client: Garmin, start_date: str, end_date: str) -> dict:
-    """Curated body battery: charge/drain per day with activity events."""
-    raw = client.get_body_battery(start_date, end_date) or []
-
-    days = []
-    for day in raw:
-        entry = clean_nones({
-            "date": day.get("date"),
-            "charged": day.get("charged"),
-            "drained": day.get("drained"),
-        })
-
-        events = []
-        for event in day.get("bodyBatteryActivityEvent", []):
-            events.append(clean_nones({
-                "type": event.get("eventType"),
-                "start_time": event.get("eventStartTimeGmt"),
-                "duration_minutes": round(event.get("durationInMilliseconds", 0) / 60000, 1),
-                "body_battery_impact": event.get("bodyBatteryImpact"),
-                "feedback": event.get("shortFeedback"),
-            }))
-        if events:
-            entry["events"] = events
-
-        feedback = day.get("bodyBatteryDynamicFeedbackEvent", {})
-        if feedback:
-            entry["current_feedback"] = feedback.get("feedbackShortType")
-            entry["body_battery_level"] = feedback.get("bodyBatteryLevel")
-
-        days.append(clean_nones(entry))
-
-    return {"count": len(days), "days": days}
-
-
-def get_spo2(client: Garmin, date: str) -> dict:
-    """Curated SpO2: avg, lowest, latest, sleep avg."""
-    raw = client.get_spo2_data(date)
-    if not raw:
-        return day_answer(date, None)
-    return day_answer(date, clean_nones({
-        "date": raw.get("calendarDate"),
-        "avg_spo2_percent": raw.get("averageSpO2"),
-        "lowest_spo2_percent": raw.get("lowestSpO2"),
-        "latest_spo2_percent": raw.get("latestSpO2"),
-        "latest_reading_time": raw.get("latestSpO2TimestampLocal"),
-        "last_7_days_avg_spo2": raw.get("lastSevenDaysAvgSpO2"),
-        "avg_sleep_spo2_percent": raw.get("avgSleepSpO2"),
-    }))
-
-
-def get_training_readiness(client: Garmin, date: str) -> dict:
-    """Curated training readiness: score, contributing factors."""
-    raw = client.get_training_readiness(date)
-    if not raw:
-        return capabilities.day_answer(client, capabilities.TRAINING_READINESS, date, None)
-
-    # API can return a list
-    entries = raw if isinstance(raw, list) else [raw]
-    curated = []
-    for r in entries:
-        curated.append(_curate_readiness_entry(r))
-
-    if len(curated) == 1:
-        return capabilities.day_answer(client, capabilities.TRAINING_READINESS, date, curated[0])
-    return {"entries": curated}
-
-
-def get_body_composition(client: Garmin, start_date: str, end_date: str = None) -> dict:
-    """Body composition data for a date or range."""
-    if end_date:
-        raw = client.get_body_composition(start_date, end_date)
-    else:
-        raw = client.get_body_composition(start_date)
-    return raw or unavailable(NO_DATA, date=start_date)
-
-
-# ── Private curation helpers ─────────────────────────────────────────────────
-
-
-def _curate_stats(stats: dict) -> dict:
-    """Extract essential fields from user summary.
-
-    `synced_until`: only on a partial day (the watch has not sent its end yet).
-    """
-    return clean_nones({
-        "date": stats.get("calendarDate"),
-        "synced_until": synced_until(stats),
-        "total_steps": stats.get("totalSteps"),
-        "daily_step_goal": stats.get("dailyStepGoal"),
-        "distance_meters": stats.get("totalDistanceMeters"),
-        "floors_ascended": stats.get("floorsAscended"),
-        "total_calories": stats.get("totalKilocalories"),
-        "active_calories": stats.get("activeKilocalories"),
-        "highly_active_seconds": stats.get("highlyActiveSeconds"),
-        "active_seconds": stats.get("activeSeconds"),
-        "sedentary_seconds": stats.get("sedentarySeconds"),
-        "moderate_intensity_minutes": stats.get("moderateIntensityMinutes"),
-        "vigorous_intensity_minutes": stats.get("vigorousIntensityMinutes"),
-        "intensity_minutes_goal": stats.get("intensityMinutesGoal"),
-        "min_heart_rate_bpm": stats.get("minHeartRate"),
-        "max_heart_rate_bpm": stats.get("maxHeartRate"),
-        "resting_heart_rate_bpm": stats.get("restingHeartRate"),
-        "last_7_days_avg_resting_hr": stats.get("lastSevenDaysAvgRestingHeartRate"),
-        "avg_stress_level": stats.get("averageStressLevel"),
-        "max_stress_level": stats.get("maxStressLevel"),
-        "body_battery_charged": stats.get("bodyBatteryChargedValue"),
-        "body_battery_drained": stats.get("bodyBatteryDrainedValue"),
-        "body_battery_highest": stats.get("bodyBatteryHighestValue"),
-        "body_battery_lowest": stats.get("bodyBatteryLowestValue"),
-        "body_battery_current": stats.get("bodyBatteryMostRecentValue"),
-        "avg_spo2_percent": stats.get("averageSpo2"),
-        "lowest_spo2_percent": stats.get("lowestSpo2"),
-        "avg_waking_respiration": stats.get("avgWakingRespirationValue"),
-        "highest_respiration": stats.get("highestRespirationValue"),
-        "lowest_respiration": stats.get("lowestRespirationValue"),
-    })
-
-
-def _curate_sleep(sleep_data: dict) -> dict:
-    """Extract essential fields from sleep data."""
-    dto = sleep_data.get("dailySleepDTO", {})
-    if not dto:
-        return {}
-    scores = dto.get("sleepScores", {}).get("overall", {})
-    total_sec = dto.get("sleepTimeSeconds", 0)
-
-    result = clean_nones({
-        "sleep_score": scores.get("value"),
-        "sleep_score_qualifier": scores.get("qualifierKey"),
-        "total_sleep_hours": round(total_sec / 3600, 1) if total_sec else None,
-        "deep_sleep_hours": round(dto.get("deepSleepSeconds", 0) / 3600, 1) if dto.get("deepSleepSeconds") else None,
-        "light_sleep_hours": round(dto.get("lightSleepSeconds", 0) / 3600, 1) if dto.get("lightSleepSeconds") else None,
-        "rem_sleep_hours": round(dto.get("remSleepSeconds", 0) / 3600, 1) if dto.get("remSleepSeconds") else None,
-        "awake_hours": round(dto.get("awakeSleepSeconds", 0) / 3600, 1) if dto.get("awakeSleepSeconds") else None,
-        "resting_heart_rate_bpm": dto.get("restingHeartRate"),
-        "avg_sleep_stress": dto.get("avgSleepStress"),
-    })
-
-    # SpO2 during sleep
-    spo2 = sleep_data.get("wellnessSpO2SleepSummaryDTO", {})
-    if spo2:
-        result["avg_spo2"] = spo2.get("averageSpo2")
-        result["lowest_spo2"] = spo2.get("lowestSpo2")
-
-    # HRV
-    if sleep_data.get("avgOvernightHrv"):
-        result["avg_overnight_hrv"] = sleep_data["avgOvernightHrv"]
-
-    return clean_nones(result)
-
-
-def _curate_readiness(readiness_data) -> dict | None:
-    """Extract essential fields from training readiness (for snapshot)."""
-    if not readiness_data:
-        return None
-    entries = readiness_data if isinstance(readiness_data, list) else [readiness_data]
-    if not entries:
-        return None
-    # Use the first (usually most relevant) entry
-    return _curate_readiness_entry(entries[0])
-
-
-def _curate_readiness_entry(r: dict) -> dict:
-    """Curate a single training readiness entry."""
-    return clean_nones({
-        "date": r.get("calendarDate"),
-        "level": r.get("level"),
-        "score": r.get("score"),
-        "feedback": r.get("feedbackShort"),
-        "sleep_score": r.get("sleepScore"),
-        "sleep_factor_percent": r.get("sleepScoreFactorPercent"),
-        "recovery_time_hours": round(r.get("recoveryTime", 0) / 60, 1) if r.get("recoveryTime") else None,
-        "recovery_factor_percent": r.get("recoveryTimeFactorPercent"),
-        "training_load_factor_percent": r.get("acwrFactorPercent"),
-        "acute_load": r.get("acuteLoad"),
-        "hrv_factor_percent": r.get("hrvFactorPercent"),
-        "hrv_weekly_avg": r.get("hrvWeeklyAverage"),
-    })
-
-
-def _curate_body_battery_summary(battery_data) -> dict | None:
-    """Extract summary from body battery (for snapshot)."""
-    if not battery_data:
-        return None
-    # battery_data is usually a list of days
-    if isinstance(battery_data, list) and battery_data:
-        day = battery_data[0]
-        return clean_nones({
-            "date": day.get("date"),
-            "charged": day.get("charged"),
-            "drained": day.get("drained"),
-        })
-    return None
-
-
-def _curate_hrv(hrv_data: dict) -> dict | None:
-    """Extract essential fields from HRV data (for snapshot)."""
-    if not hrv_data:
-        return None
-    summary = hrv_data.get("hrvSummary") or hrv_data
-    baseline = summary.get("baseline") or {}
-    return clean_nones({
-        "last_night_avg_hrv_ms": summary.get("lastNightAvg"),
-        "weekly_avg_hrv_ms": summary.get("weeklyAvg"),
-        "baseline_low_ms": baseline.get("balancedLow"),
-        "baseline_upper_ms": baseline.get("balancedUpper"),
-        "status": summary.get("status"),
-    })
+def _snapshot_hrv(raw: dict) -> dict:
+    return {k: v for k, v in HRV_FIELDS.curate(raw).items() if k != "date"}
 
 
 # (section, client method called with the date, curation, device feature or None) — in output order.
 _SNAPSHOT_SECTIONS = (
-    ("stats", "get_user_summary", _curate_stats, None),
-    ("sleep", "get_sleep_data", _curate_sleep, None),
-    ("training_readiness", "get_training_readiness", _curate_readiness, capabilities.TRAINING_READINESS),
-    ("body_battery", "get_body_battery", _curate_body_battery_summary, None),
-    ("hrv", "get_hrv_data", _curate_hrv, None),
+    ("stats", "get_user_summary", _snapshot_stats, None),
+    ("sleep", "get_sleep_data", _snapshot_sleep, None),
+    ("training_readiness", "get_training_readiness", _snapshot_readiness, capabilities.TRAINING_READINESS),
+    ("hrv", "get_hrv_data", _snapshot_hrv, None),
 )

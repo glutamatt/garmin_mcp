@@ -22,6 +22,16 @@ def _today():
 
 from garmin_mcp.api.activity_fields import DETAIL_FIELDS, LAP_FIELDS, LIST_EFFORT_FIELDS, LIST_FIELDS
 from garmin_mcp.api.calendar_fields import CALENDAR_ITEMS, EVENT_ITEMS
+from garmin_mcp.api.health_fields import (
+    HEART_RATE_FIELDS,
+    HRV_FIELDS,
+    READINESS_FIELDS,
+    RESPIRATION_FIELDS,
+    SLEEP_FIELDS,
+    SPO2_FIELDS,
+    STATS_FIELDS,
+    STRESS_FIELDS,
+)
 from garmin_mcp.api.capabilities import missing_reason
 from garmin_mcp.api.contract import GarminError, InvalidInput, as_garmin_error, is_unavailable
 from garmin_mcp.api.fields import FieldSet
@@ -769,7 +779,7 @@ def history_query(ctx, kind, since, until, exclusive, entity_types,
 @garmin.group()
 @click.pass_context
 def health(ctx):
-    """Daily health: sleep, stress, HR, body battery, SpO2, readiness."""
+    """Daily health: sleep, stress, HR, body battery, SpO2, readiness. Many days: `history daily`."""
     pass
 
 
@@ -777,7 +787,12 @@ def health(ctx):
 @click.argument("date", default=None)
 @click.pass_context
 def health_snapshot(ctx, date):
-    """Daily coaching overview: stats + sleep + readiness + body battery + HRV."""
+    """Daily overview, each section in short: stats, sleep, training readiness, HRV.
+
+    \b
+    The full section: `health stats`, `health sleep`, `health training-readiness`,
+    `training hrv`. A section Garmin has not: {"available": false, "reason": ...}.
+    """
     from garmin_mcp.api import health as api
 
     _run(ctx, lambda: api.get_coaching_snapshot(_client(ctx), date or _today()))
@@ -796,47 +811,48 @@ def health_stats(ctx, date):
     """
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_stats(_client(ctx), date or _today()))
+    _run(ctx, lambda: api.get_stats(_client(ctx), date or _today()), field_set=STATS_FIELDS)
 
 
 @health.command("sleep")
 @click.argument("date", default=None)
 @click.pass_context
 def health_sleep(ctx, date):
-    """Sleep summary: score, phases, SpO2, respiration, HRV."""
+    """The night that ends on DATE: score and its factors, bedtime, phases, sleep need,
+    resting HR, SpO2, respiration, HRV. Durations in seconds."""
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_sleep(_client(ctx), date or _today()))
+    _run(ctx, lambda: api.get_sleep(_client(ctx), date or _today()), field_set=SLEEP_FIELDS)
 
 
 @health.command("stress")
 @click.argument("date", default=None)
 @click.pass_context
 def health_stress(ctx, date):
-    """Stress summary: avg/max levels, distribution."""
+    """Stress of the day: mean, max, share of the measured time at rest / low / medium / high."""
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_stress(_client(ctx), date or _today()))
+    _run(ctx, lambda: api.get_stress(_client(ctx), date or _today()), field_set=STRESS_FIELDS)
 
 
 @health.command("heart-rate")
 @click.argument("date", default=None)
 @click.pass_context
 def health_heart_rate(ctx, date):
-    """HR summary: resting, min, max, avg, 7-day trend."""
+    """Heart rate of the day: resting (and its 7-day mean), min, max, mean."""
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_heart_rate(_client(ctx), date or _today()))
+    _run(ctx, lambda: api.get_heart_rate(_client(ctx), date or _today()), field_set=HEART_RATE_FIELDS)
 
 
 @health.command("respiration")
 @click.argument("date", default=None)
 @click.pass_context
 def health_respiration(ctx, date):
-    """Respiration: avg/min/max breaths per minute."""
+    """Respiration of the day, breaths per minute: awake, asleep, min, max."""
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_respiration(_client(ctx), date or _today()))
+    _run(ctx, lambda: api.get_respiration(_client(ctx), date or _today()), field_set=RESPIRATION_FIELDS)
 
 
 @health.command("body-battery")
@@ -844,7 +860,8 @@ def health_respiration(ctx, date):
 @click.option("--to", "end_date", required=True, help="End date YYYY-MM-DD")
 @click.pass_context
 def health_body_battery(ctx, start_date, end_date):
-    """Body battery: charge/drain per day with activity events."""
+    """Body battery per day: low, high, charged, drained, Garmin's level, and the
+    events (sleep, activity, stress, recovery) with their impact. Times are local."""
     from garmin_mcp.api import health as api
 
     _run(ctx, lambda: api.get_body_battery(_client(ctx), start_date, end_date))
@@ -854,20 +871,20 @@ def health_body_battery(ctx, start_date, end_date):
 @click.argument("date", default=None)
 @click.pass_context
 def health_spo2(ctx, date):
-    """SpO2: avg, lowest, latest, sleep avg."""
+    """SpO2 of the day: mean, lowest, last reading, during the sleep, 7-day mean."""
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_spo2(_client(ctx), date or _today()))
+    _run(ctx, lambda: api.get_spo2(_client(ctx), date or _today()), field_set=SPO2_FIELDS)
 
 
 @health.command("training-readiness")
 @click.argument("date", default=None)
 @click.pass_context
 def health_training_readiness(ctx, date):
-    """Training readiness: score, contributing factors."""
+    """Training readiness of the morning and its factors; latest_score = the day's last update."""
     from garmin_mcp.api import health as api
 
-    _run(ctx, lambda: api.get_training_readiness(_client(ctx), date or _today()))
+    _run(ctx, lambda: api.get_training_readiness(_client(ctx), date or _today()), field_set=READINESS_FIELDS)
 
 
 # ── Training ─────────────────────────────────────────────────────────────────
@@ -876,7 +893,7 @@ def health_training_readiness(ctx, date):
 @garmin.group()
 @click.pass_context
 def training(ctx):
-    """Performance metrics: VO2max, HRV, training status, race predictions."""
+    """Performance metrics: VO2max, HRV, training status, race predictions, thresholds, records."""
     pass
 
 
@@ -884,7 +901,7 @@ def training(ctx):
 @click.argument("date", default=None)
 @click.pass_context
 def training_max_metrics(ctx, date):
-    """VO2max, fitness age, lactate threshold."""
+    """VO2max (running, cycling), fitness age, heat and altitude acclimation."""
     from garmin_mcp.api import training as api
 
     _run(ctx, lambda: api.get_max_metrics(_client(ctx), date or _today()))
@@ -894,10 +911,10 @@ def training_max_metrics(ctx, date):
 @click.argument("date", default=None)
 @click.pass_context
 def training_hrv(ctx, date):
-    """HRV overnight: last night avg, weekly avg, baseline, status."""
+    """HRV overnight: last night, 7-night mean, the athlete's balanced band, status and why (hrv_feedback)."""
     from garmin_mcp.api import training as api
 
-    _run(ctx, lambda: api.get_hrv_data(_client(ctx), date or _today()))
+    _run(ctx, lambda: api.get_hrv_data(_client(ctx), date or _today()), field_set=HRV_FIELDS)
 
 
 @training.command("status")
@@ -921,7 +938,7 @@ def training_status(ctx, date):
 )
 @click.pass_context
 def training_progress(ctx, start_date, end_date, metric):
-    """Progress summary for a metric between dates."""
+    """Total and mean of a metric per sport between two dates (m, s)."""
     from garmin_mcp.api import training as api
 
     _run(ctx, lambda: api.get_progress_summary(
@@ -932,7 +949,7 @@ def training_progress(ctx, start_date, end_date, metric):
 @training.command("race-predictions")
 @click.pass_context
 def training_race_predictions(ctx):
-    """Race time predictions (5K, 10K, half, marathon)."""
+    """Garmin's race time predictions, in seconds: race_5k_s, race_10k_s, race_half_marathon_s, race_marathon_s."""
     from garmin_mcp.api import training as api
 
     _run(ctx, lambda: api.get_race_predictions(_client(ctx)))
@@ -956,10 +973,42 @@ def training_goals(ctx, goal_type):
 @training.command("personal-records")
 @click.pass_context
 def training_personal_records(ctx):
-    """Personal records across all activities."""
+    """Personal records: record (run_5k, ride_longest…), value_s | value_m | value_watts,
+    date, activity_id."""
     from garmin_mcp.api import training as api
 
-    _run(ctx, lambda: api.get_personal_record(_client(ctx)))
+    _run(ctx, lambda: api.get_personal_records(_client(ctx)))
+
+
+@training.command("lactate-threshold")
+@click.pass_context
+def training_lactate_threshold(ctx):
+    """Latest running lactate threshold heart rate, and running FTP (watts, W/kg)."""
+    from garmin_mcp.api import training as api
+
+    _run(ctx, lambda: api.get_lactate_threshold(_client(ctx)))
+
+
+@training.command("endurance-score")
+@click.argument("date", default=None)
+@click.option("--weeks", default=12, type=click.IntRange(1, 52), help="Weeks of weekly means (default 12)")
+@click.pass_context
+def training_endurance_score(ctx, date, weeks):
+    """Endurance score on DATE (default today), its class (recreational … elite) and its weekly mean."""
+    from garmin_mcp.api import training as api
+
+    _run(ctx, lambda: api.get_endurance_score(_client(ctx), date or _today(), weeks))
+
+
+@training.command("hill-score")
+@click.option("--from", "start_date", required=True, help="Start date YYYY-MM-DD")
+@click.option("--to", "end_date", required=True, help="End date YYYY-MM-DD")
+@click.pass_context
+def training_hill_score(ctx, start_date, end_date):
+    """Hill score per day: overall, strength, endurance."""
+    from garmin_mcp.api import training as api
+
+    _run(ctx, lambda: api.get_hill_score(_client(ctx), start_date, end_date))
 
 
 # ── History (long-term time-series) ──────────────────────────────────────────
@@ -1221,12 +1270,12 @@ def history_daily(ctx, days, end):
 
     \b
     One row per day (a day without data is left out). Columns:
-      date, steps, step_goal, distance_m, floors_ascended, floors_descended,
-      moderate_intensity_minutes, vigorous_intensity_minutes,
-      avg_stress (0-100), rest_stress_s, low_stress_s, medium_stress_s,
-      high_stress_s, body_battery_low, body_battery_high (most days: the
-      level at wake), body_battery_charged, body_battery_drained,
-      resting_hr_bpm, synced_until
+      date, synced_until, steps, step_goal, distance_m, floors_ascended,
+      floors_descended, moderate_intensity_minutes, vigorous_intensity_minutes,
+      resting_hr_bpm, avg_stress (0-100), rest_stress_s, low_stress_s,
+      medium_stress_s, high_stress_s, body_battery_low, body_battery_high
+      (most days: the level at wake), body_battery_charged, body_battery_drained
+    Same names as `health stats`.
     synced_until: set on a partial day only (the watch has not sent the rest
     of the day yet): its data ends at this local time. The echo names it.
 
@@ -1473,7 +1522,8 @@ def profile_name(ctx):
 @profile.command("info")
 @click.pass_context
 def profile_info(ctx):
-    """User profile: settings (weight, height, VO2max, lactate threshold), unit system."""
+    """Who the athlete is: name, location, birth date, weight, height, VO2max, usual
+    bedtime and wake time, training days and long-run days. Zones: `profile hr-zones`."""
     from garmin_mcp.api import profile as api
 
     _run(ctx, lambda: api.get_user_profile(_client(ctx)))
@@ -1482,7 +1532,8 @@ def profile_info(ctx):
 @profile.command("hr-zones")
 @click.pass_context
 def profile_hr_zones(ctx):
-    """HR and power zone boundaries (from latest activity)."""
+    """Heart-rate and power zones per sport, as set in Garmin Connect:
+    zones_bpm / zones_watts = [low, high] of zone 1, 2…, max and resting HR used."""
     from garmin_mcp.api import profile as api
 
     _run(ctx, lambda: api.get_hr_zones(_client(ctx)))
@@ -1563,39 +1614,10 @@ def body(ctx):
 @click.option("--to", "end_date", required=True, help="End date YYYY-MM-DD")
 @click.pass_context
 def body_weigh_ins(ctx, start_date, end_date):
-    """Get weight measurements between dates."""
-    from garmin_mcp.utils import clean_nones
+    """Weight measurements between dates: weight_kg, body composition when measured."""
+    from garmin_mcp.api import body as api
 
-    def _fetch():
-        raw = _client(ctx).get_weigh_ins(start_date, end_date)
-        entries = []
-        if isinstance(raw, dict):
-            for day in raw.get("dailyWeightSummaries", []):
-                entries.extend(day.get("allWeightMetrics", []))
-            if not entries and "weight" in raw:
-                entries = [raw]
-        elif isinstance(raw, list):
-            entries = raw
-
-        return {
-            "count": len(entries),
-            "date_range": {"start": start_date, "end": end_date},
-            "measurements": [
-                clean_nones({
-                    "date": w.get("date") or w.get("calendarDate"),
-                    "weight_grams": w.get("weight"),
-                    "bmi": w.get("bmi"),
-                    "body_fat_percent": w.get("bodyFat"),
-                    "body_water_percent": w.get("bodyWater"),
-                    "bone_mass_grams": w.get("boneMass"),
-                    "muscle_mass_grams": w.get("muscleMass"),
-                    "source_type": w.get("sourceType"),
-                })
-                for w in entries
-            ],
-        }
-
-    _run(ctx, _fetch)
+    _run(ctx, lambda: api.get_weigh_ins(_client(ctx), start_date, end_date))
 
 
 @body.command("add-weight", cls=MutationCommand)
@@ -1605,24 +1627,12 @@ def body_weigh_ins(ctx, start_date, end_date):
 @click.option("--gmt-timestamp", default=None, help="GMT timestamp YYYY-MM-DDThh:mm:ss")
 @click.pass_context
 def body_add_weight(ctx, weight, unit, date_timestamp, gmt_timestamp):
-    """Add a weight measurement."""
-    def _do():
-        client = _client(ctx)
-        if date_timestamp and gmt_timestamp:
-            client.add_weigh_in_with_timestamps(
-                weight=weight,
-                unitKey=unit,
-                dateTimestamp=date_timestamp,
-                gmtTimestamp=gmt_timestamp,
-            )
-        else:
-            client.add_weigh_in(weight=weight, unitKey=unit)
-        result = {"status": "success", "weight": weight, "unit": unit}
-        if date_timestamp:
-            result["timestamp_local"] = date_timestamp
-        return result
+    """Add a weight measurement (now, or at the given local and GMT times)."""
+    from garmin_mcp.api import body as api
+
     preview = {"action": "add_weight", "weight": weight, "unit": unit}
-    _run(ctx, _do, dry_run_preview=preview)
+    _run(ctx, lambda: api.add_weight(_client(ctx), weight, unit, date_timestamp, gmt_timestamp),
+         dry_run_preview=preview)
 
 
 @body.command("delete-weight", cls=MutationCommand)
@@ -1631,11 +1641,10 @@ def body_add_weight(ctx, weight, unit, date_timestamp, gmt_timestamp):
 @click.pass_context
 def body_delete_weight(ctx, date, delete_all):
     """Delete weight measurements for a date."""
-    def _do():
-        _client(ctx).delete_weigh_ins(date, delete_all=delete_all)
-        return {"status": "success", "date": date}
+    from garmin_mcp.api import body as api
+
     preview = {"action": "delete_weight", "date": date, "delete_all": delete_all}
-    _run(ctx, _do, dry_run_preview=preview)
+    _run(ctx, lambda: api.delete_weight(_client(ctx), date, delete_all), dry_run_preview=preview)
 
 
 # ── Calendar ─────────────────────────────────────────────────────────────────

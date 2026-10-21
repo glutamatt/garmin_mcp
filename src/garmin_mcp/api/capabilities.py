@@ -33,17 +33,24 @@ logger = logging.getLogger(__name__)
 
 # Features whose missing data can come from the device: feature → flag of
 # `deviceBasedIndicators`. Each flag is checked against a real answer: on a
-# Forerunner 165 the three flags are false, and Garmin has no readiness, no
-# training status and no activity training load.
+# Forerunner 165 they are all false, and Garmin has no readiness, no training
+# status, no activity training load, no threshold heart rate, no endurance score
+# and no hill score.
 TRAINING_READINESS = "training_readiness"
 TRAINING_STATUS = "training_status"
 TRAINING_LOAD = "training_load"
+LACTATE_THRESHOLD = "lactate_threshold"
+ENDURANCE_SCORE = "endurance_score"
+HILL_SCORE = "hill_score"
 
 FEATURE_FLAGS = {
     TRAINING_READINESS: "hasTrainingReadinessCapableDevice",
     TRAINING_STATUS: "hasTrainingStatusCapableDevice",
     # No flag for the per-activity load (EPOC): the acute load is the sum of these loads.
     TRAINING_LOAD: "hasAcuteTrainingLoadCapableDevice",
+    LACTATE_THRESHOLD: "hasRunningLactateThresholdCapableDevice",
+    ENDURANCE_SCORE: "hasHillScoreAndEnduranceScoreCapableDevice",
+    HILL_SCORE: "hasHillScoreAndEnduranceScoreCapableDevice",
 }
 
 

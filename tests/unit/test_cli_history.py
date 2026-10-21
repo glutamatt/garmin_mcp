@@ -309,8 +309,8 @@ class TestHistoryRacePredictions:
         )
         path = tmp_path / "history_race_predictions.csv"
         fields, rows = _read_csv(str(path))
-        assert "race_5k_seconds" in fields
-        assert "race_10k_seconds" in fields
+        assert "race_5k_s" in fields
+        assert "race_10k_s" in fields
         assert len(rows) == 1
 
 
@@ -402,8 +402,8 @@ class TestHistoryDaily:
         assert "partial" not in result.output
 
         fields, rows = _read_csv(str(tmp_path / "history_daily.csv"))
-        assert fields[:3] == ["date", "steps", "step_goal"]
-        assert fields[-1] == "synced_until"
+        assert fields[:4] == ["date", "synced_until", "steps", "step_goal"]
+        assert fields[-1] == "body_battery_drained"
         assert [r["date"] for r in rows] == ["2026-04-14", "2026-04-15"]  # 04-13: no data, left out
         row = rows[1]
         assert row["steps"] == "9000" and row["distance_m"] == "7000"

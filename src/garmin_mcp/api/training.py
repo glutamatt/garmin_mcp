@@ -8,63 +8,83 @@ failures are exceptions (see `api/contract.py`).
 """
 
 import re
+from datetime import date as _date, timedelta as _timedelta
 
 from garminconnect import Garmin
 from garmin_mcp.api import capabilities
-from garmin_mcp.api.contract import NO_DATA, day_answer, unavailable
+from garmin_mcp.api.contract import NO_DATA, NOT_SUPPORTED_BY_DEVICE, day_answer, unavailable
+from garmin_mcp.api.health_fields import HRV_FIELDS
+from garmin_mcp.api.training_fields import (
+    ENDURANCE_FIELDS,
+    HILL_FIELDS,
+    LACTATE_THRESHOLD_FIELDS,
+    MAX_METRICS_FIELDS,
+    RACE_PREDICTION_FIELDS,
+    personal_record,
+)
 from garmin_mcp.utils import clean_nones
 
 
 def get_max_metrics(client: Garmin, date: str) -> dict:
-    """Enriched max metrics: VO2 max + fitness age + lactate threshold."""
+    """VO2max (running, cycling), fitness age, heat and altitude acclimation.
+
+    Two calls: `maxmet` (VO2max, acclimation) and `fitnessage` (Garmin's
+    `maxmet` has a `fitnessAge` key, always null).
+    """
     raw = client.get_max_metrics(date)
-    if not raw:
-        return day_answer(date, None)
-
-    metrics_list = raw if isinstance(raw, list) else [raw]
-    results = []
-    for m in metrics_list:
-        results.append(clean_nones({
-            "date": date,
-            "metric_type": m.get("metricType") or m.get("sport"),
-            # VO2 Max
-            "vo2_max": m.get("vo2MaxValue") or (m.get("generic") or {}).get("vo2MaxValue"),
-            "vo2_max_precision": m.get("vo2MaxPrecisionIndex"),
-            # Fitness age
-            "fitness_age_years": m.get("fitnessAge"),
-            "chronological_age_years": m.get("chronologicalAge"),
-            "fitness_age_description": m.get("fitnessAgeDescription"),
-            # Lactate threshold
-            "lactate_threshold_hr_bpm": m.get("lactateThresholdHeartRate"),
-            "lactate_threshold_speed_mps": m.get("lactateThresholdSpeed"),
-            "lactate_threshold_pace_sec_per_km": m.get("lactateThresholdPace"),
-            # Other
-            "max_heart_rate_bpm": m.get("maxHeartRate"),
-            "ftp_watts": m.get("functionalThresholdPower"),
-        }))
-
-    return day_answer(date, results[0]) if len(results) == 1 else {"metrics": results}
+    entry = (raw[0] if isinstance(raw, list) and raw else raw) or {}
+    fitness_age = client.get_fitnessage_data(date)
+    curated = MAX_METRICS_FIELDS.curate({**entry, "fitness_age": fitness_age or {}})
+    return day_answer(date, {"date": date, **curated} if curated else None)
 
 
 def get_hrv_data(client: Garmin, date: str) -> dict:
-    """HRV overnight summary: last night avg, weekly avg, baseline, status."""
+    """HRV overnight: last night, 7-night mean, the athlete's balanced band, status and why."""
     raw = client.get_hrv_data(date)
-    if not raw:
-        return day_answer(date, None)
+    curated = HRV_FIELDS.curate(raw) if raw else None
+    return day_answer(date, {"date": date, **curated} if curated else None)
 
-    summary = raw.get("hrvSummary") or raw
-    baseline = summary.get("baseline") or {}
 
-    return day_answer(date, clean_nones({
-        "date": summary.get("calendarDate") or date,
-        "last_night_avg_hrv_ms": summary.get("lastNightAvg"),
-        "last_night_5min_high_hrv_ms": summary.get("lastNight5MinHigh"),
-        "weekly_avg_hrv_ms": summary.get("weeklyAvg"),
-        "baseline_balanced_low_ms": baseline.get("balancedLow"),
-        "baseline_balanced_upper_ms": baseline.get("balancedUpper"),
-        "status": summary.get("status"),
-        "feedback": summary.get("feedbackPhrase"),
-    }))
+def get_lactate_threshold(client: Garmin) -> dict:
+    """The latest running lactate threshold (heart rate) and running FTP.
+
+    A part the device does not compute is named in `empty_fields` with the reason.
+    """
+    curated = LACTATE_THRESHOLD_FIELDS.curate(client.get_lactate_threshold(latest=True) or {})
+    if "lactate_threshold_hr_bpm" in curated:
+        return curated
+    reason = capabilities.missing_reason(client, capabilities.LACTATE_THRESHOLD)
+    if not curated:
+        return unavailable(reason)
+    return {**curated, "empty_fields": {"lactate_threshold_hr_bpm": reason}}
+
+
+def get_endurance_score(client: Garmin, date: str, weeks: int) -> dict:
+    """The endurance score on `date`, its class, and the weekly mean over `weeks` weeks."""
+    start = (_date.fromisoformat(date) - _timedelta(weeks=weeks)).isoformat()
+    raw = client.get_endurance_score(start, date) or {}
+    dto = raw.get("enduranceScoreDTO") or {}
+    curated = ENDURANCE_FIELDS.curate(dto)
+    weekly = [
+        {"week": week, "avg": group.get("groupAverage"), "max": group.get("groupMax")}
+        for week, group in sorted((raw.get("groupMap") or {}).items())
+        if group.get("groupAverage") is not None
+    ]
+    if not curated and not weekly:
+        return capabilities.day_answer(client, capabilities.ENDURANCE_SCORE, date, None)
+    return {"date": dto.get("calendarDate") or date, **curated, "weekly": weekly}
+
+
+def get_hill_score(client: Garmin, start_date: str, end_date: str) -> dict:
+    """Hill score per day (overall, strength, endurance)."""
+    raw = client.get_hill_score(start_date, end_date) or {}
+    days = [HILL_FIELDS.curate(d) for d in raw.get("hillScoreDTOList") or []]
+    days = [d for d in days if d.get("hill_score") is not None]
+    if not days:
+        reason = capabilities.missing_reason(client, capabilities.HILL_SCORE)
+        if reason == NOT_SUPPORTED_BY_DEVICE:
+            return unavailable(reason, **{"from": start_date, "to": end_date})
+    return {"from": start_date, "to": end_date, "count": len(days), "days": days}
 
 
 def get_training_status(client: Garmin, date: str) -> dict:
@@ -168,76 +188,59 @@ def _monthly_load(balance: dict) -> dict:
     return loads
 
 
+# `training progress` metrics: output name and divisor from Garmin's internal unit to SI.
+_PROGRESS_UNITS = {
+    "distance": ("distance_m", 100),          # cm
+    "duration": ("duration_s", 1000),         # ms
+    "movingDuration": ("moving_duration_s", 1000),
+    "elevationGain": ("elevation_gain_m", 100),
+}
+
+
 def get_progress_summary(
     client: Garmin, start_date: str, end_date: str, metric: str
 ) -> dict:
-    """Progress summary for a metric between dates.
+    """Total and mean of a metric per sport between two dates.
 
     SDK returns: [{date, countOfActivities, stats: {running: {<metric>: {count, min, max, avg, sum}}, ...}}]
-    We flatten per-sport stats into a clean list.
+    in Garmin's internal units (cm, ms): converted here.
     """
     raw = client.get_progress_summary_between_dates(start_date, end_date, metric) or []
-    entries = raw if isinstance(raw, list) else [raw]
+    name, divisor = _PROGRESS_UNITS[metric]
 
-    # Aggregate across all periods, grouped by sport
-    sport_totals = {}
-    total_activities = 0
-    for entry in entries:
-        total_activities += entry.get("countOfActivities", 0)
-        stats = entry.get("stats", {})
-        for sport, metrics in stats.items():
-            metric_data = metrics.get(metric, {})
-            if sport not in sport_totals:
-                sport_totals[sport] = {"count": 0, "sum": 0.0}
-            sport_totals[sport]["count"] += metric_data.get("count", 0)
-            sport_totals[sport]["sum"] += metric_data.get("sum", 0.0)
-            sport_totals[sport]["avg"] = metric_data.get("avg")
-            sport_totals[sport]["min"] = metric_data.get("min")
-            sport_totals[sport]["max"] = metric_data.get("max")
+    totals: dict[str, dict] = {}
+    for entry in raw if isinstance(raw, list) else [raw]:
+        for sport, metrics in (entry.get("stats") or {}).items():
+            data = metrics.get(metric) or {}
+            total = totals.setdefault(sport, {"count": 0, "sum": 0.0})
+            total["count"] += data.get("count") or 0
+            total["sum"] += data.get("sum") or 0.0
 
-    # Build curated per-sport entries
-    curated_entries = []
-    for sport, data in sport_totals.items():
-        entry = clean_nones({
-            "activity_type": sport,
-            "activity_count": data["count"],
-        })
-        total = data["sum"]
-        avg = data.get("avg")
-        if metric == "distance":
-            # Garmin returns distance in cm, convert to meters
-            entry["total_distance_meters"] = round(total / 100, 1) if total else None
-            entry["avg_distance_meters"] = round(avg / 100, 1) if avg else None
-        elif metric == "duration":
-            entry["total_duration_seconds"] = round(total / 1000) if total else None
-            entry["avg_duration_seconds"] = round(avg / 1000) if avg else None
-        elif metric == "elevationGain":
-            entry["total_elevation_meters"] = round(total / 100, 1) if total else None
-            entry["avg_elevation_meters"] = round(avg / 100, 1) if avg else None
-        elif metric == "movingDuration":
-            entry["total_moving_seconds"] = round(total / 1000) if total else None
-            entry["avg_moving_seconds"] = round(avg / 1000) if avg else None
-        curated_entries.append(clean_nones(entry))
-
-    return clean_nones({
-        "metric": metric,
-        "start_date": start_date,
-        "end_date": end_date,
-        "total_activities": total_activities,
-        "entries": curated_entries,
-    })
+    sports = [
+        clean_nones({"sport": sport, "activity_count": t["count"], f"total_{name}": round(t["sum"] / divisor),
+                     f"avg_{name}": round(t["sum"] / divisor / t["count"]) if t["count"] else None})
+        for sport, t in sorted(totals.items(), key=lambda item: -item[1]["sum"])
+    ]
+    return {
+        "metric": metric, "from": start_date, "to": end_date,
+        "activity_count": sum(s["activity_count"] for s in sports),
+        "count": len(sports), "sports": sports,
+    }
 
 
 def get_race_predictions(client: Garmin) -> dict:
-    """Race time predictions (5K, 10K, half, marathon)."""
-    return client.get_race_predictions() or unavailable(NO_DATA)
+    """Garmin's latest race time predictions (5K, 10K, half, marathon), in seconds."""
+    curated = RACE_PREDICTION_FIELDS.curate(client.get_race_predictions() or {})
+    return curated if curated else unavailable(NO_DATA)
 
 
 def get_goals(client: Garmin, goal_type: str = "active") -> dict:
-    """Garmin Connect goals (active, future, or past)."""
-    return client.get_goals(goal_type) or []
+    """Garmin Connect goals (active, future, or past), as Garmin gives them."""
+    goals = client.get_goals(goal_type) or []
+    return {"count": len(goals), "goals": goals}
 
 
-def get_personal_record(client: Garmin) -> dict:
-    """Personal records across all activities."""
-    return client.get_personal_record() or []
+def get_personal_records(client: Garmin) -> dict:
+    """Personal records: `{record, value_s | value_m | …, date, activity_id}` each."""
+    records = [personal_record(r) for r in client.get_personal_record() or []]
+    return {"count": len(records), "records": records}

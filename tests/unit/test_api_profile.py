@@ -28,116 +28,56 @@ class TestGetFullName:
 
 
 class TestGetUserProfile:
-    def test_enriches_with_settings(self, client):
+    def test_settings_social_profile_and_habits(self, client):
         client.get_user_profile.return_value = {
-            "id": 138658236,
-            "displayName": "Jean Dupont",
-            "location": "Paris, France",
+            "id": 1,
             "userData": {
-                "weight": 75000,
-                "height": 180.0,
-                "birthDate": "1990-01-01",
-                "gender": "MALE",
+                "gender": "MALE", "weight": 68700.0, "height": 171.0, "birthDate": "1984-01-02",
+                "measurementSystem": "metric", "vo2MaxRunning": 50.0, "lactateThresholdHeartRate": None,
+                "availableTrainingDays": ["WEDNESDAY", "TUESDAY", "SUNDAY"],
+                "preferredLongTrainingDays": ["SUNDAY", "SATURDAY"],
             },
+            "userSleep": {"sleepTime": 79200, "wakeTime": 25200},
         }
-        client.get_unit_system.return_value = "metric"
-        # Zone fallback from activity
-        client.get_activities.return_value = [{"activityId": 1}]
-        client.get_activity_hr_in_timezones.return_value = [
-            {"zoneNumber": 1, "zoneLowBoundary": 100},
-        ]
-        client.get_activity_power_in_timezones.side_effect = Exception("no power")
-
-        result = api.get_user_profile(client)
-
-        assert result["user_profile_id"] == 138658236
-        assert result["display_name"] == "Jean Dupont"
-        assert result["settings"]["weight_kg"] == 75.0
-        assert result["settings"]["height_cm"] == 180.0
-        assert result["unit_system"] == "metric"
-        # HR zones enriched from activity
-        assert len(result["hr_zones"]) == 1
-        assert result["hr_zones"][0]["low_bpm"] == 100
+        client.connectapi.return_value = {"fullName": "Jane Runner", "location": "Somewhere", "displayName": "x-uuid"}
+        assert api.get_user_profile(client) == {
+            "name": "Jane Runner", "location": "Somewhere", "birth_date": "1984-01-02", "gender": "MALE",
+            "weight_kg": 68.7, "height_cm": 171.0, "vo2_max_running": 50.0,
+            "usual_bedtime": "22:00", "usual_wake_time": "07:00",
+            "training_days": ["tuesday", "wednesday", "sunday"], "long_run_days": ["saturday", "sunday"],
+            "measurement_system": "metric",
+        }
+        client.connectapi.assert_called_once_with("/userprofile-service/socialProfile")
 
     def test_no_profile_fails(self, client):
-        """Every athlete has a profile: an empty answer is Garmin failing, not "no data"."""
         client.get_user_profile.return_value = None
-        with pytest.raises(Unavailable, match="no user profile"):
+        with pytest.raises(Unavailable):
             api.get_user_profile(client)
-
-    def test_no_userdata_doesnt_crash(self, client):
-        client.get_user_profile.return_value = {"displayName": "Test"}
-        client.get_unit_system.side_effect = Exception("fail")
-        client.get_activities.return_value = []
-
-        result = api.get_user_profile(client)
-        assert result["display_name"] == "Test"
-        assert "settings" not in result
-
-    def test_hr_zones_from_user_data(self, client):
-        """When HR zones are in user-settings, don't fetch from activity."""
-        client.get_user_profile.return_value = {
-            "displayName": "Test",
-            "userData": {
-                "heartRateZones": [
-                    {"zoneNumber": 1, "startBPM": 100, "endBPM": 120},
-                    {"zoneNumber": 2, "startBPM": 120, "endBPM": 140},
-                ]
-            },
-        }
-        client.get_unit_system.return_value = None
-
-        result = api.get_user_profile(client)
-        assert len(result["hr_zones"]) == 2
-        assert result["hr_zones"][0]["low_bpm"] == 100
-        # Should NOT have called get_activities (fallback not needed)
-        client.get_activities.assert_not_called()
 
 
 class TestGetHrZones:
-    def test_returns_hr_zones_from_latest_activity(self, client):
-        client.get_activities.return_value = [{"activityId": 12345}]
-        client.get_activity_hr_in_timezones.return_value = [
-            {"zoneNumber": 1, "secsInZone": 600, "zoneLowBoundary": 100},
-            {"zoneNumber": 2, "secsInZone": 900, "zoneLowBoundary": 130},
-            {"zoneNumber": 3, "secsInZone": 300, "zoneLowBoundary": 150},
-            {"zoneNumber": 4, "secsInZone": 120, "zoneLowBoundary": 165},
-            {"zoneNumber": 5, "secsInZone": 60, "zoneLowBoundary": 180},
-        ]
-        client.get_activity_power_in_timezones.side_effect = Exception("no power")
+    @staticmethod
+    def _answers(hr, power):
+        return lambda path: hr if path == "/biometric-service/heartRateZones" else power
 
-        result = api.get_hr_zones(client)
-
-        assert len(result["hr_zones"]) == 5
-        assert result["hr_zones"][0] == {"zone": 1, "low_bpm": 100}
-        assert result["hr_zones"][4] == {"zone": 5, "low_bpm": 180}
-        assert "power_zones" not in result
-
-    def test_returns_power_zones_too(self, client):
-        client.get_activities.return_value = [{"activityId": 99}]
-        client.get_activity_hr_in_timezones.return_value = [
-            {"zoneNumber": 1, "secsInZone": 600, "zoneLowBoundary": 100},
-        ]
-        client.get_activity_power_in_timezones.return_value = [
-            {"zoneNumber": 1, "zoneLowBoundary": 50},
-            {"zoneNumber": 2, "zoneLowBoundary": 120},
-        ]
-
-        result = api.get_hr_zones(client)
-
-        assert len(result["hr_zones"]) == 1
-        assert len(result["power_zones"]) == 2
-        assert result["power_zones"][1] == {"zone": 2, "low_watts": 120}
-
-    def test_no_activities_is_unavailable(self, client):
-        client.get_activities.return_value = []
-        assert api.get_hr_zones(client) == {"available": False, "reason": "no_data"}
+    def test_zones_per_sport_with_their_bounds(self, client):
+        client.connectapi.side_effect = self._answers(
+            [{"trainingMethod": "HR_RESERVE", "restingHeartRateUsed": 58, "lactateThresholdHeartRateUsed": None,
+              "zone1Floor": 132, "zone2Floor": 146, "zone3Floor": 161, "zone4Floor": 176, "zone5Floor": 190,
+              "maxHeartRateUsed": 205, "sport": "DEFAULT"}],
+            [{"sport": "RUNNING", "functionalThresholdPower": 381.0, "zone1Floor": 248.0, "zone2Floor": 305.0,
+              "zone3Floor": 343.0, "zone4Floor": 381.0, "zone5Floor": 438.0, "zone6Floor": 0.0, "zone7Floor": 0.0},
+             {"sport": "ROWING", "functionalThresholdPower": 160.0, "zone1Floor": 0.0, "zone2Floor": 88.0}],
+        )
+        assert api.get_hr_zones(client) == {
+            "hr_zones": [{"sport": "default", "method": "hr_reserve", "max_hr_bpm": 205, "resting_hr_bpm": 58,
+                          "zones_bpm": [[132, 145], [146, 160], [161, 175], [176, 189], [190, 205]]}],
+            "power_zones": [{"sport": "running", "ftp_watts": 381,
+                             "zones_watts": [[248, 304], [305, 342], [343, 380], [381, 437], [438, None]]}],
+        }
 
     def test_no_zone_data_is_unavailable(self, client):
-        client.get_activities.return_value = [{"activityId": 12345}]
-        client.get_activity_hr_in_timezones.return_value = None
-        client.get_activity_power_in_timezones.return_value = None
-
+        client.connectapi.side_effect = self._answers([], [])
         assert api.get_hr_zones(client) == {"available": False, "reason": "no_data"}
 
 

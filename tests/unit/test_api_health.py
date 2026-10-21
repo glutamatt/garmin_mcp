@@ -31,19 +31,32 @@ class TestGetSleep:
                 "lightSleepSeconds": 14400,
                 "remSleepSeconds": 7200,
                 "awakeSleepSeconds": 0,
-                "restingHeartRate": 55,
                 "avgSleepStress": 15,
-                "sleepScores": {"overall": {"value": 85, "qualifierKey": "GOOD"}},
+                "calendarDate": "2024-01-15",
+                "sleepStartTimestampLocal": 1705274400000,
+                "sleepEndTimestampLocal": 1705303200000,
+                "sleepNeed": {"actual": 480, "feedback": "NO_CHANGE"},
+                "sleepScores": {"overall": {"value": 85, "qualifierKey": "GOOD"},
+                                "deepPercentage": {"value": 25, "qualifierKey": "EXCELLENT"}},
             },
-            "wellnessSpO2SleepSummaryDTO": {"averageSpo2": 96, "lowestSpo2": 93},
+            # Garmin: the resting HR at the top level, the SpO2 in its own summary
+            "restingHeartRate": 55,
+            "wellnessSpO2SleepSummaryDTO": {"averageSPO2": 96, "lowestSPO2": 93},
             "avgOvernightHrv": 45,
+            "hrvStatus": "BALANCED",
         }
         result = api.get_sleep(client, "2024-01-15")
+        assert result["date"] == "2024-01-15"
         assert result["sleep_score"] == 85
-        assert result["total_sleep_hours"] == 8.0
-        assert result["deep_sleep_hours"] == 2.0
-        assert result["avg_spo2"] == 96
-        assert result["avg_overnight_hrv"] == 45
+        assert result["sleep_score_factors"] == {"deep": "EXCELLENT"}
+        assert result["sleep_s"] == 28800
+        assert result["deep_sleep_s"] == 7200
+        assert (result["bedtime"], result["wake_time"]) == ("2024-01-14T23:20:00", "2024-01-15T07:20:00")
+        assert result["sleep_need_s"] == 28800
+        assert result["resting_hr_bpm"] == 55
+        assert (result["avg_sleep_spo2_percent"], result["lowest_sleep_spo2_percent"]) == (96, 93)
+        assert result["avg_overnight_hrv_ms"] == 45
+        assert result["hrv_status"] == "BALANCED"
         # Raw keys must not leak
         assert "dailySleepDTO" not in result
         assert "wellnessSpO2SleepSummaryDTO" not in result
@@ -74,9 +87,12 @@ class TestGetStats:
             "privacyProtected": False,
         }
         result = api.get_stats(client, "2024-01-15")
-        assert result["total_steps"] == 10000
-        assert result["resting_heart_rate_bpm"] == 55
+        assert result["steps"] == 10000
+        assert result["total_calories_kcal"] == 2500
+        assert result["resting_hr_bpm"] == 55
+        assert result["avg_stress"] == 30
         assert result["body_battery_current"] == 75
+        assert result["avg_spo2_percent"] == 96
         # Raw Garmin keys must not leak
         assert "privacyProtected" not in result
         assert "calendarDate" not in result or result.get("date") is not None
@@ -120,9 +136,12 @@ class TestGetStress:
             ],
         }
         result = api.get_stress(client, "2024-01-15")
-        assert result["max_stress_level"] == 80
-        assert "rest_percent" in result
-        assert "high_stress_percent" in result
+        assert (result["avg_stress"], result["max_stress"]) == (35, 80)
+        # samples 10, 20 rest; 50, 30 low; 80 high
+        assert result["rest_stress_percent"] == 40.0
+        assert result["low_stress_percent"] == 40.0
+        assert result["medium_stress_percent"] == 0.0
+        assert result["high_stress_percent"] == 20.0
 
     def test_no_data_is_unavailable(self, client):
         client.get_stress_data.return_value = None
@@ -143,8 +162,10 @@ class TestGetHeartRate:
             "heartRateValues": [[1, 60], [2, 70], [3, 80]],
         }
         result = api.get_heart_rate(client, "2024-01-15")
-        assert result["resting_heart_rate_bpm"] == 55
-        assert result["avg_heart_rate_bpm"] == 70.0
+        assert result["resting_hr_bpm"] == 55
+        assert result["resting_hr_7d_avg_bpm"] == 57
+        assert (result["min_hr_bpm"], result["max_hr_bpm"]) == (45, 180)
+        assert result["avg_hr_bpm"] == 70
         assert "heartRateValues" not in result
 
 
@@ -161,8 +182,9 @@ class TestGetRespiration:
             "avgSleepRespirationValue": 14,
         }
         result = api.get_respiration(client, "2024-01-15")
-        assert result["lowest_breaths_per_min"] == 12
-        assert result["avg_waking_breaths_per_min"] == 16
+        assert (result["min_respiration_brpm"], result["max_respiration_brpm"]) == (12, 22)
+        assert result["avg_waking_respiration_brpm"] == 16
+        assert result["avg_sleep_respiration_brpm"] == 14
 
 
 # ── get_body_battery ─────────────────────────────────────────────────────────
@@ -175,28 +197,34 @@ class TestGetBodyBattery:
                 "date": "2024-01-15",
                 "charged": 50,
                 "drained": 30,
+                "bodyBatteryValuesArray": [[1, 20], [2, 80], [3, None], [4, 35]],
                 "bodyBatteryActivityEvent": [
                     {
                         "eventType": "SLEEP",
-                        "eventStartTimeGmt": "2024-01-15T00:00:00",
+                        "eventStartTimeGmt": "2024-01-14T22:00:00.0",
+                        "timezoneOffset": 3600000,
                         "durationInMilliseconds": 28800000,
                         "bodyBatteryImpact": 50,
-                        "shortFeedback": "Good sleep",
+                        "shortFeedback": "NONE",
                     }
                 ],
                 "bodyBatteryDynamicFeedbackEvent": {
-                    "feedbackShortType": "GOOD",
-                    "bodyBatteryLevel": 75,
+                    "feedbackShortType": "SLEEP_PREPARATION_RECOVERING_AND_INACTIVE",
+                    "bodyBatteryLevel": "HIGH",
                 },
             }
         ]
         result = api.get_body_battery(client, "2024-01-15", "2024-01-15")
-        assert len(result["days"]) == 1
-        day = result["days"][0]
-        assert day["charged"] == 50
-        assert len(day["events"]) == 1
-        assert day["events"][0]["type"] == "SLEEP"
-        assert day["current_feedback"] == "GOOD"
+        assert result == {"count": 1, "days": [{
+            "date": "2024-01-15",
+            "body_battery_low": 20, "body_battery_high": 80,
+            "body_battery_charged": 50, "body_battery_drained": 30,
+            "body_battery_level": "HIGH",
+            "body_battery_feedback": "SLEEP_PREPARATION_RECOVERING_AND_INACTIVE",
+            # local start time: GMT + the event's offset
+            "events": [{"type": "SLEEP", "start_time": "2024-01-14T23:00:00", "duration_s": 28800,
+                        "body_battery_impact": 50, "feedback": "NONE"}],
+        }]}
 
 
 # ── get_coaching_snapshot ────────────────────────────────────────────────────
@@ -223,30 +251,41 @@ class TestGetCoachingSnapshot:
         client.get_training_readiness.return_value = [
             {"calendarDate": "2024-01-15", "score": 65, "level": "MODERATE"}
         ]
-        client.get_body_battery.return_value = [{"date": "2024-01-15", "charged": 40, "drained": 25}]
         client.get_hrv_data.return_value = {
-            "hrvSummary": {"lastNightAvg": 45, "weeklyAvg": 48, "status": "BALANCED"},
+            "hrvSummary": {"lastNightAvg": 45, "weeklyAvg": 48, "status": "BALANCED",
+                           "feedbackPhrase": "HRV_BALANCED_2"},
         }
         return client
 
     def test_composites_all_fields(self, client):
         result = api.get_coaching_snapshot(client, "2024-01-15")
         assert result["date"] == "2024-01-15"
-        assert result["stats"]["total_steps"] == 8000
-        assert result["sleep"]["sleep_score"] == 80
-        assert result["training_readiness"]["score"] == 65
-        assert result["body_battery"]["charged"] == 40
-        assert result["hrv"]["status"] == "BALANCED"
+        assert result["stats"] == {"steps": 8000, "resting_hr_bpm": 55}
+        assert result["sleep"] == {"sleep_score": 80, "sleep_s": 25200, "deep_sleep_s": 6000,
+                                   "light_sleep_s": 12000, "rem_sleep_s": 5400, "awake_s": 1800}
+        assert result["training_readiness"] == {"score": 65, "level": "MODERATE"}
+        # the HRV keeps the reason of its status
+        assert result["hrv"] == {"last_night_avg_hrv_ms": 45, "weekly_avg_hrv_ms": 48,
+                                 "hrv_status": "BALANCED", "hrv_feedback": "HRV_BALANCED_2"}
+        # no body battery section: its numbers are in the stats
+        assert "body_battery" not in result
         client.get_hrv_data.assert_called_once_with("2024-01-15")
+
+    def test_snapshot_sections_are_short(self, client):
+        """The overview keeps the essentials; the rest is in `health stats`."""
+        client.get_user_summary.return_value = {
+            "calendarDate": "2024-01-15", "totalSteps": 8000, "restingHeartRate": 55,
+            "totalKilocalories": 2500, "sedentarySeconds": 40000, "minHeartRate": 45,
+        }
+        assert api.get_coaching_snapshot(client, "2024-01-15")["stats"] == {"steps": 8000, "resting_hr_bpm": 55}
 
     def test_section_without_data_says_no_data(self, client):
         client.get_sleep_data.return_value = None
         client.get_training_readiness.return_value = []
-        client.get_body_battery.return_value = None
         client.get_hrv_data.return_value = {}
         result = api.get_coaching_snapshot(client, "2024-01-15")
-        assert result["stats"]["total_steps"] == 8000
-        for section in ("sleep", "training_readiness", "body_battery", "hrv"):
+        assert result["stats"]["steps"] == 8000
+        for section in ("sleep", "training_readiness", "hrv"):
             assert result[section] == {"available": False, "reason": "no_data"}
 
     def test_readiness_not_computed_by_the_device_says_so(self, client):
@@ -269,15 +308,15 @@ class TestGetCoachingSnapshot:
         """A 429 on one endpoint is not "no data": the reason carries the error."""
         client.get_hrv_data.side_effect = GarminConnectTooManyRequestsError("Rate limit exceeded")
         result = api.get_coaching_snapshot(client, "2024-01-15")
-        assert result["stats"]["total_steps"] == 8000
+        assert result["stats"]["steps"] == 8000
         assert result["hrv"]["available"] is False
         assert result["hrv"]["reason"].startswith("error: Garmin rate limit (HTTP 429)")
 
     def test_curation_error_stays_in_its_section(self, client):
-        client.get_sleep_data.return_value = {"dailySleepDTO": "not a dict"}
+        client.get_sleep_data.return_value = {"dailySleepDTO": {"sleepStartTimestampLocal": "not a number"}}
         result = api.get_coaching_snapshot(client, "2024-01-15")
-        assert result["sleep"]["reason"].startswith("error: AttributeError")
-        assert result["stats"]["total_steps"] == 8000
+        assert result["sleep"]["reason"].startswith("error: TypeError")
+        assert result["stats"]["steps"] == 8000
 
     def test_auth_error_fails_the_snapshot(self, client):
         client.get_user_summary.side_effect = GarminConnectAuthenticationError("401")
@@ -287,8 +326,7 @@ class TestGetCoachingSnapshot:
 
     def test_every_section_failing_fails_the_snapshot(self, client):
         error = GarminConnectTooManyRequestsError("Rate limit exceeded")
-        for method in ("get_user_summary", "get_sleep_data", "get_training_readiness",
-                       "get_body_battery", "get_hrv_data"):
+        for method in ("get_user_summary", "get_sleep_data", "get_training_readiness", "get_hrv_data"):
             getattr(client, method).side_effect = error
         with pytest.raises(RateLimited):
             api.get_coaching_snapshot(client, "2024-01-15")
@@ -299,7 +337,7 @@ class TestGetCoachingSnapshot:
         result = api.get_coaching_snapshot(client, "2024-01-15")
         assert result["stats"]["reason"] == "error: Garmin did not answer: timeout"
         assert result["sleep"]["reason"] == "no_data"
-        assert result["hrv"]["status"] == "BALANCED"
+        assert result["hrv"]["hrv_status"] == "BALANCED"
 
 
 # ── get_spo2 ─────────────────────────────────────────────────────────────────
@@ -338,7 +376,24 @@ class TestGetTrainingReadiness:
         result = api.get_training_readiness(client, "2024-01-15")
         assert result["score"] == 72
         assert result["level"] == "MODERATE"
-        assert result["recovery_time_hours"] == 2.0
+        assert result["feedback"] == "Moderate readiness"
+        assert result["recovery_time_s"] == 7200
+        assert "latest_score" not in result
+
+    def test_morning_reading_and_the_last_update(self, client):
+        """Garmin updates the readiness during the day: the morning's is the reference."""
+        client.get_training_readiness.return_value = [
+            {"calendarDate": "2024-01-15", "score": 60, "timestamp": "2024-01-15T17:00:00.0",
+             "timestampLocal": "2024-01-15T18:00:00.0", "inputContext": "UPDATE_REALTIME_VARIABLES"},
+            {"calendarDate": "2024-01-15", "score": 80, "timestamp": "2024-01-15T05:30:00.0",
+             "timestampLocal": "2024-01-15T06:30:00.0", "inputContext": "AFTER_WAKEUP_RESET",
+             "sleepScoreFactorPercent": 88, "hrvFactorFeedback": "GOOD"},
+        ]
+        result = api.get_training_readiness(client, "2024-01-15")
+        assert result["score"] == 80
+        assert result["measured_at"] == "2024-01-15T06:30:00"
+        assert (result["sleep_factor_percent"], result["hrv_factor_feedback"]) == (88, "GOOD")
+        assert (result["latest_score"], result["latest_at"]) == (60, "2024-01-15T18:00:00")
 
     def test_no_data_is_unavailable(self, client):
         client.get_training_readiness.return_value = []
