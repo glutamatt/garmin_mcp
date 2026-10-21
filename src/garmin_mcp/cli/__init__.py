@@ -20,7 +20,14 @@ import click
 def _today():
     return _date.today().isoformat()
 
-from garmin_mcp.api.activity_fields import DETAIL_FIELDS, LAP_FIELDS, LIST_EFFORT_FIELDS, LIST_FIELDS
+from garmin_mcp.api.activity_fields import (
+    DETAIL_FIELDS,
+    LAP_FIELDS,
+    LIST_EFFORT_FIELDS,
+    LIST_FIELDS,
+    INTERVAL_FIELDS,
+    RUN_WALK_FIELDS,
+)
 from garmin_mcp.api.calendar_fields import CALENDAR_ITEMS, EVENT_ITEMS
 from garmin_mcp.api.health_fields import (
     HEART_RATE_FIELDS,
@@ -473,7 +480,8 @@ def activities_list(ctx, start_date, end_date, activity_type, start, limit, extr
 @click.argument("activity_id", type=int)
 @click.pass_context
 def activities_get(ctx, activity_id):
-    """Get detailed activity info."""
+    """One activity in detail, with the weather at the start, its stops and its walks
+    ({count, total_s, longest_s} each, from Garmin's run / walk / stand detection)."""
     from garmin_mcp.api import activities as api
 
     _run(ctx, lambda: api.get_activity(_client(ctx), activity_id), field_set=DETAIL_FIELDS)
@@ -481,12 +489,29 @@ def activities_get(ctx, activity_id):
 
 @activities.command("splits")
 @click.argument("activity_id", type=int)
+@click.option("--by", "by", default="lap", type=click.Choice(["lap", "interval", "run-walk", "km"]),
+              help="lap (default): the watch's laps; interval: the workout's steps as run; "
+                   "run-walk: run / walk / stand segments and their totals; km: one per km, from the FIT")
 @click.pass_context
-def activities_splits(ctx, activity_id):
-    """Get per-lap splits for an activity."""
+def activities_splits(ctx, activity_id, by):
+    """The activity cut in parts: laps, workout intervals, run / walk / stand, or km.
+
+    \b
+    lap: {"lap_count", "laps"}; the others: {"by", "count", "splits"}.
+    lap, interval: the fields of `activities get` for the part (distance_m,
+    duration_s, avg_pace_s_per_km, gap_s_per_km, avg_hr_bpm, elevation_gain_m…);
+    a lap also has lap_number, intensity_type, workout_step_index; an interval
+    split_type (warmup, active, recovery, cooldown).
+    run-walk: split_type (run, walk, stand), start_time, duration_s, distance_m,
+    avg_pace_s_per_km, avg_hr_bpm, avg_cadence_spm; "totals" per type: count,
+    duration_s, longest_s, distance_m.
+    km: km, distance_m, duration_s (between two km marks, stops included),
+    avg_pace_s_per_km, avg_hr_bpm, avg_cadence_spm, elevation_gain_m, elevation_loss_m.
+    """
     from garmin_mcp.api import activities as api
 
-    _run(ctx, lambda: api.get_activity_splits(_client(ctx), activity_id), field_set=LAP_FIELDS)
+    field_set = {"lap": LAP_FIELDS, "interval": INTERVAL_FIELDS, "run-walk": RUN_WALK_FIELDS}.get(by)
+    _run(ctx, lambda: api.get_activity_splits(_client(ctx), activity_id, by), field_set=field_set)
 
 
 @activities.command("hr-zones")
@@ -520,7 +545,7 @@ def activities_download(ctx, activity_id):
 
     \b
     Columns (when available; the answer lists them):
-      timestamp, elapsed_s, distance_m, heart_rate,
+      timestamp, elapsed_s, lap (the watch's lap, from 1), distance_m, heart_rate,
       cadence_spm (cadence_rpm on a bike), speed_ms, pace_min_km,
       altitude_m, lat, lon, temperature_c, vertical_oscillation_mm,
       ground_contact_time_ms, ground_contact_balance_pct, step_length_cm,
@@ -528,7 +553,8 @@ def activities_download(ctx, activity_id):
 
     \b
     Preprocessing applied:
-      - cadence: RPM×2 → steps/min when running, half-cadence glitch fixed
+      - cadence: RPM×2 → steps/min when running; a value at half the
+        running cadence around it (wrist glitch) is doubled, a walk is kept
       - speed: enhanced_speed (m/s), not deprecated field
       - pace_min_km: decimal minutes per km (5.5 = 5:30)
       - GPS: semicircles → degrees
