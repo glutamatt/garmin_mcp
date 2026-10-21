@@ -8,10 +8,14 @@ Each row says where Garmin keeps a value in each source:
 - LIST_EFFORT: a list item with `--with effort`. The list endpoint has no RPE:
   `get_activities` adds the `summaryDTO` of each activity's detail to its list item.
 
-Raw keys checked on real answers (neural-runner `tests/garmin-fixtures/`). Three keys
+A typed split (`activities splits --by interval|run-walk`: Garmin's workout
+intervals and run / walk / stand detection) has the keys of a lap, a `type`
+(`INTERVAL_ACTIVE`, `RWD_WALK`…) and its own `startTimeLocal`: it is read as a LAP.
+
+Raw keys checked on real answers (neural-runner `tests/garmin-fixtures/`). Four keys
 are added by `api/activities.py` from another Garmin call, and say so below:
-`weather` (detail), `startTimeLocal` (lap: Garmin's laps only have GMT) and
-`summaryDTO` (list with `--with effort`).
+`weather` and `typedSplits` (detail), `startTimeLocal` (lap: Garmin's laps only
+have GMT) and `summaryDTO` (list with `--with effort`).
 
 Naming and unit rule: `api/fields.py`.
 """
@@ -81,6 +85,27 @@ def _cr10(rpe: float) -> float:
     return rpe / 10
 
 
+def split_type(raw: dict) -> str | None:
+    """A typed split's kind: `RWD_WALK` → `walk`, `INTERVAL_ACTIVE` → `active`."""
+    kind = raw.get("type")
+    return kind.split("_", 1)[-1].lower() if kind else None
+
+
+def _segments(kind: str):
+    """The activity's segments of a kind (`RWD_STAND`, `RWD_WALK`): number, total and longest time.
+    None when Garmin has no run / walk / stand detection for it (not read, a ride…);
+    `{"count": 0}` when it has one and no segment of this kind."""
+    def read(raw: dict) -> dict | None:
+        typed = raw.get("typedSplits") or []
+        if not any((t.get("type") or "").startswith("RWD_") for t in typed):
+            return None
+        durations = [t.get("duration") or 0 for t in typed if t.get("type") == kind]
+        if not durations:
+            return {"count": 0}
+        return {"count": len(durations), "total_s": round(sum(durations)), "longest_s": round(max(durations))}
+    return read
+
+
 def _weather(raw: dict) -> dict | None:
     return WEATHER_FIELDS.curate(raw) or None
 
@@ -96,8 +121,13 @@ FIELDS: tuple[Field, ...] = (
            list="activityType.typeKey", detail="activityTypeDTO.typeKey"),
     _field("parent_type_id", "", "Id of the parent activity type (see `activities types`)",
            list="activityType.parentTypeId", detail="activityTypeDTO.parentTypeId"),
+    _field("workout_id", "", "The workout run in this activity (`workouts get <workout_id>`)",
+           list="workoutId", detail="metadataDTO.associatedWorkoutId"),
     _field("lap_number", "", "Lap number, from 1",
            lap="lapIndex"),
+    _field("split_type", "", "Typed split: run, walk, stand (`--by run-walk`); warmup, active, recovery, "
+           "cooldown… (`--by interval`)",
+           lap=split_type),
     _field("intensity_type", "", "Lap intensity: WARMUP, ACTIVE, REST, COOLDOWN…",
            lap="intensityType"),
     _field("workout_step_index", "", "Workout step of the lap, from 0 (step 1 of `workouts get` = 0). "
@@ -205,6 +235,10 @@ FIELDS: tuple[Field, ...] = (
     # ── Context ──
     _field("temperature_celsius", "°C", "Starting temperature",
            detail="summaryDTO.startingTemperatureInFahrenheit", convert=fahrenheit_to_celsius, digits=1),
+    _field("stops", "", "Stops (Garmin's run / walk / stand detection): {count, total_s, longest_s}",
+           detail=_segments("RWD_STAND")),
+    _field("walks", "", "Walking segments: {count, total_s, longest_s}",
+           detail=_segments("RWD_WALK")),
     _field("lap_count", "", "Number of laps",
            list="lapCount", detail="metadataDTO.lapCount"),
     _field("has_splits", "", "True when the activity has laps",
@@ -229,3 +263,9 @@ LIST_FIELDS = FieldSet(LIST, FIELDS, items_key="activities", always=("sport",))
 LIST_EFFORT_FIELDS = FieldSet(LIST_EFFORT, FIELDS, items_key="activities", always=("sport",))
 DETAIL_FIELDS = FieldSet(DETAIL, FIELDS, always=("sport",))
 LAP_FIELDS = FieldSet(LAP, FIELDS, items_key="laps")
+# `--by interval`: the workout's steps, as many fields as a lap.
+INTERVAL_FIELDS = FieldSet(LAP, FIELDS, items_key="splits")
+# `--by run-walk`: many short segments, the few fields that tell them apart.
+RUN_WALK_FIELDS = FieldSet(LAP, FIELDS, items_key="splits", only=(
+    "split_type", "start_time", "duration_s", "distance_m", "avg_pace_s_per_km", "avg_hr_bpm", "avg_cadence_spm",
+))

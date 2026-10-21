@@ -13,7 +13,9 @@ from garmin_mcp.api.contract import AuthError, InvalidInput, NotFound, Unavailab
 
 @pytest.fixture
 def client():
-    return Mock()
+    c = Mock()
+    c.get_activity_typed_splits.return_value = {"splits": []}
+    return c
 
 
 SAMPLE_RAW_ACTIVITY = {
@@ -211,6 +213,7 @@ class TestGetActivity:
             "metadataDTO": {"lapCount": 5, "hasSplits": True},
         }
         client.get_activity_weather.return_value = None
+        client.get_activity_typed_splits.return_value = {"splits": []}
         result = api.get_activity(client, 12345)
         assert result["id"] == 12345
         assert result["sport"] == "running"
@@ -230,6 +233,7 @@ class TestGetActivity:
             },
         }
         client.get_activity_weather.return_value = None
+        client.get_activity_typed_splits.return_value = {"splits": []}
         result = api.get_activity(client, 1)
         assert result["avg_pace_s_per_km"] == 418
         assert result["moving_pace_s_per_km"] == 416
@@ -413,3 +417,113 @@ class TestGetActivityTypes:
         result = api.get_activity_types(client)
         assert result["count"] == 2
         assert result["activity_types"][0]["type_key"] == "running"
+
+
+def _typed(kind, start, duration, distance, **extra):
+    """One of Garmin's typed splits (same keys as a lap, plus `type`)."""
+    return {"type": kind, "startTimeLocal": f"2026-04-08T08:{start:02d}:00.0",
+            "startTimeGMT": f"2026-04-08T06:{start:02d}:00.0", "duration": duration,
+            "distance": distance, "averageSpeed": distance / duration if duration else 0.0, **extra}
+
+
+TYPED_SPLITS = {"splits": [
+    _typed("INTERVAL_WARMUP", 0, 600.0, 1500.0),
+    _typed("RWD_RUN", 0, 1500.0, 4000.0, averageHR=150.0),
+    _typed("RWD_STAND", 25, 40.0, 5.0),
+    _typed("RWD_WALK", 26, 120.0, 150.0),
+    _typed("INTERVAL_ACTIVE", 10, 900.0, 2500.0),
+    _typed("RWD_STAND", 28, 95.0, 8.0),
+]}
+
+
+class TestTypedSplits:
+    def test_run_walk_segments_and_totals(self, client):
+        client.get_activity_typed_splits.return_value = TYPED_SPLITS
+        out = api.get_activity_splits(client, 1, "run-walk")
+        assert (out["by"], out["count"]) == ("run-walk", 4)
+        assert [s["split_type"] for s in out["splits"]] == ["run", "stand", "walk", "stand"]
+        assert out["splits"][0] == {"split_type": "run", "start_time": "2026-04-08T08:00:00",
+                                    "duration_s": 1500, "distance_m": 4000, "avg_pace_s_per_km": 375,
+                                    "avg_hr_bpm": 150}
+        assert out["totals"] == {
+            "run": {"count": 1, "duration_s": 1500, "longest_s": 1500, "distance_m": 4000},
+            "stand": {"count": 2, "duration_s": 135, "longest_s": 95, "distance_m": 13},
+            "walk": {"count": 1, "duration_s": 120, "longest_s": 120, "distance_m": 150},
+        }
+
+    def test_interval_is_the_workout_steps(self, client):
+        client.get_activity_typed_splits.return_value = TYPED_SPLITS
+        out = api.get_activity_splits(client, 1, "interval")
+        assert [(s["split_type"], s["distance_m"]) for s in out["splits"]] == [("warmup", 1500), ("active", 2500)]
+        assert "totals" not in out
+
+    def test_get_has_stops_and_walks(self, client):
+        client.get_activity.return_value = {"activityId": 1, "summaryDTO": {},
+                                            "metadataDTO": {"associatedWorkoutId": 77}}
+        client.get_activity_weather.return_value = None
+        client.get_activity_typed_splits.return_value = TYPED_SPLITS
+        out = api.get_activity(client, 1)
+        assert out["workout_id"] == 77
+        assert out["stops"] == {"count": 2, "total_s": 135, "longest_s": 95}
+        assert out["walks"] == {"count": 1, "total_s": 120, "longest_s": 120}
+
+    def test_without_run_walk_detection_get_says_nothing_about_stops(self, client):
+        client.get_activity.return_value = {"activityId": 1, "summaryDTO": {}}
+        client.get_activity_weather.return_value = None
+        client.get_activity_typed_splits.return_value = {"splits": [_typed("INTERVAL_ACTIVE", 0, 60.0, 100.0)]}
+        assert "stops" not in api.get_activity(client, 1)
+
+    def test_typed_splits_failure_keeps_the_detail(self, client):
+        client.get_activity.return_value = {"activityId": 1, "summaryDTO": {"distance": 5000.0}}
+        client.get_activity_weather.return_value = None
+        client.get_activity_typed_splits.side_effect = Exception("down")
+        assert api.get_activity(client, 1) == {"id": 1, "distance_m": 5000}
+
+    def test_unknown_mode(self, client):
+        with pytest.raises(InvalidInput):
+            api.get_activity_splits(client, 1, "mile")
+
+
+def _rows(seconds, speed=2.5, cadence=170, altitude=None, hr=150):
+    """Second-by-second records like `_fit_records` gives."""
+    altitude = altitude or (lambda t: 100.0)
+    return [{"elapsed_s": float(t), "distance_m": round(t * speed, 1), "heart_rate": hr,
+             "cadence_spm": cadence, "altitude_m": altitude(t)} for t in range(seconds)]
+
+
+class TestKmSplits:
+    def test_one_split_per_km_and_the_rest(self):
+        splits = api._km_splits(_rows(1000))  # 2500 m at 2.5 m/s
+        assert [s["km"] for s in splits] == [1, 2, 3]
+        assert [s["distance_m"] for s in splits] == [1000, 1000, 498]
+        assert splits[0]["duration_s"] == 400 and splits[0]["avg_pace_s_per_km"] == 400
+        assert splits[0]["avg_hr_bpm"] == 150 and splits[0]["avg_cadence_spm"] == 170
+
+    def test_elevation_ignores_noise_below_one_metre(self):
+        """A steady climb of 20 m with ±0.5 m of noise: 20 m up, not 20 + the noise."""
+        noisy = lambda t: 100.0 + t * 20 / 400 + (0.5 if t % 2 else -0.5)
+        [first, *_] = api._km_splits(_rows(400, altitude=noisy))
+        assert 19 <= first["elevation_gain_m"] <= 21
+        assert first["elevation_loss_m"] <= 1
+
+    def test_no_distance_no_split(self):
+        assert api._km_splits([{"elapsed_s": 0.0, "distance_m": None}]) == []
+
+
+class TestHalfCadence:
+    @staticmethod
+    def _fix(values):
+        rows = [{"cadence_spm": v} for v in values]
+        api._fix_half_cadence_glitch(rows, "cadence_spm")
+        return [r["cadence_spm"] for r in rows]
+
+    def test_a_half_value_while_running_is_doubled(self):
+        assert self._fix([170] * 15 + [85] + [170] * 15)[15] == 170
+
+    def test_a_walk_is_kept(self):
+        """Walking at 105-115 spm is not a glitch: before, everything under 120 was doubled."""
+        walk = [110, 105, 112, 108, 115] * 8
+        assert self._fix(walk) == walk
+
+    def test_zero_is_no_value(self):
+        assert self._fix([0, 170, 170])[0] is None

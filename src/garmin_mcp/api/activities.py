@@ -6,15 +6,25 @@ Output contract (empty answers, failures): see `api/contract.py`.
 Fields of `list`, `get` and `splits` (names, units, raw keys): see `api/activity_fields.py`.
 """
 
+import bisect
 import io
 import logging
 import os
+import statistics
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 from garminconnect import Garmin
-from garmin_mcp.api.activity_fields import DETAIL_FIELDS, LAP_FIELDS, LIST_EFFORT_FIELDS, LIST_FIELDS
+from garmin_mcp.api.activity_fields import (
+    DETAIL_FIELDS,
+    LAP_FIELDS,
+    LIST_EFFORT_FIELDS,
+    LIST_FIELDS,
+    INTERVAL_FIELDS,
+    RUN_WALK_FIELDS,
+    split_type,
+)
 from garmin_mcp.api.contract import (
     NO_DATA,
     AuthError,
@@ -80,14 +90,78 @@ def get_activities(
 
 
 def get_activity(client: Garmin, activity_id: int) -> dict:
-    """One activity: the fields of `DETAIL_FIELDS`, with the weather at the start."""
+    """One activity: the fields of `DETAIL_FIELDS`, with the weather at the start,
+    and its stops and walks (Garmin's run / walk / stand detection)."""
     raw = client.get_activity(activity_id)
     if not raw:
         raise NotFound(f"No activity {activity_id}")
-    return DETAIL_FIELDS.curate({**raw, "weather": _activity_weather(client, activity_id)})
+    return DETAIL_FIELDS.curate({
+        **raw,
+        "weather": _activity_weather(client, activity_id),
+        "typedSplits": _typed_splits(client, activity_id),
+    })
 
 
-def get_activity_splits(client: Garmin, activity_id: int) -> dict:
+def _typed_splits(client: Garmin, activity_id: int) -> list[dict] | None:
+    """Garmin's typed splits (workout intervals, run / walk / stand), or None when the
+    call fails: the activity's other fields do not depend on it."""
+    try:
+        return (client.get_activity_typed_splits(activity_id) or {}).get("splits") or []
+    except Exception as e:  # noqa: BLE001 — logged, the answer says nothing about stops
+        error = as_garmin_error(e)
+        if isinstance(error, AuthError):
+            raise error from e
+        logger.warning("Typed splits of activity %s not read: %s", activity_id, error)
+        return None
+
+
+SPLIT_MODES = ("lap", "interval", "run-walk", "km")
+# Garmin's typed splits: `INTERVAL_*` = the workout's steps, `RWD_*` = run / walk / stand detection.
+_TYPED_PREFIX = {"interval": "INTERVAL_", "run-walk": "RWD_"}
+
+
+def get_activity_splits(client: Garmin, activity_id: int, by: str = "lap") -> dict:
+    """The activity cut in parts.
+
+    - `lap`: the watch's laps (`LAP_FIELDS`), `{activity_id, lap_count, laps}`;
+    - `interval`: the workout's steps as run (warmup, active, recovery, cooldown);
+    - `run-walk`: Garmin's run / walk / stand detection, with the totals per type;
+    - `km`: one split per kilometre, computed from the FIT recording.
+    The last three: `{activity_id, by, count, splits}`.
+    """
+    if by not in SPLIT_MODES:
+        raise InvalidInput(f"Unknown split mode '{by}'. Valid: {', '.join(SPLIT_MODES)}")
+    if by == "lap":
+        return _laps(client, activity_id)
+    if by == "km":
+        splits = _km_splits(_fit_records(download_fit(client, activity_id)))
+        return {"activity_id": activity_id, "by": by, "count": len(splits), "splits": splits}
+    raw = (client.get_activity_typed_splits(activity_id) or {}).get("splits") or []
+    typed = [t for t in raw if (t.get("type") or "").startswith(_TYPED_PREFIX[by])]
+    typed.sort(key=lambda t: t.get("startTimeGMT") or "")
+    fields = RUN_WALK_FIELDS if by == "run-walk" else INTERVAL_FIELDS
+    answer = {"activity_id": activity_id, "by": by, "count": len(typed),
+              "splits": [fields.curate(t) for t in typed]}
+    if by == "run-walk":
+        answer["totals"] = segment_totals(typed)
+    return answer
+
+
+def segment_totals(typed: list[dict]) -> dict:
+    """Per type (run, walk, stand): number of segments, total and longest time, distance."""
+    totals: dict[str, dict] = {}
+    for t in typed:
+        kind = split_type(t)
+        duration = t.get("duration") or 0
+        total = totals.setdefault(kind, {"count": 0, "duration_s": 0, "longest_s": 0, "distance_m": 0})
+        total["count"] += 1
+        total["duration_s"] += duration
+        total["longest_s"] = max(total["longest_s"], duration)
+        total["distance_m"] += t.get("distance") or 0
+    return {kind: {k: round(v) for k, v in total.items()} for kind, total in totals.items()}
+
+
+def _laps(client: Garmin, activity_id: int) -> dict:
     """Per-lap splits: the fields of `LAP_FIELDS`.
 
     Garmin's laps only have a GMT start. The activity detail gives the offset to
@@ -178,12 +252,10 @@ def download_fit(client: Garmin, activity_id: int) -> bytes:
 _SEMICIRCLES_TO_DEG = 180.0 / (2 ** 31)
 
 
-def _fit_to_csv(fit_bytes: bytes, activity_id: int, csv_path: str) -> dict:
-    """Parse the FIT records, write a clean CSV at `csv_path`."""
-    import csv
+def _fit_records(fit_bytes: bytes) -> list[dict]:
+    """The FIT's second-by-second records, cleaned: one row per record (see `download --help`)."""
     from fitparse import FitFile
 
-    # Parse FIT
     fit = FitFile(io.BytesIO(fit_bytes))
 
     # Detect sport — running cadence is RPM (×2 for SPM), cycling cadence stays as RPM
@@ -195,6 +267,12 @@ def _fit_to_csv(fit_bytes: bytes, activity_id: int, csv_path: str) -> dict:
     is_running = sport in ("running", "trail_running", "treadmill_running", None)
     cadence_label = "cadence_spm" if is_running else "cadence_rpm"
     cadence_multiplier = 2 if is_running else 1
+
+    # The watch's laps: a record belongs to the last lap started at or before it.
+    lap_starts = sorted(
+        start for start in ({f.name: f.value for f in m.fields}.get("start_time") for m in fit.get_messages("lap"))
+        if start is not None
+    )
 
     rows = []
     first_ts = None
@@ -214,6 +292,7 @@ def _fit_to_csv(fit_bytes: bytes, activity_id: int, csv_path: str) -> dict:
 
         row = {"timestamp": ts.isoformat()}
         row["elapsed_s"] = round((ts - first_ts).total_seconds(), 1)
+        row["lap"] = max(bisect.bisect_right(lap_starts, ts), 1) if lap_starts else None
         row["distance_m"] = round(raw["distance"], 1) if raw.get("distance") is not None else None
         row["heart_rate"] = raw.get("heart_rate")
 
@@ -253,11 +332,18 @@ def _fit_to_csv(fit_bytes: bytes, activity_id: int, csv_path: str) -> dict:
 
         rows.append(row)
 
-    # A FIT without samples (a manual activity) gives an empty CSV: an empty answer, not an error.
-
     # Fix half-cadence glitch — running only (cycling 80rpm is valid)
-    if is_running and rows and cadence_label in rows[0]:
+    if is_running and rows:
         _fix_half_cadence_glitch(rows, cadence_label)
+    return rows
+
+
+def _fit_to_csv(fit_bytes: bytes, activity_id: int, csv_path: str) -> dict:
+    """Parse the FIT records, write a clean CSV at `csv_path`."""
+    import csv
+
+    rows = _fit_records(fit_bytes)
+    # A FIT without samples (a manual activity) gives an empty CSV: an empty answer, not an error.
 
     # Drop columns that are entirely None
     all_keys = list(rows[0].keys()) if rows else []
@@ -290,32 +376,99 @@ def _fit_to_csv(fit_bytes: bytes, activity_id: int, csv_path: str) -> dict:
     })
 
 
+# Altitude changes below this are noise: the same gain and loss as Garmin's own
+# laps (checked on two real runs: 40/48 m vs Garmin's 40/47, 94/101 vs 88/98).
+_ELEVATION_STEP_M = 1.0
+
+
+def _elevation(altitudes: list[float]) -> tuple[float, float]:
+    """Gain and loss along altitudes, counting a change once it reaches `_ELEVATION_STEP_M`."""
+    gain = loss = 0.0
+    anchor = altitudes[0] if altitudes else None
+    for altitude in altitudes[1:]:
+        if altitude - anchor >= _ELEVATION_STEP_M:
+            gain += altitude - anchor
+            anchor = altitude
+        elif anchor - altitude >= _ELEVATION_STEP_M:
+            loss += anchor - altitude
+            anchor = altitude
+    return gain, loss
+
+
+def _km_splits(rows: list[dict]) -> list[dict]:
+    """One split per kilometre of the FIT's records (the last one shorter).
+
+    The marks are at 1, 2, 3… km of the recorded distance. `duration_s` is the
+    time between two marks, stops included; `avg_pace_s_per_km` follows from it.
+    """
+    points = [r for r in rows if r.get("distance_m") is not None]
+    if len(points) < 2:
+        return []
+    origin = points[0]["distance_m"]
+    splits = []
+    first = 0
+    for i in range(1, len(points)):
+        if points[i]["distance_m"] - origin >= 1000 * (len(splits) + 1):
+            splits.append(_km_split(len(splits) + 1, points[first:i + 1]))
+            first = i
+    if first < len(points) - 1 and points[-1]["distance_m"] > points[first]["distance_m"]:
+        splits.append(_km_split(len(splits) + 1, points[first:]))
+    return splits
+
+
+def _km_split(number: int, rows: list[dict]) -> dict:
+    start, end = rows[0], rows[-1]
+    distance = end["distance_m"] - start["distance_m"]
+    duration = end["elapsed_s"] - start["elapsed_s"]
+    hr = [r["heart_rate"] for r in rows if r.get("heart_rate")]
+    cadence = [r["cadence_spm"] for r in rows if r.get("cadence_spm")]
+    altitudes = [r["altitude_m"] for r in rows if r.get("altitude_m") is not None]
+    gain, loss = _elevation(altitudes)
+    return clean_nones({
+        "km": number,
+        "distance_m": round(distance),
+        "duration_s": round(duration),
+        "avg_pace_s_per_km": round(duration / distance * 1000) if distance > 0 else None,
+        "avg_hr_bpm": round(statistics.mean(hr)) if hr else None,
+        "avg_cadence_spm": round(statistics.mean(cadence)) if cadence else None,
+        "elevation_gain_m": round(gain) if altitudes else None,
+        "elevation_loss_m": round(loss) if altitudes else None,
+    })
+
+
 # ── Private helpers ──────────────────────────────────────────────────────────
 
 
-_CADENCE_HALF_THRESHOLD = 120  # spm — running cadence physically cannot be below this
+# Half-cadence glitch: a value within this share of half the cadence around it.
+_CADENCE_HALF_TOLERANCE = 0.1
+_CADENCE_WINDOW = 31  # samples (~30 s) around each one
+_RUNNING_CADENCE_MIN = 140  # spm: below, the median itself is walking or standing
 
 
 def _fix_half_cadence_glitch(rows: list[dict], key: str) -> None:
     """Fix wrist-based cadence sensor half-count glitch in-place.
 
-    Some Garmin watches (e.g. FR165) count 1 step out of 2 when wrist is
-    raised, producing values at exactly 50% of real cadence.
-    Running cadence < 120 spm is physically impossible → half-count → double it.
+    Some Garmin watches (e.g. FR165) count 1 step out of 2 when the wrist is
+    raised: a value at half the cadence around it while running. Only such a
+    value is doubled: a walk (100-120 spm) is a walk, not a glitch.
     Zero → None.
     """
+    values = [r.get(key) for r in rows]
+    half = _CADENCE_WINDOW // 2
     fixed = 0
-    for r in rows:
-        val = r.get(key)
+    for i, val in enumerate(values):
         if val is None:
             continue
         if val == 0:
-            r[key] = None
-        elif val < _CADENCE_HALF_THRESHOLD:
-            r[key] = val * 2
+            rows[i][key] = None
+            continue
+        around = [v for v in values[max(0, i - half):i + half + 1] if v]
+        median = statistics.median(around)
+        if median >= _RUNNING_CADENCE_MIN and abs(2 * val - median) <= _CADENCE_HALF_TOLERANCE * median:
+            rows[i][key] = val * 2
             fixed += 1
     if fixed:
-        logger.info("Half-cadence fix: corrected %d points (threshold=%d)", fixed, _CADENCE_HALF_THRESHOLD)
+        logger.info("Half-cadence fix: corrected %d points", fixed)
 
 
 # `--with effort`: at most this many detail calls per list, this many at a time.

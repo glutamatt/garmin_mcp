@@ -260,6 +260,7 @@ class TestEmptyFields:
         client = Mock()
         client.get_activity.return_value = {"activityId": 1, "summaryDTO": {"distance": 5000.0}}
         client.get_activity_weather.return_value = None
+        client.get_activity_typed_splits.return_value = {"splits": []}
         result = _run("activities get 1 --fields distance_m,training_load,vo2_max", client)
         assert result["exit_code"] == 0
         assert result["stderr"] == ""
@@ -300,6 +301,7 @@ class TestDeviceReason:
         client = Mock()
         client.get_activity.return_value = {"activityId": 1, "summaryDTO": {"distance": 5000.0}}
         client.get_activity_weather.return_value = None
+        client.get_activity_typed_splits.return_value = {"splits": []}
         client.get_usage_indicators.return_value = self.NO_LOAD
         result = _run("activities get 1 --fields distance_m,training_load", client)
         assert json.loads(result["stdout"])["empty_fields"] == {"training_load": "not_supported_by_device"}
