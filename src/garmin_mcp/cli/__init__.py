@@ -23,6 +23,7 @@ from garmin_mcp.api.activity_fields import (
     LIST_FIELDS,
     INTERVAL_FIELDS,
     RUN_WALK_FIELDS,
+    WEATHER_FIELDS,
 )
 from garmin_mcp.api.calendar_fields import CALENDAR_ITEMS, EVENT_ITEMS
 from garmin_mcp.api.health_fields import (
@@ -464,7 +465,7 @@ def activities_list(ctx, start_date, end_date, activity_type, start, limit, extr
     ), field_set=LIST_EFFORT_FIELDS if with_effort else LIST_FIELDS)
 
 
-@returns(DETAIL_FIELDS)
+@returns(DETAIL_FIELDS, weather=WEATHER_FIELDS)
 @activities.command("get")
 @click.argument("activity_id", type=int)
 @click.pass_context
