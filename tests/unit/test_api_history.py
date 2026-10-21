@@ -611,21 +611,3 @@ class TestGetRacePredictions:
 
 
 # ── Default window ───────────────────────────────────────────────────────────
-
-
-class TestDefaultWindow:
-    def test_365_days(self):
-        start, end = api.default_window(365)
-        from datetime import datetime
-
-        s = datetime.strptime(start, "%Y-%m-%d").date()
-        e = datetime.strptime(end, "%Y-%m-%d").date()
-        assert (e - s).days == 365
-
-    def test_custom_days(self):
-        start, end = api.default_window(30)
-        from datetime import datetime
-
-        s = datetime.strptime(start, "%Y-%m-%d").date()
-        e = datetime.strptime(end, "%Y-%m-%d").date()
-        assert (e - s).days == 30

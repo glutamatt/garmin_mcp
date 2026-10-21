@@ -12,11 +12,10 @@ import logging
 import os
 
 import requests
-from fastmcp import Context
 from garminconnect import Garmin, GarminConnectAuthenticationError
 from garth.exc import GarthHTTPError
 
-from garmin_mcp.client_factory import create_client_from_tokens, set_session_tokens
+from garmin_mcp.client_factory import create_client_from_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -186,26 +185,25 @@ def register_tools(app):
     """Register authentication tools with the MCP app."""
 
     @app.tool()
-    def garmin_login(email: str, password: str, ctx: Context = None, user_id: str = None) -> dict:
+    def garmin_login(email: str, password: str, user_id: str = None) -> dict:
         """
         Login to Garmin Connect. Validates credentials and returns tokens.
+
+        Stateless: the caller keeps the tokens (in its JWT) and sends them with
+        each `/cli` request.
 
         Args:
             email: Your Garmin Connect email address
             password: Your Garmin Connect password
-            ctx: FastMCP Context (automatically injected)
             user_id: Optional custom user ID (defaults to email-based ID)
 
         Returns:
             Login result with user info or error message
         """
-        result = login(email, password, user_id)
-        if result.get("success") and ctx and result.get("tokens"):
-            set_session_tokens(ctx, result["tokens"])
-        return result
+        return login(email, password, user_id)
 
     @app.tool()
-    def garmin_logout(ctx: Context = None) -> dict:
+    def garmin_logout() -> dict:
         """
         Logout from the current Garmin session.
 

@@ -85,13 +85,6 @@ def _daterange(start: str, end: str) -> list[str]:
     return out
 
 
-def default_window(days: int = 365) -> tuple[str, str]:
-    """Default (start, end) window: `days` back from today, inclusive."""
-    today = date.today()
-    start = today - timedelta(days=days)
-    return start.isoformat(), today.isoformat()
-
-
 def _flatten(d: dict, prefix: str = "") -> dict:
     """Flatten one level of nested dicts; drop nested lists.
 
