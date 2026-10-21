@@ -188,11 +188,14 @@ class TestMissingReason:
             api.missing_reason(client, api.TRAINING_STATUS)
 
     def test_feature_flags_are_garmin_flags(self):
-        """Names seen in Garmin's `deviceBasedIndicators` answer (02/10/2026)."""
+        """Names seen in Garmin's `deviceBasedIndicators` answer (02/10 and 21/10/2026)."""
         assert api.FEATURE_FLAGS == {
             "training_readiness": "hasTrainingReadinessCapableDevice",
             "training_status": "hasTrainingStatusCapableDevice",
             "training_load": "hasAcuteTrainingLoadCapableDevice",
+            "lactate_threshold": "hasRunningLactateThresholdCapableDevice",
+            "endurance_score": "hasHillScoreAndEnduranceScoreCapableDevice",
+            "hill_score": "hasHillScoreAndEnduranceScoreCapableDevice",
         }
 
 

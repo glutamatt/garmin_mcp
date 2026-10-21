@@ -573,8 +573,8 @@ class TestGetRacePredictions:
         rows = api.get_race_predictions(client, "2026-04-14", "2026-04-15")
         assert len(rows) == 2
         assert [r["date"] for r in rows] == ["2026-04-14", "2026-04-15"]
-        assert rows[1]["race_5k_seconds"] == 1200
-        assert rows[1]["race_marathon_seconds"] == 11400
+        assert rows[1]["race_5k_s"] == 1200
+        assert rows[1]["race_marathon_s"] == 11400
         client.get_race_predictions.assert_called_once_with(
             startdate="2026-04-14", enddate="2026-04-15", _type="daily"
         )
@@ -587,7 +587,7 @@ class TestGetRacePredictions:
         }
         rows = api.get_race_predictions(client, "2026-04-15", "2026-04-15")
         assert len(rows) == 1
-        assert rows[0]["race_5k_seconds"] == 1200
+        assert rows[0]["race_5k_s"] == 1200
 
     def test_empty(self):
         client = Mock()

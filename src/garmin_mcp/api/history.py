@@ -404,7 +404,7 @@ def get_heart_rate(
 
 # Daily wellness series (`history daily`): one ranged endpoint per kind of data,
 # 28 days at most per call (29+ → HTTP 400, checked on each). Each entry →
-# (key in the raw row of `api/wellness_fields.py`, URL of a window, keep `values` only).
+# (key in the raw row of `api/health_fields.py`, URL of a window, keep `values` only).
 _DAILY_MAX_WINDOW_DAYS = 28
 _DAILY_SOURCES: tuple[tuple[str, str, bool], ...] = (
     ("steps", "/usersummary-service/stats/steps/daily/{start}/{end}", False),
@@ -422,11 +422,11 @@ def get_daily(client: Garmin, start_date: str, end_date: str) -> list[dict]:
     Six ranged endpoints (the Garmin Connect web reports), 28-day windows, in
     parallel, merged by date: 6 calls per 28 days. Then one daily summary, of the
     last day with data, for `synced_until` (a day the watch has not fully synced).
-    Fields and units: `api/wellness_fields.py`. A day without any measure (watch
+    Fields and units: `api/health_fields.py`. A day without any measure (watch
     not worn) is left out. A failed call fails the command: a series with holes
     would read as days without data.
     """
-    from garmin_mcp.api.wellness_fields import MEASURES, daily_row
+    from garmin_mcp.api.health_fields import MEASURES, daily_row
 
     chunks = _chunk_range(start_date, end_date, _DAILY_MAX_WINDOW_DAYS)
     calls = [(source, chunk) for source in _DAILY_SOURCES for chunk in chunks]
@@ -539,10 +539,10 @@ def get_race_predictions(
             continue
         rows.append({
             "date": r.get("calendarDate") or r.get("fromCalendarDate") or r.get("date"),
-            "race_5k_seconds": r.get("time5K"),
-            "race_10k_seconds": r.get("time10K"),
-            "race_half_marathon_seconds": r.get("timeHalfMarathon"),
-            "race_marathon_seconds": r.get("timeMarathon"),
+            "race_5k_s": r.get("time5K"),
+            "race_10k_s": r.get("time10K"),
+            "race_half_marathon_s": r.get("timeHalfMarathon"),
+            "race_marathon_s": r.get("timeMarathon"),
         })
     rows.sort(key=lambda x: str(x.get("date") or ""))
     return rows

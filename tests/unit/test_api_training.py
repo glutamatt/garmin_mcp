@@ -14,52 +14,51 @@ NO_DATA_DAY = {"date": "2024-01-15", "available": False, "reason": "no_data"}
 
 
 class TestGetMaxMetrics:
-    def test_single_metric(self, client):
-        client.get_max_metrics.return_value = {
-            "metricType": "RUNNING",
-            "vo2MaxValue": 52.5,
-            "fitnessAge": 25,
-            "chronologicalAge": 35,
-            "lactateThresholdHeartRate": 170,
-            "lactateThresholdSpeed": 3.5,
+    def test_vo2max_and_fitness_age(self, client):
+        """Garmin's shape: [{generic, cycling, heatAltitudeAcclimation}]; fitness age from its own endpoint."""
+        client.get_max_metrics.return_value = [{
+            "userId": 1,
+            "generic": {"calendarDate": "2024-01-15", "vo2MaxValue": 50.0, "vo2MaxPreciseValue": 49.7,
+                        "fitnessAge": None},
+            "cycling": {"calendarDate": "2024-01-15", "vo2MaxValue": 48.0},
+            "heatAltitudeAcclimation": None,
+        }]
+        client.get_fitnessage_data.return_value = {
+            "chronologicalAge": 42, "fitnessAge": 38.923552068371144, "achievableFitnessAge": 36.267153123465285,
         }
-        result = api.get_max_metrics(client, "2024-01-15")
-        assert result["vo2_max"] == 52.5
-        assert result["fitness_age_years"] == 25
-        assert result["lactate_threshold_hr_bpm"] == 170
-
-    def test_list_of_metrics(self, client):
-        client.get_max_metrics.return_value = [
-            {"metricType": "RUNNING", "vo2MaxValue": 52.5},
-            {"metricType": "CYCLING", "vo2MaxValue": 48.0},
-        ]
-        result = api.get_max_metrics(client, "2024-01-15")
-        assert "metrics" in result
-        assert len(result["metrics"]) == 2
+        assert api.get_max_metrics(client, "2024-01-15") == {
+            "date": "2024-01-15", "vo2_max": 50.0, "vo2_max_precise": 49.7, "cycling_vo2_max": 48.0,
+            "fitness_age": 38.9, "achievable_fitness_age": 36.3, "chronological_age": 42,
+        }
 
     def test_no_data_is_unavailable(self, client):
         client.get_max_metrics.return_value = None
+        client.get_fitnessage_data.return_value = None
         assert api.get_max_metrics(client, "2024-01-15") == NO_DATA_DAY
+
+    def test_fitness_age_failure_keeps_the_vo2max(self, client):
+        from garminconnect import GarminConnectConnectionError
+
+        client.get_max_metrics.return_value = [{"generic": {"calendarDate": "2024-01-15", "vo2MaxValue": 50.0}}]
+        client.get_fitnessage_data.side_effect = GarminConnectConnectionError("404")
+        assert api.get_max_metrics(client, "2024-01-15") == {"date": "2024-01-15", "vo2_max": 50.0}
 
 
 class TestGetHrvData:
     def test_curates_summary(self, client):
         client.get_hrv_data.return_value = {
             "hrvSummary": {
-                "calendarDate": "2024-01-15",
-                "lastNightAvg": 45,
-                "lastNight5MinHigh": 65,
-                "weeklyAvg": 48,
-                "baseline": {"balancedLow": 35, "balancedUpper": 55},
-                "status": "BALANCED",
-                "feedbackPhrase": "Your HRV is balanced",
-            }
+                "calendarDate": "2024-01-15", "weeklyAvg": 28, "lastNightAvg": 35, "lastNight5MinHigh": 60,
+                "baseline": {"lowUpper": 30, "balancedLow": 32, "balancedUpper": 43, "markerValue": 0.05},
+                "status": "LOW", "feedbackPhrase": "HRV_LOW_5",
+            },
+            "hrvReadings": [{"hrvValue": 30}],
         }
-        result = api.get_hrv_data(client, "2024-01-15")
-        assert result["last_night_avg_hrv_ms"] == 45
-        assert result["weekly_avg_hrv_ms"] == 48
-        assert result["status"] == "BALANCED"
-        assert result["baseline_balanced_low_ms"] == 35
+        assert api.get_hrv_data(client, "2024-01-15") == {
+            "date": "2024-01-15", "last_night_avg_hrv_ms": 35, "last_night_5min_high_hrv_ms": 60,
+            "weekly_avg_hrv_ms": 28, "baseline_balanced_low_ms": 32, "baseline_balanced_upper_ms": 43,
+            "hrv_status": "LOW", "hrv_feedback": "HRV_LOW_5",
+        }
 
     def test_no_data_is_unavailable(self, client):
         client.get_hrv_data.return_value = None
@@ -213,42 +212,47 @@ class TestGetTrainingStatus:
 
 
 class TestGetProgressSummary:
-    def test_distance_metric(self, client):
+    def test_distance_per_sport_in_metres(self, client):
         client.get_progress_summary_between_dates.return_value = [
-            {
-                "date": "2024-01-15",
-                "countOfActivities": 10,
-                "stats": {
-                    "running": {
-                        "distance": {
-                            "count": 10,
-                            "min": 300000,
-                            "max": 1000000,
-                            "avg": 500000,
-                            "sum": 5000000,
-                        }
-                    }
-                },
-            }
+            {"date": "2024-01-01", "countOfActivities": 3, "stats": {
+                "running": {"distance": {"count": 2, "sum": 2000000.0}},
+                "cycling": {"distance": {"count": 1, "sum": 5000000.0}},
+            }},
+            {"date": "2024-01-08", "countOfActivities": 1, "stats": {
+                "running": {"distance": {"count": 1, "sum": 1000000.0}},
+            }},
         ]
-        result = api.get_progress_summary(client, "2024-01-01", "2024-01-15", "distance")
-        assert result["entries"][0]["activity_type"] == "running"
-        assert result["entries"][0]["activity_count"] == 10
-        assert result["entries"][0]["total_distance_meters"] == 50000.0
-        assert result["total_activities"] == 10
+        assert api.get_progress_summary(client, "2024-01-01", "2024-01-14", "distance") == {
+            "metric": "distance", "from": "2024-01-01", "to": "2024-01-14", "activity_count": 4, "count": 2,
+            "sports": [
+                {"sport": "cycling", "activity_count": 1, "total_distance_m": 50000, "avg_distance_m": 50000},
+                {"sport": "running", "activity_count": 3, "total_distance_m": 30000, "avg_distance_m": 10000},
+            ],
+        }
+
+    def test_duration_in_seconds(self, client):
+        client.get_progress_summary_between_dates.return_value = [
+            {"stats": {"running": {"duration": {"count": 2, "sum": 7200000.0}}}},
+        ]
+        [running] = api.get_progress_summary(client, "2024-01-01", "2024-01-14", "duration")["sports"]
+        assert (running["total_duration_s"], running["avg_duration_s"]) == (7200, 3600)
 
     def test_no_data_is_an_empty_list(self, client):
-        client.get_progress_summary_between_dates.return_value = None
-        result = api.get_progress_summary(client, "2024-01-01", "2024-01-15", "distance")
-        assert result["total_activities"] == 0
-        assert result["entries"] == []
+        client.get_progress_summary_between_dates.return_value = []
+        out = api.get_progress_summary(client, "2024-01-01", "2024-01-14", "distance")
+        assert (out["count"], out["sports"]) == (0, [])
 
 
 class TestGetRacePredictions:
-    def test_returns_raw(self, client):
-        client.get_race_predictions.return_value = {"5K": "22:00", "10K": "46:00"}
-        result = api.get_race_predictions(client)
-        assert "5K" in result
+    def test_times_in_seconds(self, client):
+        client.get_race_predictions.return_value = {
+            "userId": 1, "calendarDate": "2024-01-15", "time5K": 1441, "time10K": 3076,
+            "timeHalfMarathon": 7006, "timeMarathon": 15702,
+        }
+        assert api.get_race_predictions(client) == {
+            "date": "2024-01-15", "race_5k_s": 1441, "race_10k_s": 3076,
+            "race_half_marathon_s": 7006, "race_marathon_s": 15702,
+        }
 
     def test_no_data_is_unavailable(self, client):
         client.get_race_predictions.return_value = None
@@ -257,17 +261,100 @@ class TestGetRacePredictions:
 
 class TestGetGoals:
     def test_returns_data(self, client):
-        client.get_goals.return_value = [{"goalType": "steps", "target": 10000}]
-        result = api.get_goals(client, "active")
-        assert isinstance(result, list)
+        client.get_goals.return_value = [{"goalId": 1}]
+        assert api.get_goals(client) == {"count": 1, "goals": [{"goalId": 1}]}
 
     def test_no_data_is_an_empty_list(self, client):
         client.get_goals.return_value = None
-        assert api.get_goals(client) == []
+        assert api.get_goals(client) == {"count": 0, "goals": []}
 
 
-class TestGetPersonalRecord:
-    def test_returns_data(self, client):
-        client.get_personal_record.return_value = [{"recordType": "FASTEST_5K"}]
-        result = api.get_personal_record(client)
-        assert isinstance(result, list)
+class TestGetPersonalRecords:
+    def test_record_value_unit_date_activity(self, client):
+        client.get_personal_record.return_value = [
+            {"typeId": 3, "activityId": 11, "activityName": "Morning Run", "activityType": "running",
+             "activityStartDateTimeLocalFormatted": "2024-06-09T14:24:12.0", "value": 1421.052001953125,
+             "prStartTimeGmtFormatted": "2024-06-09T12:35:39.0", "status": "ACCEPTED"},
+            {"typeId": 8, "activityId": 12, "activityName": "Long Ride", "activityType": "cycling",
+             "activityStartDateTimeLocalFormatted": "2024-06-28T08:29:04.0", "value": 80981.14},
+            {"typeId": 99, "activityId": 13, "activityStartDateTimeLocalFormatted": "2024-07-01T08:00:00.0",
+             "value": 4.5},
+        ]
+        assert api.get_personal_records(client) == {"count": 3, "records": [
+            {"record": "run_5k", "value_s": 1421, "date": "2024-06-09", "activity_id": 11,
+             "activity_name": "Morning Run", "sport": "running"},
+            {"record": "ride_longest", "value_m": 80981, "date": "2024-06-28", "activity_id": 12,
+             "activity_name": "Long Ride", "sport": "cycling"},
+            # an unknown record keeps Garmin's value, without a unit
+            {"record": "type_99", "value": 4.5, "date": "2024-07-01", "activity_id": 13},
+        ]}
+
+
+class TestGetLactateThreshold:
+    def test_threshold_and_ftp(self, client):
+        client.get_lactate_threshold.return_value = {
+            "speed_and_heart_rate": {"calendarDate": "2024-01-10", "speed": 0.33, "heartRate": 172},
+            "power": {"functionalThresholdPower": 381, "powerToWeight": 5.5458, "ftpCreateTime": "2024-01-02T05:01:47.580"},
+        }
+        assert api.get_lactate_threshold(client) == {
+            "lactate_threshold_hr_bpm": 172, "lactate_threshold_date": "2024-01-10",
+            "ftp_watts": 381, "power_to_weight": 5.55, "ftp_date": "2024-01-02T05:01:47",
+        }
+
+    def test_ftp_only_says_why_there_is_no_threshold(self, client):
+        """Forerunner 165: a running FTP, no lactate threshold."""
+        client.get_lactate_threshold.return_value = {
+            "speed_and_heart_rate": {"speed": None, "heartRate": None},
+            "power": {"functionalThresholdPower": 381, "powerToWeight": 5.5458},
+        }
+        client.get_usage_indicators.return_value = {
+            "deviceBasedIndicators": {"hasRunningLactateThresholdCapableDevice": False}}
+        out = api.get_lactate_threshold(client)
+        assert out["ftp_watts"] == 381
+        assert out["empty_fields"] == {"lactate_threshold_hr_bpm": "not_supported_by_device"}
+
+
+class TestGetEnduranceScore:
+    def test_score_class_and_weekly_means(self, client):
+        client.get_endurance_score.return_value = {
+            "groupMap": {"2024-04-23": {"groupAverage": 8499, "groupMax": 8578},
+                         "2024-04-16": {"groupAverage": 8614, "groupMax": 8649}},
+            "enduranceScoreDTO": {
+                "calendarDate": "2024-07-08", "overallScore": 8587, "classification": 6,
+                "classificationLowerLimitIntermediate": 5100, "classificationLowerLimitTrained": 5800,
+                "classificationLowerLimitWellTrained": 6600, "classificationLowerLimitExpert": 7300,
+                "classificationLowerLimitSuperior": 8100, "classificationLowerLimitElite": 8800,
+            },
+        }
+        out = api.get_endurance_score(client, "2024-07-08", 12)
+        client.get_endurance_score.assert_called_once_with("2024-04-15", "2024-07-08")
+        assert out["endurance_score"] == 8587
+        assert out["endurance_class"] == "superior"
+        assert out["endurance_class_limits"]["elite"] == 8800
+        assert out["weekly"] == [{"week": "2024-04-16", "avg": 8614, "max": 8649},
+                                 {"week": "2024-04-23", "avg": 8499, "max": 8578}]
+
+    def test_not_computed_by_the_device(self, client):
+        client.get_endurance_score.return_value = {"groupMap": {"2024-07-01": {"groupAverage": None}},
+                                                   "enduranceScoreDTO": None}
+        client.get_usage_indicators.return_value = {
+            "deviceBasedIndicators": {"hasHillScoreAndEnduranceScoreCapableDevice": False}}
+        assert api.get_endurance_score(client, "2024-07-08", 12) == {
+            "date": "2024-07-08", "available": False, "reason": "not_supported_by_device"}
+
+
+class TestGetHillScore:
+    def test_scores_per_day(self, client):
+        client.get_hill_score.return_value = {"hillScoreDTOList": [
+            {"calendarDate": "2024-07-08", "overallScore": 61, "strengthScore": 55, "enduranceScore": 64},
+        ]}
+        assert api.get_hill_score(client, "2024-07-01", "2024-07-08") == {
+            "from": "2024-07-01", "to": "2024-07-08", "count": 1, "days": [
+                {"date": "2024-07-08", "hill_score": 61, "hill_strength_score": 55, "hill_endurance_score": 64}]}
+
+    def test_not_computed_by_the_device(self, client):
+        client.get_hill_score.return_value = {"hillScoreDTOList": []}
+        client.get_usage_indicators.return_value = {
+            "deviceBasedIndicators": {"hasHillScoreAndEnduranceScoreCapableDevice": False}}
+        assert api.get_hill_score(client, "2024-07-01", "2024-07-08") == {
+            "from": "2024-07-01", "to": "2024-07-08", "available": False, "reason": "not_supported_by_device"}

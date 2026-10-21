@@ -7,8 +7,9 @@ the same concept has the same name and unit in every command that gives it, and
 is absent from the data, it is not unknown).
 
 Naming rule (audit C7):
-- snake_case, the unit as suffix: `_m`, `_cm`, `_s`, `_ms`, `_mps` (m/s),
-  `_s_per_km`, `_bpm`, `_spm` (steps/min), `_kcal`, `_watts`, `_celsius`, `_percent`.
+- snake_case, the unit as suffix: `_m`, `_cm`, `_kg`, `_s`, `_ms`, `_mps` (m/s),
+  `_s_per_km`, `_bpm`, `_spm` (steps/min), `_brpm` (breaths/min), `_kcal`,
+  `_watts`, `_celsius`, `_percent`.
   No suffix for counts, scores, labels and ids, nor for a measure named after
   its unit (`vo2_max`, mL/kg/min).
 - SI units. Imperial values from Garmin (°F, mph) are converted. A pace is an
@@ -77,16 +78,19 @@ class FieldSet:
     `items_key` says where the curated items are in the command's answer
     (`"activities"`, `"laps"`), or None when the answer is the item itself.
     `always` fields are kept by `--fields` even when not asked for.
+    `only`: a summary of the source (`health snapshot`): just these fields.
     """
 
     source: Source
     registry: tuple[Field, ...]
     items_key: str | None = None
     always: tuple[str, ...] = ()
+    only: tuple[str, ...] | None = None
 
     @property
     def fields(self) -> tuple[Field, ...]:
-        return tuple(f for f in self.registry if self.source in f.keys)
+        return tuple(f for f in self.registry
+                     if self.source in f.keys and (self.only is None or f.name in self.only))
 
     @property
     def names(self) -> tuple[str, ...]:
