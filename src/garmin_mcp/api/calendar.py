@@ -11,7 +11,6 @@ import calendar as _month_days
 from datetime import date, timedelta
 
 from garmin_mcp.api.calendar_fields import CALENDAR_ITEMS, EVENT_ITEMS
-from garmin_mcp.api.contract import InvalidInput
 
 
 def _items(client, start: str, end: str) -> list[dict]:
@@ -26,8 +25,6 @@ def _items(client, start: str, end: str) -> list[dict]:
 
 def get_month(client, year: int, month: int) -> dict:
     """The calendar of one month (its days only)."""
-    if not 1 <= month <= 12:
-        raise InvalidInput(f"Month must be 1-12, got {month}")
     first = date(year, month, 1)
     last = first.replace(day=_month_days.monthrange(year, month)[1])
     items = _items(client, first.isoformat(), last.isoformat())
@@ -36,8 +33,6 @@ def get_month(client, year: int, month: int) -> dict:
 
 def get_upcoming(client, today: str, days: int) -> dict:
     """The calendar from `today` to `today + days`."""
-    if days < 0:
-        raise InvalidInput(f"--days must be 0 or more, got {days}")
     start = date.fromisoformat(today)
     end = (start + timedelta(days=days)).isoformat()
     items = _items(client, today, end)

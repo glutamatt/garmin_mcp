@@ -1650,7 +1650,7 @@ def calendar(ctx):
 
 @calendar.command("month")
 @click.argument("year", type=int)
-@click.argument("month", type=int)
+@click.argument("month", type=click.IntRange(1, 12))
 @click.pass_context
 def calendar_month(ctx, year, month):
     """One month: activities, scheduled workouts, races.
@@ -1679,7 +1679,7 @@ def calendar_events(ctx, start_date, end_date, limit):
 
 
 @calendar.command("upcoming")
-@click.option("--days", default=7, type=int, help="Days forward to look")
+@click.option("--days", default=7, type=click.IntRange(min=0), help="Days forward to look")
 @click.pass_context
 def calendar_upcoming(ctx, days):
     """From today to today + days: scheduled workouts, races, activities (same fields as `calendar month`)."""

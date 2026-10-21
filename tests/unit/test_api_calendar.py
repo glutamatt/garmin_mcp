@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 from garmin_mcp.api import calendar as api
-from garmin_mcp.api.contract import InvalidInput
+from garmin_mcp.cli import execute
 
 ACTIVITY = {
     "id": 101, "itemType": "activity", "activityTypeId": 1, "title": "Morning Run", "date": "2026-04-08",
@@ -54,9 +54,10 @@ class TestCalendarItems:
         assert [i["date"] for i in out["items"]] == ["2026-04-08", "2026-04-09", "2026-04-12"]
         assert out["count"] == 3
 
-    def test_invalid_month(self, client):
-        with pytest.raises(InvalidInput):
-            api.get_month(client, 2026, 13)
+    @pytest.mark.parametrize("command", ["calendar month 2026 13", "calendar upcoming --days -1"])
+    def test_invalid_input_is_refused_before_garmin(self, command):
+        result = execute(command, "fake-token")
+        assert result["exit_code"] == 2
 
     def test_upcoming_from_today(self, client):
         out = api.get_upcoming(client, "2026-04-08", 7)
