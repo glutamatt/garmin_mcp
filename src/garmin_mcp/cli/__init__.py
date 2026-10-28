@@ -548,6 +548,8 @@ def activities_download(ctx, activity_id):
         running cadence around it (wrist glitch) is doubled, a walk is kept
       - speed: enhanced_speed (m/s), not deprecated field
       - pace_min_km: decimal minutes per km (5.5 = 5:30)
+      - timestamp: local time of the watch, with its UTC offset
+        (2026-09-30T08:26:58+02:00)
       - GPS: semicircles → degrees
       - columns with all-null values dropped
 

@@ -13,7 +13,7 @@ import os
 import statistics
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from garminconnect import Garmin
 from garmin_mcp.api.activity_fields import (
@@ -252,6 +252,20 @@ def download_fit(client: Garmin, activity_id: int) -> bytes:
 _SEMICIRCLES_TO_DEG = 180.0 / (2 ** 31)
 
 
+def _fit_time_zone(fit) -> timezone:
+    """The watch's UTC offset during the activity, from the FIT `activity` message.
+
+    FIT times are UTC; the `activity` message also has the same instant in local
+    time (`local_timestamp`). Without it, the times stay UTC (offset +00:00).
+    """
+    for msg in fit.get_messages("activity"):
+        fields = {f.name: f.value for f in msg.fields}
+        utc, local = fields.get("timestamp"), fields.get("local_timestamp")
+        if isinstance(utc, datetime) and isinstance(local, datetime):
+            return timezone(local - utc)
+    return timezone.utc
+
+
 def _fit_records(fit_bytes: bytes) -> list[dict]:
     """The FIT's second-by-second records, cleaned: one row per record (see `download --help`)."""
     from fitparse import FitFile
@@ -267,6 +281,8 @@ def _fit_records(fit_bytes: bytes) -> list[dict]:
     is_running = sport in ("running", "trail_running", "treadmill_running", None)
     cadence_label = "cadence_spm" if is_running else "cadence_rpm"
     cadence_multiplier = 2 if is_running else 1
+
+    zone = _fit_time_zone(fit)
 
     # The watch's laps: a record belongs to the last lap started at or before it.
     lap_starts = sorted(
@@ -290,7 +306,7 @@ def _fit_records(fit_bytes: bytes) -> list[dict]:
         cadence_rpm = raw.get("cadence")
         frac_cadence = raw.get("fractional_cadence") or 0.0
 
-        row = {"timestamp": ts.isoformat()}
+        row = {"timestamp": ts.replace(tzinfo=timezone.utc).astimezone(zone).isoformat()}
         row["elapsed_s"] = round((ts - first_ts).total_seconds(), 1)
         row["lap"] = max(bisect.bisect_right(lap_starts, ts), 1) if lap_starts else None
         row["distance_m"] = round(raw["distance"], 1) if raw.get("distance") is not None else None
