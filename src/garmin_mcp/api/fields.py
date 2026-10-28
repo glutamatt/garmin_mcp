@@ -24,7 +24,7 @@ Pure data and functions: no Garmin call here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Union
 
 from garmin_mcp.api.contract import NO_DATA, InvalidInput
@@ -227,6 +227,14 @@ def parse_time(value: str) -> datetime:
 def iso_time(value: str) -> str:
     """Any Garmin time string → `YYYY-MM-DDTHH:MM:SS`."""
     return parse_time(value).strftime(_GARMIN_TIME)
+
+
+def local_epoch_time(ms: float) -> str:
+    """An epoch in ms that holds the local time (Garmin's sleep times) → `YYYY-MM-DDTHH:MM:SS`.
+
+    Read as UTC, it gives the local clock time: no time zone to apply.
+    """
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime(_GARMIN_TIME)
 
 
 def shift_time(value: str, offset: timedelta) -> str:

@@ -9,14 +9,18 @@ failures are exceptions (see `api/contract.py`).
 
 import logging
 import re
+import statistics
 from datetime import date as _date, timedelta as _timedelta
 
 from garminconnect import Garmin
 from garmin_mcp.api import capabilities
+from garmin_mcp.api.activities import add_effort
+from garmin_mcp.api.activity_fields import LIST_EFFORT_FIELDS, LIST_FIELDS
 from garmin_mcp.api.contract import (
     NO_DATA,
     NOT_SUPPORTED_BY_DEVICE,
     AuthError,
+    InvalidInput,
     as_garmin_error,
     day_answer,
     unavailable,
@@ -26,6 +30,7 @@ from garmin_mcp.api.training_fields import (
     ENDURANCE_FIELDS,
     HILL_FIELDS,
     LACTATE_THRESHOLD_FIELDS,
+    LOAD_SOURCES,
     MAX_METRICS_FIELDS,
     RACE_PREDICTION_FIELDS,
     personal_record,
@@ -207,6 +212,92 @@ def _monthly_load(balance: dict) -> dict:
         loads[f"{name}_target_min"] = _load(balance.get(f"{key}TargetMin"))
         loads[f"{name}_target_max"] = _load(balance.get(f"{key}TargetMax"))
     return loads
+
+
+_LOAD_WEEKS = 4
+
+
+def get_training_load(client: Garmin, date: str, source: str = "srpe") -> dict:
+    """Load of the 4 weeks that end on `date` (local days, every sport), from the activities.
+
+    - `week_load`: the last 7 days; `chronic_week_load`: the mean of the 3 weeks before.
+    - `acwr` = week_load / chronic_week_load, uncoupled: the last week is not in
+      the chronic load, so it does not weigh on both sides of the ratio. None when
+      the 3 weeks before have no load.
+    - Foster: `monotony` = mean / standard deviation of the last 7 daily loads
+      (None when every day has the same load), `strain` = week_load × monotony.
+
+    An activity without load (no RPE, a watch without EPOC) counts as 0 and is
+    listed in `load_missing`. When no activity has a load: `available: false`.
+    """
+    if source not in LOAD_SOURCES:
+        raise InvalidInput(f"Unknown load '{source}'. Valid: {', '.join(LOAD_SOURCES)}")
+    try:
+        end = _date.fromisoformat(date)
+    except ValueError as e:
+        raise InvalidInput(f"Invalid date '{date}' (YYYY-MM-DD)") from e
+    start = end - _timedelta(weeks=_LOAD_WEEKS) + _timedelta(days=1)
+    window = {"from": start.isoformat(), "to": end.isoformat()}
+
+    raw = client.get_activities_by_date(window["from"], window["to"], "") or []
+    if source == "srpe":
+        raw, missing = add_effort(client, raw)
+    else:
+        missing = {}
+
+    daily = {start + _timedelta(days=i): 0.0 for i in range(_LOAD_WEEKS * 7)}
+    for activity in raw:
+        load = _activity_load(activity, source)
+        if load is None:
+            missing.setdefault(str(activity.get("activityId")), NO_DATA)
+            continue
+        day = _date.fromisoformat(LIST_FIELDS.value("start_time", activity)[:10])
+        if day in daily:
+            daily[day] += load
+
+    if raw and len(missing) == len(raw):
+        reason = (capabilities.missing_reason(client, capabilities.TRAINING_LOAD)
+                  if source == "epoc" else NO_DATA)
+        return unavailable(reason, **window, load=source, activities=len(raw))
+
+    loads = list(daily.values())
+    last_7 = loads[-7:]
+    week_load = sum(last_7)
+    chronic_week_load = sum(loads[:-7]) / (_LOAD_WEEKS - 1)
+    deviation = statistics.pstdev(last_7)
+    monotony = round(statistics.mean(last_7) / deviation, 2) if deviation else None
+    answer = {
+        **window,
+        "load": source,
+        "unit": LOAD_SOURCES[source],
+        "week_load": round(week_load),
+        "chronic_week_load": round(chronic_week_load),
+        "acwr": round(week_load / chronic_week_load, 2) if chronic_week_load else None,
+        "monotony": monotony,
+        "strain": round(week_load * monotony) if monotony is not None else None,
+        "weeks": [
+            {"from": (start + _timedelta(weeks=w)).isoformat(),
+             "to": (start + _timedelta(weeks=w, days=6)).isoformat(),
+             "load": round(sum(loads[w * 7:(w + 1) * 7]))}
+            for w in range(_LOAD_WEEKS)
+        ],
+        "last_7_days": [{"date": day.isoformat(), "load": round(load)} for day, load in list(daily.items())[-7:]],
+        "activities": len(raw),
+    }
+    if missing:
+        answer["load_missing"] = missing
+    return answer
+
+
+def _activity_load(activity: dict, source: str) -> float | None:
+    """One activity's load, or None when it has none."""
+    if source == "epoc":
+        return LIST_FIELDS.value("training_load", activity)
+    effort = LIST_EFFORT_FIELDS.value("perceived_effort", activity)
+    duration = LIST_EFFORT_FIELDS.value("duration_s", activity)
+    if effort is None or duration is None:
+        return None
+    return effort * duration / 60
 
 
 # `training progress` metrics: output name and divisor from Garmin's internal unit to SI.

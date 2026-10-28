@@ -1,5 +1,6 @@
 """Unit tests for garmin_mcp.api.activities — curation logic with mock client."""
 
+import csv
 import io
 import zipfile
 from datetime import datetime
@@ -374,8 +375,8 @@ class TestDownloadActivity:
         assert open(result["path"]).read() == ""
 
     @staticmethod
-    def _fit(sport: str) -> Mock:
-        """A FIT whose one record has every field the CSV reads."""
+    def _fit(sport: str, activity: dict | None = None) -> Mock:
+        """A FIT whose one record has every field the CSV reads; `activity`: its `activity` message."""
         def message(**fields):
             return SimpleNamespace(fields=[SimpleNamespace(name=k, value=v) for k, v in fields.items()])
 
@@ -386,7 +387,8 @@ class TestDownloadActivity:
             vertical_oscillation=80.0, stance_time=250.0, stance_time_balance=50.1,
             step_length=1100.0, vertical_ratio=7.5, power=250,
         )
-        messages = {"sport": [message(sport=sport)], "record": [record]}
+        messages = {"sport": [message(sport=sport)], "record": [record],
+                    "activity": [message(**activity)] if activity else []}
         fit = Mock()
         fit.get_messages.side_effect = lambda name: messages.get(name, [])
         return fit
@@ -402,6 +404,22 @@ class TestDownloadActivity:
         assert len(result["columns"]) >= 16
         missing = [c for c in result["columns"] if c not in activities_download.help]
         assert missing == []
+
+    def _first_timestamp(self, client, tmp_path, fit) -> str:
+        client.download_activity.return_value = self._zip(["1_ACTIVITY.fit"])
+        with patch("fitparse.FitFile", return_value=fit):
+            result = api.download_activity(client, 1, str(tmp_path / "a.csv"))
+        with open(result["path"]) as f:
+            return next(csv.DictReader(f))["timestamp"]
+
+    def test_timestamp_is_the_watch_local_time(self, client, tmp_path):
+        """FIT times are UTC: the `activity` message gives the watch's offset."""
+        fit = self._fit("running", {"timestamp": datetime(2026, 10, 1, 8, 0, 0),
+                                    "local_timestamp": datetime(2026, 10, 1, 10, 0, 0)})
+        assert self._first_timestamp(client, tmp_path, fit) == "2026-10-01T09:00:00+02:00"
+
+    def test_timestamp_without_local_time_stays_utc(self, client, tmp_path):
+        assert self._first_timestamp(client, tmp_path, self._fit("running")) == "2026-10-01T07:00:00+00:00"
 
 
 class TestGetActivityTypes:

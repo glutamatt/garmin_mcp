@@ -216,6 +216,8 @@ def _sleep_daily_response(dates: list[str]) -> dict:
                     "hrvStatus": "BALANCED",
                     "localSleepStartTimeInMillis": 1775682605000,
                     "localSleepEndTimeInMillis": 1775711105000,
+                    "gmtSleepStartTimeInMillis": 1775675405000,
+                    "gmtSleepEndTimeInMillis": 1775703905000,
                 },
             }
             for d in dates
@@ -267,6 +269,9 @@ class TestGetSleep:
         assert r["hrvStatus"] == "BALANCED"
         assert r["restingHeartRate"] == 58
         assert r["spO2"] == 96.7
+        # Sleep times: Garmin's local epochs → local clock time, the GMT ones dropped
+        assert (r["bedtime"], r["wake_time"]) == ("2026-04-08T21:10:05", "2026-04-09T05:05:05")
+        assert not any("InMillis" in k for k in r)
         # Single chunk → single HTTP call
         assert client.connectapi.call_count == 1
         args, _ = client.connectapi.call_args

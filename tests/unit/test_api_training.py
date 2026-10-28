@@ -358,3 +358,94 @@ class TestGetHillScore:
             "deviceBasedIndicators": {"hasHillScoreAndEnduranceScoreCapableDevice": False}}
         assert api.get_hill_score(client, "2024-07-01", "2024-07-08") == {
             "from": "2024-07-01", "to": "2024-07-08", "available": False, "reason": "not_supported_by_device"}
+
+
+def _activity(activity_id, start_local, duration_s, load=None, rpe=None):
+    """A list item (`get_activities_by_date`) and, for its detail, the RPE as Garmin stores it (×10)."""
+    item = {"activityId": activity_id, "startTimeLocal": start_local, "duration": duration_s,
+            "activityType": {"typeKey": "running"}}
+    if load is not None:
+        item["activityTrainingLoad"] = load
+    detail = {"activityId": activity_id, "summaryDTO": {} if rpe is None else {"directWorkoutRpe": rpe * 10}}
+    return item, detail
+
+
+def _with_activities(client, *activities):
+    items = [item for item, _ in activities]
+    details = {item["activityId"]: detail for item, detail in activities}
+    client.get_activities_by_date.return_value = items
+    client.get_activity.side_effect = lambda activity_id: details[activity_id]
+
+
+class TestGetTrainingLoad:
+    def test_foster_and_acwr_from_session_rpe(self, client):
+        """sRPE = RPE × minutes, summed per local day; 4 weeks to the date."""
+        _with_activities(
+            client,
+            _activity(1, "2026-09-10 08:00:00", 3600, rpe=5),   # week 1: 300
+            _activity(2, "2026-09-29 07:00:00", 1800, rpe=4),   # last week: 120
+            _activity(3, "2026-10-01 18:00:00", 2400, rpe=6),   # 240
+            _activity(4, "2026-10-01 07:00:00", 600, rpe=3),    # same day: 30
+        )
+        out = api.get_training_load(client, "2026-10-05")
+        client.get_activities_by_date.assert_called_once_with("2026-09-08", "2026-10-05", "")
+        assert out["from"] == "2026-09-08"
+        assert (out["load"], out["unit"]) == ("srpe", "RPE × min")
+        assert out["week_load"] == 390
+        assert out["chronic_week_load"] == 100  # the 3 weeks before: 300 / 3
+        assert out["acwr"] == 3.9
+        # last 7 days: 120, 0, 270, 0, 0, 0, 0 → mean 55.7, population SD 96.1
+        assert [d["load"] for d in out["last_7_days"]] == [120, 0, 270, 0, 0, 0, 0]
+        assert out["monotony"] == 0.58
+        assert out["strain"] == 226
+        assert [w["load"] for w in out["weeks"]] == [300, 0, 0, 390]
+        assert out["weeks"][0] == {"from": "2026-09-08", "to": "2026-09-14", "load": 300}
+        assert out["activities"] == 4
+        assert "load_missing" not in out
+
+    def test_activity_without_rpe_counts_as_zero_and_is_listed(self, client):
+        _with_activities(client, _activity(1, "2026-10-01 08:00:00", 3600, rpe=5),
+                         _activity(2, "2026-10-02 08:00:00", 3600))
+        out = api.get_training_load(client, "2026-10-05")
+        assert out["week_load"] == 300
+        assert out["load_missing"] == {"2": "no_data"}
+
+    def test_epoc_reads_the_list_only(self, client):
+        _with_activities(client, _activity(1, "2026-10-01 08:00:00", 3600, load=85.4),
+                         _activity(2, "2026-10-03 08:00:00", 3600, load=40.0))
+        out = api.get_training_load(client, "2026-10-05", "epoc")
+        client.get_activity.assert_not_called()
+        assert (out["week_load"], out["unit"]) == (125, "EPOC")
+
+    def test_acwr_is_uncoupled(self, client):
+        """The last week's load is not in the chronic load: no load before it → no ACWR."""
+        _with_activities(client, _activity(1, "2026-10-01 08:00:00", 3600, rpe=5))
+        out = api.get_training_load(client, "2026-10-05")
+        assert (out["week_load"], out["chronic_week_load"], out["acwr"]) == (300, 0, None)
+
+    def test_same_load_every_day_has_no_monotony(self, client):
+        _with_activities(client)
+        out = api.get_training_load(client, "2026-10-05")
+        assert (out["week_load"], out["acwr"], out["monotony"], out["strain"]) == (0, None, None, None)
+
+    def test_a_watch_without_epoc_is_not_supported(self, client):
+        _with_activities(client, _activity(1, "2026-10-01 08:00:00", 3600))
+        client.get_usage_indicators.return_value = {
+            "deviceBasedIndicators": {"hasAcuteTrainingLoadCapableDevice": False}}
+        assert api.get_training_load(client, "2026-10-05", "epoc") == {
+            "from": "2026-09-08", "to": "2026-10-05", "load": "epoc", "activities": 1,
+            "available": False, "reason": "not_supported_by_device",
+        }
+
+    def test_no_rpe_at_all_is_no_data(self, client):
+        _with_activities(client, _activity(1, "2026-10-01 08:00:00", 3600))
+        out = api.get_training_load(client, "2026-10-05")
+        assert (out["available"], out["reason"]) == (False, "no_data")
+
+    @pytest.mark.parametrize("date, source", [("2026-13-01", "srpe"), ("2026-10-05", "trimp")])
+    def test_invalid_input(self, client, date, source):
+        from garmin_mcp.api.contract import InvalidInput
+
+        with pytest.raises(InvalidInput):
+            api.get_training_load(client, date, source)
+        client.get_activities_by_date.assert_not_called()
