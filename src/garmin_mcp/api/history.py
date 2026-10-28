@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta
 
 from garminconnect import Garmin
 from garmin_mcp.api.contract import InvalidInput
+from garmin_mcp.api.fields import local_epoch_time
 
 
 logger = logging.getLogger(__name__)
@@ -249,13 +250,14 @@ def get_sleep(client: Garmin, start_date: str, end_date: str) -> list[dict]:
 
     Uses Garmin's `/sleep-service/stats/sleep/daily/<start>/<end>` endpoint
     (same as the web UI's "4 Weeks" sleep view) chunked in 28-day windows.
-    Raw Garmin field names passed through verbatim — no renaming.
+    Raw Garmin field names passed through verbatim, except the sleep times:
+    `bedtime` and `wake_time` (local, `YYYY-MM-DDTHH:MM:SS`, as in `health sleep`)
+    replace Garmin's epochs in ms (`localSleep*InMillis`, `gmtSleep*InMillis`).
 
-    Unit quirks (documented in SKILL.md):
+    Unit quirks:
       - `sleepNeed`: MINUTES (despite no unit suffix in the name)
       - phase times (`deepTime`, `lightTime`, `remTime`, `awakeTime`): seconds
       - `totalSleepTimeInSeconds`: seconds (per name)
-      - `localSleep*InMillis` / `gmtSleep*InMillis`: Unix epoch ms
       - `avgOvernightHrv` / `hrv7dAverage`: ms
     """
     chunks = _chunk_range(start_date, end_date, _SLEEP_MAX_WINDOW_DAYS)
@@ -274,11 +276,7 @@ def get_sleep(client: Garmin, start_date: str, end_date: str) -> list[dict]:
             if not resp:
                 continue
             for entry in (resp.get("individualStats") or []):
-                values = entry.get("values") or {}
-                rows.append({
-                    "date": entry.get("calendarDate"),
-                    **values,
-                })
+                rows.append({"date": entry.get("calendarDate"), **_sleep_values(entry.get("values") or {})})
 
     rows.sort(key=lambda r: str(r.get("date") or ""))
     # Dedupe on date (chunk boundaries shouldn't overlap, but guard anyway)
@@ -291,6 +289,19 @@ def get_sleep(client: Garmin, start_date: str, end_date: str) -> list[dict]:
         seen.add(d)
         deduped.append(r)
     return deduped
+
+
+# Garmin's sleep times, epochs in ms: the local ones become `bedtime` / `wake_time`, the GMT ones go.
+_SLEEP_TIMES = {"localSleepStartTimeInMillis": "bedtime", "localSleepEndTimeInMillis": "wake_time"}
+_SLEEP_GMT_TIMES = ("gmtSleepStartTimeInMillis", "gmtSleepEndTimeInMillis")
+
+
+def _sleep_values(values: dict) -> dict:
+    """One night's values with its sleep times local and readable (see `get_sleep`)."""
+    row = {k: v for k, v in values.items() if k not in _SLEEP_TIMES and k not in _SLEEP_GMT_TIMES}
+    for key, name in _SLEEP_TIMES.items():
+        row[name] = local_epoch_time(values[key]) if values.get(key) is not None else None
+    return row
 
 
 HEART_RATE_AGGREGATIONS = ("daily", "weekly")

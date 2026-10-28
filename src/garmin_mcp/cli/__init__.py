@@ -1176,7 +1176,7 @@ _AGGREGATIONS = ("daily", "weekly", "monthly", "yearly", "lifetime")
 # Per-command unit legends — echoed in stdout to keep Apex from tripping on
 # Garmin's internal units (see SKILL.md and reference memory for details).
 _UNITS_SPORT = "distance=cm, duration=ms, calories=kJ, speed=m/s×0.1, elevation=cm"
-_UNITS_SLEEP = "phases=s, sleepNeed=min, HRV=ms, bedtime=epoch_ms"
+_UNITS_SLEEP = "phases=s, sleepNeed=min, HRV=ms, bedtime and wake_time=local time"
 _UNITS_HR = "HR=bpm"
 _UNITS_VO2 = "vo2=ml/kg/min"
 _UNITS_RACE = "time=s"

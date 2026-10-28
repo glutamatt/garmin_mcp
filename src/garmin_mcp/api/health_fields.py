@@ -29,9 +29,9 @@ Naming and unit rule: `api/fields.py`.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
-from garmin_mcp.api.fields import Field, FieldSet, Source, dig, iso_time, parse_time
+from garmin_mcp.api.fields import Field, FieldSet, Source, dig, iso_time, local_epoch_time, parse_time
 
 SUMMARY = Source("summary", "health stats")
 SLEEP = Source("sleep", "health sleep")
@@ -90,12 +90,10 @@ def _battery(pick, path: str | None = None):
 
 
 def _local_epoch(path: str):
-    """An epoch in ms that holds the local time (Garmin's sleep times) → `YYYY-MM-DDTHH:MM:SS`."""
+    """The local time of an epoch in ms that holds it (see `local_epoch_time`)."""
     def read(raw: dict):
         ms = dig(raw, path)
-        if ms is None:
-            return None
-        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        return local_epoch_time(ms) if ms is not None else None
     return read
 
 
