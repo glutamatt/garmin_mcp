@@ -1,6 +1,7 @@
 """
 Training fields — the registry behind `training max-metrics`, `race-predictions`,
-`lactate-threshold`, `endurance-score`, `hill-score` and `personal-records`.
+`lactate-threshold`, `endurance-score`, `hill-score` and `personal-records`,
+and the load sources of `training load`.
 
 Raw keys checked on real answers (neural-runner `tests/garmin-fixtures/`, Forerunner 165)
 where the device computes the metric. The Forerunner 165 computes no lactate threshold
@@ -21,6 +22,12 @@ ENDURANCE = Source("endurance", "training endurance-score")
 HILL = Source("hill", "training hill-score")
 
 _SOURCES = {s.name: s for s in (MAX_METRICS, RACE_PREDICTIONS, LACTATE_THRESHOLD, ENDURANCE, HILL)}
+
+# `training load`: where the load of one activity comes from → its unit.
+LOAD_SOURCES = {
+    "srpe": "RPE × min",  # Foster's session RPE: perceived_effort (0-10) × duration in minutes
+    "epoc": "EPOC",       # Garmin's training_load, when the watch computes it
+}
 
 # Endurance score classes: Garmin's `classification` (1-7) and the lower limit of each.
 ENDURANCE_CLASSES = ("recreational", "intermediate", "trained", "well_trained", "expert", "superior", "elite")

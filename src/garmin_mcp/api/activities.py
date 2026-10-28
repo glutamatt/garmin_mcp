@@ -58,7 +58,7 @@ def get_activities(
     `with_effort`: the RPE and feel of each activity (`perceived_effort`,
     `workout_feel`). The list endpoint has neither: one detail call per
     activity, in parallel. `effort_missing` gives the activities without RPE,
-    and why (see `_add_effort`).
+    and why (see `add_effort`).
     """
     limit = min(max(1, limit), 100)
 
@@ -76,7 +76,7 @@ def get_activities(
         }
 
     if with_effort:
-        raw, missing = _add_effort(client, raw)
+        raw, missing = add_effort(client, raw)
         activities = [LIST_EFFORT_FIELDS.curate(a) for a in raw]
     else:
         missing = {}
@@ -492,7 +492,7 @@ EFFORT_MAX_ACTIVITIES = 100
 _EFFORT_WORKERS = 5
 
 
-def _add_effort(client: Garmin, raw: list[dict]) -> tuple[list[dict], dict[str, str]]:
+def add_effort(client: Garmin, raw: list[dict]) -> tuple[list[dict], dict[str, str]]:
     """Each list item with the `summaryDTO` of its detail (read by LIST_EFFORT_FIELDS),
     and the activities without RPE: `{"<id>": "no_data" | "error: …"}`.
 

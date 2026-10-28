@@ -45,6 +45,7 @@ from garmin_mcp.api.training_fields import (
     ENDURANCE_FIELDS,
     HILL_FIELDS,
     LACTATE_THRESHOLD_FIELDS,
+    LOAD_SOURCES,
     MAX_METRICS_FIELDS,
     RACE_PREDICTION_FIELDS,
 )
@@ -921,7 +922,7 @@ def health_training_readiness(ctx, date):
 @garmin.group()
 @click.pass_context
 def training(ctx):
-    """Performance metrics: VO2max, HRV, training status, race predictions, thresholds, records."""
+    """Performance metrics: VO2max, HRV, training status and load, race predictions, thresholds, records."""
     pass
 
 
@@ -955,6 +956,33 @@ def training_status(ctx, date):
     from garmin_mcp.api import training as api
 
     _run(ctx, lambda: api.get_training_status(_client(ctx), date or _today(ctx)))
+
+
+@training.command("load")
+@click.argument("date", required=False)
+@click.option("--load", "source", default="srpe", type=click.Choice(list(LOAD_SOURCES)),
+              help="Load of one activity: srpe = RPE × minutes (Foster, default), epoc = the watch's training_load")
+@click.pass_context
+def training_load(ctx, date, source):
+    """ACWR, monotony and strain (Foster) of the 4 weeks to DATE (default today), from the activities.
+
+    \b
+    Every sport counts; days are local days.
+      week_load          load of the last 7 days
+      chronic_week_load  mean of the 3 weeks before the last 7 days
+      acwr               week_load / chronic_week_load, uncoupled
+                         (null: no load in the 3 weeks before)
+      monotony           mean / standard deviation of the last 7 daily loads
+                         (null: every day the same)
+      strain             week_load × monotony
+      weeks, last_7_days the loads behind these numbers
+      load_missing       activities without load (no RPE, no EPOC): counted as 0
+    No activity with a load: available false. `training status` gives Garmin's own
+    ACWR, on watches that compute it.
+    """
+    from garmin_mcp.api import training as api
+
+    _run(ctx, lambda: api.get_training_load(_client(ctx), date or _today(ctx), source))
 
 
 @training.command("progress")
