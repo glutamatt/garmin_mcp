@@ -19,6 +19,8 @@ The data goes through a bash-style CLI, not through MCP tools:
   the frontend at login. No MCP tool reads a Garmin token.
 
 Layers: SDK (`garminconnect` fork) → `garmin_mcp.api` (clean dicts) → `garmin_mcp.cli`.
+The SDK is the submodule `python-garminconnect` ([glutamatt/python-garminconnect](https://github.com/glutamatt/python-garminconnect),
+branch `feature/add-coaching-endpoints`): its commit is the one CI tests and the Docker image installs.
 
 The Claude Desktop sections below come from the upstream project. With this fork, an MCP
 client only sees the 2 login tools.
@@ -98,9 +100,10 @@ Your Garmin data is now available in Claude!
 
 ### Development Setup
 
-1. Install the required packages on a new environment:
+1. Install the required packages on a new environment (the `garminconnect` fork is a submodule):
 
 ```bash
+git submodule update --init
 uv sync
 ```
 

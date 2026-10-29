@@ -39,4 +39,4 @@ dev-dependencies = [
 
 [tool.uv.sources]
 garmin-mcp = { workspace = true }
-garminconnect = { path = "../python-garminconnect" }
+garminconnect = { path = "python-garminconnect" }

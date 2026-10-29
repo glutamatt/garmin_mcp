@@ -625,7 +625,7 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.5.0" },
     { name = "fastmcp", specifier = ">=4.1,<5" },
     { name = "fitparse", specifier = ">=1.2.0" },
-    { name = "garminconnect", directory = "../python-garminconnect" },
+    { name = "garminconnect", directory = "python-garminconnect" },
     { name = "garth", specifier = ">=0.5.17,<0.6.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "python-dotenv", specifier = ">=1.1.0" },
@@ -644,7 +644,7 @@ dev = [
 [[package]]
 name = "garminconnect"
 version = "0.2.38"
-source = { directory = "../python-garminconnect" }
+source = { directory = "python-garminconnect" }
 dependencies = [
     { name = "garth" },
 ]
