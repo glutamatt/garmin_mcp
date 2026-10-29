@@ -35,6 +35,7 @@ from garmin_mcp.api.contract import (
     error_reason,
 )
 from garmin_mcp.api.fields import parse_time, shift_time
+from garmin_mcp.api.workout_format import step_target, steps_by_lap_index
 from garmin_mcp.utils import clean_nones
 
 logger = logging.getLogger(__name__)
@@ -166,18 +167,80 @@ def _laps(client: Garmin, activity_id: int) -> dict:
 
     Garmin's laps only have a GMT start. The activity detail gives the offset to
     local time, so a lap's `start_time` is local, as in `list` and `get`.
+    A lap of a workout step has the step's target (`step_target`); when the
+    workout cannot give it, `empty_fields` says why.
     """
     raw = client.get_activity_splits(activity_id) or {}
     laps = raw.get("lapDTOs") or []
+    no_target = None
     if laps:
-        offset = _local_time_offset(client.get_activity(activity_id))
+        detail = client.get_activity(activity_id)
+        offset = _local_time_offset(detail)
         if offset is not None:
             laps = [_with_local_start(lap, offset) for lap in laps]
-    return {
+        laps, no_target = _with_step_targets(client, detail, laps)
+    answer = {
         "activity_id": raw.get("activityId", activity_id),
         "lap_count": len(laps),
         "laps": [LAP_FIELDS.curate(lap) for lap in laps],
     }
+    if no_target:
+        answer["empty_fields"] = {"step_target": no_target}
+    return answer
+
+
+# Why the laps of a workout have no `step_target`. The join is refused, never guessed.
+WORKOUT_NOT_FOUND = "workout_not_found"  # deleted since the run (Garmin answers 404)
+WORKOUT_CHANGED = "workout_changed_after_activity"  # its steps may not be the ones run
+WORKOUT_MULTISPORT = "workout_multisport"  # several segments: lap index not checked across them
+WORKOUT_STEPS_MISMATCH = "workout_steps_mismatch"  # a lap's step index has no step
+
+
+def _with_step_targets(client: Garmin, detail: dict | None, laps: list[dict]) -> tuple[list[dict], str | None]:
+    """The laps with the target of their workout step (`stepTarget`, read by LAP_FIELDS),
+    or why the workout cannot give them.
+
+    One more call (the workout), only for an activity with a workout and laps in it.
+    """
+    workout_id = DETAIL_FIELDS.value("workout_id", detail or {})
+    if workout_id is None or all(lap.get("wktStepIndex") is None for lap in laps):
+        return laps, None
+    try:
+        workout = client.get_workout_by_id(workout_id)
+    except Exception as e:  # noqa: BLE001 — the laps do not depend on their targets
+        error = as_garmin_error(e)
+        if isinstance(error, AuthError):
+            raise error from e
+        if isinstance(error, NotFound):
+            return laps, WORKOUT_NOT_FOUND
+        logger.warning("Workout %s of activity %s not read: %s", workout_id, detail.get("activityId"), error)
+        return laps, error_reason(error)
+    if not workout:
+        return laps, WORKOUT_NOT_FOUND
+    segments = workout.get("workoutSegments") or []
+    if len(segments) > 1:
+        return laps, WORKOUT_MULTISPORT
+    if _changed_after_start(workout, detail):
+        return laps, WORKOUT_CHANGED
+    native_steps = segments[0].get("workoutSteps") if segments else None
+    steps = steps_by_lap_index(native_steps or [])
+    indexes = {lap["wktStepIndex"] for lap in laps if lap.get("wktStepIndex") is not None}
+    if any(not 0 <= index < len(steps) or steps[index] is None for index in indexes):
+        return laps, WORKOUT_STEPS_MISMATCH
+    return [lap if lap.get("wktStepIndex") is None else {**lap, "stepTarget": step_target(steps[lap["wktStepIndex"]])}
+            for lap in laps], None
+
+
+def _changed_after_start(workout: dict, detail: dict) -> bool:
+    """True when the workout was saved after the activity started.
+
+    Garmin's workout dates are GMT: a workout made in Garmin Connect and read a
+    minute later, at 12:37 Paris time, has `createdDate` 10:36 (neural-runner
+    fixture `workouts-get-garmin-connect`).
+    """
+    saved = workout.get("updatedDate") or workout.get("createdDate")
+    start = (detail.get("summaryDTO") or {}).get("startTimeGMT")
+    return bool(saved and start) and parse_time(saved) > parse_time(start)
 
 
 def get_activity_hr_in_timezones(client: Garmin, activity_id: int) -> dict:

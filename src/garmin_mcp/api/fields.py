@@ -137,16 +137,21 @@ class FieldSet:
         - `not_supported_by_device`: no device of the athlete computes it. Only for a
           field with a `feature`, from `missing_reason(feature)` (`api/capabilities.py`);
         - `only_in: <commands>`: this command does not give it.
-        An answer without items says nothing: empty is empty.
+        A reason the answer already gives (its own `empty_fields`, set by the
+        command that knows why) wins over these. An answer without items says
+        nothing: empty is empty.
         """
         keep = set(requested) | set(self.always)
+        known = answer.get("empty_fields") or {}
         if self.items_key is None:
             items = [answer]
             selected = _only(answer, keep)
         else:
             items = answer[self.items_key]
             selected = {**answer, self.items_key: [_only(item, keep) for item in items]}
+            selected.pop("empty_fields", None)
         empty = self.empty_fields(items, requested, missing_reason) if items else {}
+        empty.update((name, reason) for name, reason in known.items() if name in empty)
         if empty:
             selected["empty_fields"] = empty
         return selected

@@ -295,6 +295,28 @@ class TestEmptyFields:
             },
         }
 
+    @pytest.mark.parametrize("fields, empty", [
+        ("lap_number,step_target", {"step_target": "workout_not_found"}),  # the command's reason wins
+        ("lap_number,gap_s_per_km", {"gap_s_per_km": "no_data"}),          # not asked: not said
+        ("lap_number", None),
+    ])
+    def test_a_reason_the_command_knows_is_kept(self, fields, empty):
+        client = Mock()
+        client.get_activity_splits.return_value = {"lapDTOs": [{"lapIndex": 1, "wktStepIndex": 0}]}
+        client.get_activity.return_value = {"metadataDTO": {"associatedWorkoutId": 7}, "summaryDTO": {}}
+        client.get_workout_by_id.side_effect = NotFound("Garmin has no such object (HTTP 404)")
+        result = _run(f"activities splits 1 --fields {fields}", client)
+        assert result["exit_code"] == 0
+        assert json.loads(result["stdout"]).get("empty_fields") == empty
+
+    def test_without_fields_the_reason_is_in_the_answer(self):
+        client = Mock()
+        client.get_activity_splits.return_value = {"lapDTOs": [{"lapIndex": 1, "wktStepIndex": 0}]}
+        client.get_activity.return_value = {"metadataDTO": {"associatedWorkoutId": 7}, "summaryDTO": {}}
+        client.get_workout_by_id.side_effect = NotFound("Garmin has no such object (HTTP 404)")
+        answer = json.loads(_run("activities splits 1", client)["stdout"])
+        assert answer["empty_fields"] == {"step_target": "workout_not_found"}
+
 
 class TestDeviceReason:
     """`not_supported_by_device` comes from the device capabilities, read only for an empty field."""

@@ -130,9 +130,13 @@ FIELDS: tuple[Field, ...] = (
            lap=split_type),
     _field("intensity_type", "", "Lap intensity: WARMUP, ACTIVE, REST, COOLDOWN…",
            lap="intensityType"),
-    _field("workout_step_index", "", "Workout step of the lap, from 0 (step 1 of `workouts get` = 0). "
-           "Absent outside the workout",
+    _field("workout_step_index", "", "Workout step of the lap: Garmin's index from 0, the steps in order, "
+           "a repeat counted after its own steps. Absent outside the workout",
            lap="wktStepIndex"),
+    _field("step_target", "", "Target of the lap's workout step, bounds low → high: {type: none}, "
+           "{type: pace, low_s_per_km, high_s_per_km}, {type: hr, low_bpm, high_bpm}, {type: hr_zone, zone}, "
+           "{type: cadence, low_per_min, high_per_min}. `--by lap` only; none: `empty_fields` says why",
+           lap="stepTarget"),  # added by get_activity_splits
     _field("start_time", "", "Start, local time",
            list="startTimeLocal", detail="summaryDTO.startTimeLocal",
            lap="startTimeLocal",  # added by get_activity_splits
