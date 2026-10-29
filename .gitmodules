@@ -1,0 +1,4 @@
+[submodule "python-garminconnect"]
+	path = python-garminconnect
+	url = https://github.com/glutamatt/python-garminconnect.git
+	branch = feature/add-coaching-endpoints

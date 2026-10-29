@@ -1,8 +1,8 @@
 # Use Python 3.12 slim image for smaller size
 FROM python:3.12-slim
 
-# Note: Build context must be ./mcp-servers (not ./mcp-servers/garmin_mcp)
-# to access the python-garminconnect submodule as a sibling directory.
+# Build context = this repo, with its python-garminconnect submodule checked out
+# (git submodule update --init).
 
 # Set working directory
 WORKDIR /app
@@ -16,14 +16,14 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_SYSTEM_PYTHON=1
 
-# Copy python-garminconnect submodule (sibling directory)
+# Copy the forked garminconnect (submodule)
 COPY python-garminconnect /app/python-garminconnect
 
 # Copy dependency files and README first for better layer caching
-COPY garmin_mcp/pyproject.toml garmin_mcp/README.md ./
+COPY pyproject.toml README.md ./
 
-# Copy the application source code (needed for editable install)
-COPY garmin_mcp/src/ ./src/
+# Copy the application source code
+COPY src/ ./src/
 
 # Install dependencies using uv (strip uv.sources, use local path directly)
 RUN sed -i '/\[tool.uv.sources\]/,$d' pyproject.toml && \
