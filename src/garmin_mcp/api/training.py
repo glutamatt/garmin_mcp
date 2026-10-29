@@ -10,7 +10,9 @@ failures are exceptions (see `api/contract.py`).
 import logging
 import re
 import statistics
+from collections.abc import Sequence
 from datetime import date as _date, timedelta as _timedelta
+from typing import NamedTuple
 
 from garminconnect import Garmin
 from garmin_mcp.api import capabilities
@@ -33,6 +35,7 @@ from garmin_mcp.api.training_fields import (
     LOAD_SOURCES,
     MAX_METRICS_FIELDS,
     RACE_PREDICTION_FIELDS,
+    acwr_zone,
     personal_record,
 )
 from garmin_mcp.utils import clean_nones
@@ -215,20 +218,58 @@ def _monthly_load(balance: dict) -> dict:
 
 
 _LOAD_WEEKS = 4
+_PLAN_FORMAT = "YYYY-MM-DD:MINUTES:RPE, comma-separated (2026-11-01:60:7,2026-11-02:40:3)"
+_PLAN_RPE = (1, 10)
+_DAY_MINUTES = 24 * 60
 
 
-def get_training_load(client: Garmin, date: str, source: str = "srpe") -> dict:
+class PlannedSession(NamedTuple):
+    """A session to come, counted as session RPE: minutes × RPE."""
+
+    day: _date
+    minutes: float
+    rpe: float
+
+    @property
+    def load(self) -> float:
+        return self.minutes * self.rpe
+
+
+def parse_plan(text: str) -> list[PlannedSession]:
+    """`2026-11-01:60:7,2026-11-02:40:3` → the planned sessions. InvalidInput names the bad entry."""
+    sessions = []
+    for entry in text.split(","):
+        parts = entry.strip().split(":")
+        try:
+            day, minutes, rpe = parts
+            session = PlannedSession(_date.fromisoformat(day), float(minutes), float(rpe))
+        except ValueError as e:
+            raise InvalidInput(f"Invalid plan entry '{entry.strip()}': {_PLAN_FORMAT}") from e
+        if not (0 < session.minutes <= _DAY_MINUTES and _PLAN_RPE[0] <= session.rpe <= _PLAN_RPE[1]):
+            raise InvalidInput(f"Invalid plan entry '{entry.strip()}': 0 < minutes ≤ {_DAY_MINUTES}, "
+                               f"RPE {_PLAN_RPE[0]}-{_PLAN_RPE[1]}. {_PLAN_FORMAT}")
+        sessions.append(session)
+    return sessions
+
+
+def get_training_load(client: Garmin, date: str, source: str = "srpe",
+                      plan: Sequence[PlannedSession] = ()) -> dict:
     """Load of the 4 weeks that end on `date` (local days, every sport), from the activities.
 
     - `week_load`: the last 7 days; `chronic_week_load`: the mean of the 3 weeks before.
     - `acwr` = week_load / chronic_week_load, uncoupled: the last week is not in
       the chronic load, so it does not weigh on both sides of the ratio. None when
-      the 3 weeks before have no load.
+      the 3 weeks before have no load. `acwr_zone`: see `acwr_zone`.
     - Foster: `monotony` = mean / standard deviation of the last 7 daily loads
       (None when every day has the same load), `strain` = week_load × monotony.
 
     An activity without load (no RPE, a watch without EPOC) counts as 0 and is
     listed in `load_missing`. When no activity has a load: `available: false`.
+
+    `plan`: sessions to come, added to their day as session RPE, so `date` can be a
+    future day and the projection reads like today's numbers. Each day and week
+    with a plan says how much of its load is `planned`. srpe only: the EPOC of a
+    session to come is not known.
     """
     if source not in LOAD_SOURCES:
         raise InvalidInput(f"Unknown load '{source}'. Valid: {', '.join(LOAD_SOURCES)}")
@@ -237,7 +278,16 @@ def get_training_load(client: Garmin, date: str, source: str = "srpe") -> dict:
     except ValueError as e:
         raise InvalidInput(f"Invalid date '{date}' (YYYY-MM-DD)") from e
     start = end - _timedelta(weeks=_LOAD_WEEKS) + _timedelta(days=1)
+    days = [start + _timedelta(days=i) for i in range(_LOAD_WEEKS * 7)]
     window = {"from": start.isoformat(), "to": end.isoformat()}
+    if plan and source != "srpe":
+        raise InvalidInput("A plan counts minutes × RPE (srpe load): the EPOC of a session to come is not known")
+    planned = dict.fromkeys(days, 0.0)
+    for session in plan:
+        if session.day not in planned:
+            raise InvalidInput(f"Planned session on {session.day} is outside the 4 weeks "
+                               f"{window['from']} → {window['to']}")
+        planned[session.day] += session.load
 
     raw = client.get_activities_by_date(window["from"], window["to"], "") or []
     if source == "srpe":
@@ -245,7 +295,7 @@ def get_training_load(client: Garmin, date: str, source: str = "srpe") -> dict:
     else:
         missing = {}
 
-    daily = {start + _timedelta(days=i): 0.0 for i in range(_LOAD_WEEKS * 7)}
+    daily = dict.fromkeys(days, 0.0)
     for activity in raw:
         load = _activity_load(activity, source)
         if load is None:
@@ -260,10 +310,12 @@ def get_training_load(client: Garmin, date: str, source: str = "srpe") -> dict:
                   if source == "epoc" else NO_DATA)
         return unavailable(reason, **window, load=source, activities=len(raw))
 
-    loads = list(daily.values())
+    planned_loads = [planned[day] for day in days]
+    loads = [daily[day] + planned[day] for day in days]
     last_7 = loads[-7:]
     week_load = sum(last_7)
     chronic_week_load = sum(loads[:-7]) / (_LOAD_WEEKS - 1)
+    acwr = round(week_load / chronic_week_load, 2) if chronic_week_load else None
     deviation = statistics.pstdev(last_7)
     monotony = round(statistics.mean(last_7) / deviation, 2) if deviation else None
     answer = {
@@ -272,21 +324,30 @@ def get_training_load(client: Garmin, date: str, source: str = "srpe") -> dict:
         "unit": LOAD_SOURCES[source],
         "week_load": round(week_load),
         "chronic_week_load": round(chronic_week_load),
-        "acwr": round(week_load / chronic_week_load, 2) if chronic_week_load else None,
+        "acwr": acwr,
+        "acwr_zone": acwr_zone(acwr),
         "monotony": monotony,
         "strain": round(week_load * monotony) if monotony is not None else None,
         "weeks": [
-            {"from": (start + _timedelta(weeks=w)).isoformat(),
-             "to": (start + _timedelta(weeks=w, days=6)).isoformat(),
-             "load": round(sum(loads[w * 7:(w + 1) * 7]))}
+            _with_planned({"from": days[w * 7].isoformat(), "to": days[w * 7 + 6].isoformat(),
+                           "load": round(sum(loads[w * 7:(w + 1) * 7]))},
+                          sum(planned_loads[w * 7:(w + 1) * 7]))
             for w in range(_LOAD_WEEKS)
         ],
-        "last_7_days": [{"date": day.isoformat(), "load": round(load)} for day, load in list(daily.items())[-7:]],
+        "last_7_days": [_with_planned({"date": day.isoformat(), "load": round(load)}, planned[day])
+                        for day, load in zip(days[-7:], last_7)],
         "activities": len(raw),
     }
+    if plan:
+        answer["planned_load"] = round(sum(planned_loads))
     if missing:
         answer["load_missing"] = missing
     return answer
+
+
+def _with_planned(entry: dict, planned: float) -> dict:
+    """A day or week of `training load`, with the planned part of its load when there is one."""
+    return {**entry, "planned": round(planned)} if planned else entry
 
 
 def _activity_load(activity: dict, source: str) -> float | None:

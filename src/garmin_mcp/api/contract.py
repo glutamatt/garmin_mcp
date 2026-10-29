@@ -70,7 +70,7 @@ def as_garmin_error(exc: BaseException) -> GarminError:
         return exc
     if isinstance(exc, GarminTokenError):
         return AuthError(str(exc))
-    status = _http_status(exc)
+    status = http_status(exc)
     if isinstance(exc, GarminConnectAuthenticationError) or status == 401:
         return AuthError(f"Garmin login refused: {exc}")
     if isinstance(exc, GarminConnectTooManyRequestsError) or status == 429:
@@ -88,7 +88,7 @@ def http_failure(status: int, message: str) -> Unavailable:
     return (RateLimited if status == 429 else Unavailable)(message)
 
 
-def _http_status(exc: BaseException) -> int | None:
+def http_status(exc: BaseException) -> int | None:
     """HTTP status of the response behind `exc`, looked up along its chain of causes.
 
     The SDK wraps garth's `GarthHTTPError` (status in `.error.response`), which

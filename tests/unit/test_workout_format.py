@@ -385,6 +385,51 @@ class TestFromGarmin:
         assert readable["steps"][0]["not_readable"] == ["target power.zone 200.0-250.0"]
 
 
+class TestStepTargets:
+    """The target of each step, by the step index of an activity lap (`wktStepIndex`)."""
+
+    def test_a_repeat_takes_the_index_after_its_steps(self):
+        warmup, run, recover, cooldown = (_garmin_step(1, "warmup", 1, "time", 600.0),
+                                          _garmin_step(3, "interval", 3, "time", 20.0),
+                                          _garmin_step(4, "recovery", 4, "time", 60.0),
+                                          _garmin_step(5, "cooldown", 2, "time", 600.0))
+        repeat = {"type": "RepeatGroupDTO", "stepOrder": 2, "stepType": {"stepTypeKey": "repeat"},
+                  "workoutSteps": [run, recover]}
+        assert fmt.steps_by_lap_index([warmup, repeat, cooldown]) == [warmup, run, recover, None, cooldown]
+
+    def test_nested_repeats(self):
+        a, b, c = (_garmin_step(i, "interval", 3, "time", 60.0) for i in (1, 2, 3))
+        inner = {"type": "RepeatGroupDTO", "workoutSteps": [b]}
+        outer = {"type": "RepeatGroupDTO", "workoutSteps": [a, inner]}
+        assert fmt.steps_by_lap_index([outer, c]) == [a, b, None, None, c]
+
+    @pytest.mark.parametrize("step, target", [
+        (_garmin_step(1, "interval", 3, "time", 60.0), {"type": "none"}),
+        (_garmin_step(1, "interval", 3, "time", 60.0, two=0.0), {"type": "none"}),
+        # Garmin Connect's order (faster first) and the reversed one give the same range.
+        (_garmin_step(1, "interval", 3, "time", 60.0, PACE, 2.4691358, 2.2988506),
+         {"type": "pace", "low_s_per_km": 405, "high_s_per_km": 435}),
+        (_garmin_step(1, "interval", 3, "time", 60.0, PACE, 2.2988506, 2.4691358),
+         {"type": "pace", "low_s_per_km": 405, "high_s_per_km": 435}),
+        (_garmin_step(1, "interval", 3, "time", 60.0, HR, 150.0, 130.0), {"type": "hr", "low_bpm": 130, "high_bpm": 150}),
+        (_garmin_step(1, "interval", 3, "time", 60.0, HR, zoneNumber=2), {"type": "hr_zone", "zone": 2}),
+        (_garmin_step(1, "interval", 3, "time", 60.0,
+                      {"workoutTargetTypeId": 3, "workoutTargetTypeKey": "cadence"}, 170.0, 180.0),
+         {"type": "cadence", "low_per_min": 170, "high_per_min": 180}),
+        (_garmin_step(1, "interval", 3, "time", 60.0, {"workoutTargetTypeId": 2, "workoutTargetTypeKey": "power.zone"},
+                      200.0, 250.0),
+         {"type": "other", "garmin_type": "power.zone"}),
+    ])
+    def test_target_in_numbers(self, step, target):
+        assert fmt.step_target(step) == target
+
+    def test_secondary_target(self):
+        step = _garmin_step(1, "interval", 3, "time", 60.0, PACE, 3.3333333, 3.0303030,
+                            secondaryTargetType=HR, secondaryTargetValueOne=150.0, secondaryTargetValueTwo=160.0)
+        assert fmt.step_target(step) == {"type": "pace", "low_s_per_km": 300, "high_s_per_km": 330,
+                                         "secondary": {"type": "hr", "low_bpm": 150, "high_bpm": 160}}
+
+
 class TestRoundTrip:
     @pytest.mark.parametrize("steps", [
         [{"warmup": "5:00", "note": "easy"}, {"run": "40:00", "pace": "5:00-5:30"}, {"cooldown": "3:00"}],

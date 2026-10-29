@@ -578,6 +578,62 @@ def format_pace(speed_mps: float) -> str:
     return format_pace_s(1000 / speed_mps)
 
 
+# ── Step targets, for the laps of an activity ────────────────────────────────
+
+
+def steps_by_lap_index(steps: list) -> list[dict | None]:
+    """Native steps by the step index an activity lap gives (`wktStepIndex`).
+
+    That index is the FIT workout's: the steps in order, a repeat AFTER its own
+    steps. A repeat takes an index that no lap has (None here). Garmin Connect's
+    `stepOrder` puts a repeat BEFORE its steps: `stepOrder - 1` is wrong from the
+    first repeat on. Checked on real runs: warmup, repeat of (run, recover),
+    cooldown → laps of steps 0, 1, 2, 4.
+    """
+    flat: list[dict | None] = []
+    for step in steps:
+        if _is_repeat(step):
+            flat.extend(steps_by_lap_index(step.get("workoutSteps") or []))
+            flat.append(None)
+        else:
+            flat.append(step)
+    return flat
+
+
+def step_target(step: dict) -> dict:
+    """A native step's target, in numbers. `type` is a target word of the readable
+    format, `none`, or `other` (`garmin_type`: a target this format cannot say).
+    Bounds go low → high whatever Garmin's order (a low pace is the fast bound).
+    A secondary target, when the step has one, is under `secondary`.
+    """
+    target = _numeric_target(step.get("targetType"), step.get("targetValueOne"),
+                             step.get("targetValueTwo"), step.get("zoneNumber"))
+    secondary = step.get("secondaryTargetType")
+    if (secondary or {}).get("workoutTargetTypeKey") not in (None, "no.target"):
+        target["secondary"] = _numeric_target(secondary, step.get("secondaryTargetValueOne"),
+                                              step.get("secondaryTargetValueTwo"), step.get("secondaryZoneNumber"))
+    return target
+
+
+def _numeric_target(target_type: dict | None, one, two, zone) -> dict:
+    target = (target_type or {}).get("workoutTargetTypeKey")
+    if target in (None, "no.target"):
+        return {"type": "none"}
+    if target == "heart.rate.zone" and zone and one is None and two is None:
+        return {"type": "hr_zone", "zone": int(zone)}
+    if one and two:
+        if target == "pace.zone":
+            low, high = sorted((1000 / one, 1000 / two))
+            return {"type": "pace", "low_s_per_km": round(low), "high_s_per_km": round(high)}
+        if target == "heart.rate.zone":
+            low, high = sorted((one, two))
+            return {"type": "hr", "low_bpm": round(low), "high_bpm": round(high)}
+        if _is_cadence(target, (target_type or {}).get("workoutTargetTypeId")):
+            low, high = sorted((one, two))
+            return {"type": "cadence", "low_per_min": round(low), "high_per_min": round(high)}
+    return {"type": "other", "garmin_type": target}
+
+
 # ── Estimates ────────────────────────────────────────────────────────────────
 
 

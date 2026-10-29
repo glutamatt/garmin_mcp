@@ -238,6 +238,18 @@ class TestInvalidInput:
         assert result["exit_code"] == 2
         assert "capped at 365 days" in result["stderr"]
 
+    @pytest.mark.parametrize("command, message", [
+        ("training load 2026-11-02 --plan 2026-11-01:60", "YYYY-MM-DD:MINUTES:RPE"),
+        ("training load 2026-11-02 --load epoc --plan 2026-11-01:60:7", "EPOC"),
+    ])
+    def test_training_load_plan_is_checked_before_garmin_is_called(self, command, message):
+        client = Mock()
+        result = _run(command, client)
+        assert result["exit_code"] == 2
+        assert result["stdout"] == ""
+        assert message in result["stderr"]
+        client.get_activities_by_date.assert_not_called()
+
     @pytest.mark.parametrize("command, method", [
         ("activities get 1", "get_activity"),
         ("activities splits 1", "get_activity_splits"),
@@ -282,6 +294,28 @@ class TestEmptyFields:
                 "perceived_effort": "only_in: activities list --with effort, activities get",
             },
         }
+
+    @pytest.mark.parametrize("fields, empty", [
+        ("lap_number,step_target", {"step_target": "workout_not_found"}),  # the command's reason wins
+        ("lap_number,gap_s_per_km", {"gap_s_per_km": "no_data"}),          # not asked: not said
+        ("lap_number", None),
+    ])
+    def test_a_reason_the_command_knows_is_kept(self, fields, empty):
+        client = Mock()
+        client.get_activity_splits.return_value = {"lapDTOs": [{"lapIndex": 1, "wktStepIndex": 0}]}
+        client.get_activity.return_value = {"metadataDTO": {"associatedWorkoutId": 7}, "summaryDTO": {}}
+        client.get_workout_by_id.side_effect = NotFound("Garmin has no such object (HTTP 404)")
+        result = _run(f"activities splits 1 --fields {fields}", client)
+        assert result["exit_code"] == 0
+        assert json.loads(result["stdout"]).get("empty_fields") == empty
+
+    def test_without_fields_the_reason_is_in_the_answer(self):
+        client = Mock()
+        client.get_activity_splits.return_value = {"lapDTOs": [{"lapIndex": 1, "wktStepIndex": 0}]}
+        client.get_activity.return_value = {"metadataDTO": {"associatedWorkoutId": 7}, "summaryDTO": {}}
+        client.get_workout_by_id.side_effect = NotFound("Garmin has no such object (HTTP 404)")
+        answer = json.loads(_run("activities splits 1", client)["stdout"])
+        assert answer["empty_fields"] == {"step_target": "workout_not_found"}
 
 
 class TestDeviceReason:

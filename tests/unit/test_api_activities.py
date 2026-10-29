@@ -337,6 +337,87 @@ class TestGetActivitySplits:
         client.get_activity.assert_not_called()
 
 
+def _step(order, step_type, target=None, one=None, two=None, zone=None):
+    return {"type": "ExecutableStepDTO", "stepOrder": order, "stepType": {"stepTypeKey": step_type},
+            "targetType": {"workoutTargetTypeKey": target or "no.target"},
+            "targetValueOne": one, "targetValueTwo": two, "zoneNumber": zone}
+
+
+# Shaped on a real run (27/10/2026, "Seuil #2 3x10"): Garmin Connect numbers the repeat
+# before its steps (stepOrder 2, then 3, 4); the laps number it after them (index 3).
+SEUIL_WORKOUT = {
+    "workoutId": 77, "updatedDate": "2026-10-26T10:41:03.0",
+    "workoutSegments": [{"workoutSteps": [
+        _step(1, "warmup", "pace.zone", 2.4691358, 2.2988506),
+        {"type": "RepeatGroupDTO", "stepOrder": 2, "stepType": {"stepTypeKey": "repeat"}, "numberOfIterations": 3,
+         "workoutSteps": [_step(3, "interval", "heart.rate.zone", 168.0, 176.0), _step(4, "recovery")]},
+        _step(5, "cooldown", "pace.zone", 2.3809524, 2.1505376),
+    ]}],
+}
+WARMUP = {"type": "pace", "low_s_per_km": 405, "high_s_per_km": 435}
+INTERVAL = {"type": "hr", "low_bpm": 168, "high_bpm": 176}
+COOLDOWN = {"type": "pace", "low_s_per_km": 420, "high_s_per_km": 465}
+
+
+class TestStepTargets:
+    DETAIL = {"activityId": 9, "metadataDTO": {"associatedWorkoutId": 77},
+              "summaryDTO": {"startTimeLocal": "2026-10-27T08:01:55.0", "startTimeGMT": "2026-10-27T07:01:55.0"}}
+
+    def _splits(self, client, indexes, workout=SEUIL_WORKOUT, detail=None):
+        client.get_activity_splits.return_value = {
+            "activityId": 9, "lapDTOs": [{"lapIndex": n + 1, "wktStepIndex": i} for n, i in enumerate(indexes)]}
+        client.get_activity.return_value = detail or self.DETAIL
+        client.get_workout_by_id.return_value = workout
+        return api.get_activity_splits(client, 9)
+
+    def test_each_lap_has_its_step_target_through_the_repeat(self, client):
+        out = self._splits(client, [0, 0, 1, 2, 1, 2, 1, 2, 4, None])
+        client.get_workout_by_id.assert_called_once_with(77)
+        assert [lap.get("step_target") for lap in out["laps"]] == [
+            WARMUP, WARMUP, INTERVAL, {"type": "none"}, INTERVAL, {"type": "none"}, INTERVAL, {"type": "none"},
+            COOLDOWN, None,
+        ]
+        assert "empty_fields" not in out
+
+    def test_activity_without_workout_costs_no_call(self, client):
+        out = self._splits(client, [None, None], detail={"summaryDTO": self.DETAIL["summaryDTO"]})
+        client.get_workout_by_id.assert_not_called()
+        assert all("step_target" not in lap for lap in out["laps"]) and "empty_fields" not in out
+
+    def test_deleted_workout_says_why(self, client):
+        client.get_workout_by_id.side_effect = NotFound("Garmin has no such object (HTTP 404)")
+        out = self._splits(client, [0, 1])
+        assert all("step_target" not in lap for lap in out["laps"])
+        assert out["empty_fields"] == {"step_target": "workout_not_found"}
+
+    def test_workout_saved_after_the_start_is_not_joined(self, client):
+        out = self._splits(client, [0, 1], workout={**SEUIL_WORKOUT, "updatedDate": "2026-10-27T07:30:00.0"})
+        assert all("step_target" not in lap for lap in out["laps"])
+        assert out["empty_fields"] == {"step_target": "workout_changed_after_activity"}
+
+    @pytest.mark.parametrize("index", [3, 5])  # the repeat itself; past the last step
+    def test_a_lap_index_without_a_step_is_not_guessed(self, client, index):
+        out = self._splits(client, [0, index])
+        assert all("step_target" not in lap for lap in out["laps"])
+        assert out["empty_fields"] == {"step_target": "workout_steps_mismatch"}
+
+    def test_multisport_workout_is_not_joined(self, client):
+        segments = SEUIL_WORKOUT["workoutSegments"] * 2
+        out = self._splits(client, [0], workout={**SEUIL_WORKOUT, "workoutSegments": segments})
+        assert out["empty_fields"] == {"step_target": "workout_multisport"}
+
+    def test_garmin_unavailable_keeps_the_laps(self, client):
+        client.get_workout_by_id.side_effect = Unavailable("Garmin did not answer")
+        out = self._splits(client, [0])
+        assert out["laps"][0]["workout_step_index"] == 0
+        assert out["empty_fields"] == {"step_target": "error: Garmin did not answer"}
+
+    def test_auth_error_fails_the_command(self, client):
+        client.get_workout_by_id.side_effect = AuthError("Garmin login refused")
+        with pytest.raises(AuthError):
+            self._splits(client, [0])
+
+
 class TestGetActivityHrInTimezones:
     def test_no_zones_is_an_empty_list(self, client):
         client.get_activity_hr_in_timezones.return_value = None

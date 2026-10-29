@@ -29,6 +29,27 @@ LOAD_SOURCES = {
     "epoc": "EPOC",       # Garmin's training_load, when the watch computes it
 }
 
+# `training load`: the zones of the ACWR and their upper bound. `low` stops below its
+# bound, the others include theirs. The one place for these thresholds: the command's
+# help is built from it.
+ACWR_ZONES = (("low", 0.8), ("optimal", 1.3), ("high", 1.5), ("very_high", None))
+
+
+def acwr_zone(acwr: float | None) -> str | None:
+    """The zone of an ACWR (see `acwr_zones_help`), None without an ACWR."""
+    if acwr is None:
+        return None
+    (low, low_upper), *others = ACWR_ZONES
+    if acwr < low_upper:
+        return low
+    return next(zone for zone, upper in others if upper is None or acwr <= upper)
+
+
+def acwr_zones_help() -> str:
+    """`low < 0.8 ≤ optimal ≤ 1.3 < high ≤ 1.5 < very_high`."""
+    (low, b0), (optimal, b1), (high, b2), (very_high, _) = ACWR_ZONES
+    return f"{low} < {b0} ≤ {optimal} ≤ {b1} < {high} ≤ {b2} < {very_high}"
+
 # Endurance score classes: Garmin's `classification` (1-7) and the lower limit of each.
 ENDURANCE_CLASSES = ("recreational", "intermediate", "trained", "well_trained", "expert", "superior", "elite")
 _ENDURANCE_LIMITS = ("Intermediate", "Trained", "WellTrained", "Expert", "Superior", "Elite")
