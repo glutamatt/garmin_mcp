@@ -238,6 +238,18 @@ class TestInvalidInput:
         assert result["exit_code"] == 2
         assert "capped at 365 days" in result["stderr"]
 
+    @pytest.mark.parametrize("command, message", [
+        ("training load 2026-11-02 --plan 2026-11-01:60", "YYYY-MM-DD:MINUTES:RPE"),
+        ("training load 2026-11-02 --load epoc --plan 2026-11-01:60:7", "EPOC"),
+    ])
+    def test_training_load_plan_is_checked_before_garmin_is_called(self, command, message):
+        client = Mock()
+        result = _run(command, client)
+        assert result["exit_code"] == 2
+        assert result["stdout"] == ""
+        assert message in result["stderr"]
+        client.get_activities_by_date.assert_not_called()
+
     @pytest.mark.parametrize("command, method", [
         ("activities get 1", "get_activity"),
         ("activities splits 1", "get_activity_splits"),

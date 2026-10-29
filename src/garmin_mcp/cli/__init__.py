@@ -48,6 +48,7 @@ from garmin_mcp.api.training_fields import (
     LOAD_SOURCES,
     MAX_METRICS_FIELDS,
     RACE_PREDICTION_FIELDS,
+    acwr_zones_help,
 )
 from garmin_mcp.api.capabilities import missing_reason
 from garmin_mcp.api.contract import GarminError, InvalidInput, as_garmin_error, is_unavailable
@@ -958,31 +959,50 @@ def training_status(ctx, date):
     _run(ctx, lambda: api.get_training_status(_client(ctx), date or _today(ctx)))
 
 
-@training.command("load")
+_TRAINING_LOAD_HELP = f"""\
+ACWR, monotony and strain (Foster) of the 4 weeks to DATE (default today), from the activities.
+
+\b
+Every sport counts; days are local days.
+  week_load          load of the last 7 days
+  chronic_week_load  mean of the 3 weeks before the last 7 days
+  acwr               week_load / chronic_week_load, uncoupled
+                     (null: no load in the 3 weeks before)
+  acwr_zone          {acwr_zones_help()}
+  monotony           mean / standard deviation of the last 7 daily loads
+                     (null: every day the same)
+  strain             week_load × monotony
+  weeks, last_7_days the loads behind these numbers
+  load_missing       activities without load (no RPE, no EPOC): counted as 0
+No activity with a load: available false. `training status` gives Garmin's own
+ACWR, on watches that compute it.
+
+\b
+Projection: --plan adds sessions to come, as minutes × RPE on their day, and
+DATE can be a future day (the day to project). Same numbers as today's, so a
+projection compares with them. A day after today without a planned session
+counts as rest (0).
+  planned            in weeks, last_7_days: the part of "load" that is planned
+  planned_load       total of the plan
+  training load 2026-11-02 --plan 2026-11-01:60:7,2026-11-02:40:3
+"""
+
+
+@training.command("load", help=_TRAINING_LOAD_HELP)
 @click.argument("date", required=False)
 @click.option("--load", "source", default="srpe", type=click.Choice(list(LOAD_SOURCES)),
               help="Load of one activity: srpe = RPE × minutes (Foster, default), epoc = the watch's training_load")
+@click.option("--plan", "plan_text", default=None,
+              help="Sessions to come: YYYY-MM-DD:MINUTES:RPE[,...] (RPE 1-10). srpe load only")
 @click.pass_context
-def training_load(ctx, date, source):
-    """ACWR, monotony and strain (Foster) of the 4 weeks to DATE (default today), from the activities.
-
-    \b
-    Every sport counts; days are local days.
-      week_load          load of the last 7 days
-      chronic_week_load  mean of the 3 weeks before the last 7 days
-      acwr               week_load / chronic_week_load, uncoupled
-                         (null: no load in the 3 weeks before)
-      monotony           mean / standard deviation of the last 7 daily loads
-                         (null: every day the same)
-      strain             week_load × monotony
-      weeks, last_7_days the loads behind these numbers
-      load_missing       activities without load (no RPE, no EPOC): counted as 0
-    No activity with a load: available false. `training status` gives Garmin's own
-    ACWR, on watches that compute it.
-    """
+def training_load(ctx, date, source, plan_text):
     from garmin_mcp.api import training as api
 
-    _run(ctx, lambda: api.get_training_load(_client(ctx), date or _today(ctx), source))
+    def load():
+        plan = api.parse_plan(plan_text) if plan_text is not None else ()
+        return api.get_training_load(_client(ctx), date or _today(ctx), source, plan)
+
+    _run(ctx, load)
 
 
 @training.command("progress")

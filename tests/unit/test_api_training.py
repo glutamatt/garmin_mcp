@@ -1,5 +1,7 @@
 """Unit tests for garmin_mcp.api.training — curation logic with mock client."""
 
+import datetime
+
 import pytest
 from unittest.mock import Mock
 from garmin_mcp.api import training as api
@@ -449,3 +451,101 @@ class TestGetTrainingLoad:
         with pytest.raises(InvalidInput):
             api.get_training_load(client, date, source)
         client.get_activities_by_date.assert_not_called()
+
+
+class TestTrainingLoadPlan:
+    """`--plan`: sessions to come, as minutes × RPE on their day."""
+
+    def test_plan_adds_srpe_to_its_day_and_is_marked(self, client):
+        _with_activities(client, _activity(1, "2026-09-10 08:00:00", 3600, rpe=5),   # 300, chronic
+                         _activity(2, "2026-10-01 08:00:00", 1800, rpe=4))           # 120, done
+        plan = api.parse_plan("2026-10-04:60:7,2026-10-05:40:3")                    # 420 + 120
+        out = api.get_training_load(client, "2026-10-05", plan=plan)
+        assert out["week_load"] == 660
+        assert out["chronic_week_load"] == 100
+        assert (out["acwr"], out["acwr_zone"]) == (6.6, "very_high")
+        assert out["planned_load"] == 540
+        assert out["last_7_days"][-3:] == [
+            {"date": "2026-10-03", "load": 0},
+            {"date": "2026-10-04", "load": 420, "planned": 420},
+            {"date": "2026-10-05", "load": 120, "planned": 120},
+        ]
+        assert out["weeks"][-1] == {"from": "2026-09-29", "to": "2026-10-05", "load": 660, "planned": 540}
+        assert "planned" not in out["weeks"][0]
+        assert out["activities"] == 2
+
+    def test_projection_equals_the_value_of_the_day_once_the_plan_is_done(self, client):
+        """Same formula: a planned session counts like the same session done."""
+        done = [_activity(1, "2026-09-12 08:00:00", 3600, rpe=5), _activity(2, "2026-10-01 08:00:00", 2400, rpe=6)]
+        _with_activities(client, *done, _activity(3, "2026-10-04 08:00:00", 3000, rpe=7))
+        real = api.get_training_load(client, "2026-10-05")
+        _with_activities(client, *done)
+        projected = api.get_training_load(client, "2026-10-05", plan=api.parse_plan("2026-10-04:50:7"))
+        for key in ("week_load", "chronic_week_load", "acwr", "acwr_zone", "monotony", "strain", "weeks"):
+            assert _without_planned(projected[key]) == real[key], key
+
+    def test_without_plan_no_planned_key(self, client):
+        _with_activities(client, _activity(1, "2026-10-01 08:00:00", 3600, rpe=5))
+        out = api.get_training_load(client, "2026-10-05")
+        assert "planned_load" not in out
+        assert all("planned" not in d for d in out["last_7_days"] + out["weeks"])
+
+    def test_plan_with_epoc_is_refused_before_any_call(self, client):
+        from garmin_mcp.api.contract import InvalidInput
+
+        with pytest.raises(InvalidInput, match="EPOC"):
+            api.get_training_load(client, "2026-10-05", "epoc", api.parse_plan("2026-10-04:60:7"))
+        client.get_activities_by_date.assert_not_called()
+
+    def test_plan_outside_the_window_is_refused(self, client):
+        from garmin_mcp.api.contract import InvalidInput
+
+        with pytest.raises(InvalidInput, match="2026-10-06 is outside the 4 weeks 2026-09-08 → 2026-10-05"):
+            api.get_training_load(client, "2026-10-05", plan=api.parse_plan("2026-10-06:60:7"))
+        client.get_activities_by_date.assert_not_called()
+
+    def test_parse(self):
+        assert api.parse_plan(" 2026-11-01:60:7 , 2026-11-02:42.5:3.5") == [
+            api.PlannedSession(datetime.date(2026, 11, 1), 60.0, 7.0),
+            api.PlannedSession(datetime.date(2026, 11, 2), 42.5, 3.5),
+        ]
+
+    @pytest.mark.parametrize("text", [
+        "2026-11-01:60", "2026-11-01:60:7:1", "2026-13-01:60:7", "2026-11-01:soixante:7",
+        "2026-11-01:0:7", "2026-11-01:1500:7", "2026-11-01:60:11", "2026-11-01:60:0", "2026-11-01:nan:7",
+        "2026-11-01:60:7,", "",
+    ])
+    def test_parse_refuses_a_bad_entry_with_the_format(self, text):
+        from garmin_mcp.api.contract import InvalidInput
+
+        with pytest.raises(InvalidInput, match="YYYY-MM-DD:MINUTES:RPE"):
+            api.parse_plan(text)
+
+
+def _without_planned(value):
+    """A `weeks` list without its `planned` marks (or any other value as is)."""
+    if isinstance(value, list):
+        return [{k: v for k, v in entry.items() if k != "planned"} for entry in value]
+    return value
+
+
+class TestAcwrZone:
+    @pytest.mark.parametrize("acwr, zone", [
+        (None, None), (0.0, "low"), (0.79, "low"), (0.8, "optimal"), (1.3, "optimal"),
+        (1.31, "high"), (1.5, "high"), (1.51, "very_high"), (3.9, "very_high"),
+    ])
+    def test_thresholds(self, acwr, zone):
+        from garmin_mcp.api.training_fields import acwr_zone
+
+        assert acwr_zone(acwr) == zone
+
+    def test_in_the_answer(self, client):
+        _with_activities(client, _activity(1, "2026-09-10 08:00:00", 3600, rpe=5),
+                         _activity(2, "2026-10-01 08:00:00", 1200, rpe=6))
+        out = api.get_training_load(client, "2026-10-05")
+        assert (out["acwr"], out["acwr_zone"]) == (1.2, "optimal")
+
+    def test_no_acwr_no_zone(self, client):
+        _with_activities(client, _activity(1, "2026-10-01 08:00:00", 3600, rpe=5))
+        out = api.get_training_load(client, "2026-10-05")
+        assert (out["acwr"], out["acwr_zone"]) == (None, None)
