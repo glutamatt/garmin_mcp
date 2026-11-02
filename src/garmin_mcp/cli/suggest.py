@@ -75,6 +75,10 @@ class SuggestingGroup(click.Group):
         if name and not name.startswith("-") and not ctx.resilient_parsing \
                 and self.get_command(ctx, name) is None:
             root = ctx.find_root().command
-            group_path = " ".join(ctx.command_path.split()[1:])
-            ctx.fail(unknown_command(root, group_path, name))
+            # The group's path below the root, whatever the program name (it may be empty)
+            names, c = [], ctx
+            while c.parent is not None:
+                names.insert(0, c.info_name)
+                c = c.parent
+            ctx.fail(unknown_command(root, " ".join(names), name))
         return super().resolve_command(ctx, args)

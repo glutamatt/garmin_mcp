@@ -678,6 +678,28 @@ class TestCompactJson:
         assert '": ' not in result["stdout"]
 
 
+class TestUsageLine:
+    """The help shows a command as typed in the garmin_cli tool. "Usage: garmin training load" made
+    the model run `garmin training load` in a shell, where no `garmin` exists (02/11/2026)."""
+
+    @pytest.mark.parametrize("command", ["help training load", "training load --help"])
+    def test_usage_is_the_command_as_typed(self, command):
+        result = execute(command, "fake-token")
+        assert result["exit_code"] == 0, result["stderr"]
+        assert result["stdout"].startswith("Usage: training load [OPTIONS] [DATE]")
+
+    def test_usage_error_names_no_program(self):
+        result = execute("training load --nope", "fake-token")
+        assert result["exit_code"] == 2
+        assert "garmin" not in result["stderr"]
+        assert "Try 'training load --help'" in result["stderr"]
+
+    def test_examples_name_no_program(self):
+        for command in ["help", "help describe", "help workouts create", "help workouts update"]:
+            stdout = execute(command, "fake-token")["stdout"]
+            assert "garmin " not in stdout.replace("Garmin Connect", ""), (command, stdout)
+
+
 class TestUnknownCommand:
     """An unknown command names the commands close to it (audit C5)."""
 
