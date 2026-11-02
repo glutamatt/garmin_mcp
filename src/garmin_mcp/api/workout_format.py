@@ -13,7 +13,8 @@ own JSON), so get → edit → create works as is:
 
 A step is one kind word (`warmup`, `run`, `recover`, `rest`, `cooldown`, `other`).
 Its value says when the step ends: a duration "m:ss" or "h:mm:ss", a distance
-"1km" / "1.5km" / "200m", or "lap" (lap button). A step can have one target
+"1km" / "1.5km" / "200m", "lap" (lap button), or a heart rate "hr<150" /
+"hr>170" (once it is below / above, in bpm). A step can have one target
 (`pace`, `hr`, `hr_zone`, `cadence`) and a `note`, shown on the watch.
 
 Conventions, decided here once:
@@ -23,6 +24,10 @@ Conventions, decided here once:
   is a range of one pace.
 - `hr` (bpm) and `cadence` (steps/min running, rpm cycling): the LOWER bound
   first, as Garmin Connect does (checked on a heart-rate range made there).
+- "hr<150" / "hr>170" is Garmin's `heart.rate` end with `endConditionCompare`
+  `lt` / `gt`, always sent. Garmin keeps a step without it, and Garmin Connect
+  shows it as "Above" (seen on a real workout, 01/05/2026: an update had
+  dropped `lt` from a recover step). So a Garmin step without it reads as `>`.
 - `repeat` does all its steps n times, like Garmin Connect. With
   `"skip_last_recover": true`, the last round ends before its final recover
   (or rest) step.
@@ -67,7 +72,12 @@ _END_CONDITIONS = {
     _LAP: {"conditionTypeId": 1, "conditionTypeKey": "lap.button", "displayOrder": 1, "displayable": True},
     "time": {"conditionTypeId": 2, "conditionTypeKey": "time", "displayOrder": 2, "displayable": True},
     "distance": {"conditionTypeId": 3, "conditionTypeKey": "distance", "displayOrder": 3, "displayable": True},
+    # As Garmin Connect stores it (workout made there, 01/05/2026).
+    "hr": {"conditionTypeId": 6, "conditionTypeKey": "heart.rate", "displayOrder": 6, "displayable": True},
 }
+# "hr<150" / "hr>170" <-> `endConditionCompare`.
+_HR_COMPARES = {"<": "lt", ">": "gt"}
+_HR_SIGNS = {compare: sign for sign, compare in _HR_COMPARES.items()}
 _ITERATIONS = {"conditionTypeId": 7, "conditionTypeKey": "iterations", "displayOrder": 7, "displayable": False}
 
 _NO_TARGET = {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target", "displayOrder": 1}
@@ -103,8 +113,10 @@ _DURATION = re.compile(r"^(?:(\d+):)?(\d+):(\d\d)$")
 _DISTANCE = re.compile(r"^(\d+(?:\.\d+)?)\s*(km|m)$", re.IGNORECASE)
 _PACE = re.compile(r"^(\d{1,2}):(\d\d)$")
 _RANGE = re.compile(r"^(\d+)\s*-\s*(\d+)$")
+_HR_END = re.compile(r"^hr\s*([<>])\s*(\d+)$", re.IGNORECASE)
 
-_END_HELP = '"m:ss" or "h:mm:ss", a distance like "1km" or "200m", or "lap"'
+_END_HELP = ('a duration "m:ss" or "h:mm:ss", a distance like "1km" or "200m", "lap", '
+             'or a heart rate like "hr<150" or "hr>170"')
 _KINDS_HELP = ", ".join(STEP_KINDS)
 
 FORMAT_HELP = f"""\
@@ -118,7 +130,8 @@ Readable format (the one `workouts get` gives):
              {{"cooldown": "lap"}}]}}
   sport: {", ".join(SPORTS)}
   step: one of {_KINDS_HELP}; its value = when it ends:
-        {_END_HELP} (lap button)
+        "m:ss" or "h:mm:ss" | a distance "1km", "200m" | "lap" (lap button)
+        | "hr<150" / "hr>170": once the heart rate is below / above (bpm)
   target, one per step:
         pace "m:ss-m:ss" or "m:ss", per km (running; the code orders the bounds)
         hr "140-150" (bpm) | hr_zone 1-5 | cadence "170-180" (spm, rpm on a bike)
@@ -251,12 +264,7 @@ def _parse_step(step, path: str, sport: str | None, errors: _Errors, order: list
         "stepType": {"stepTypeId": type_id, "stepTypeKey": type_key, "displayOrder": type_id},
     }
 
-    end = _parse_end(step[kind], f"{path}.{kind}", errors)
-    if end is not None:
-        condition, value = end
-        native["endCondition"] = dict(_END_CONDITIONS[condition])
-        if value is not None:
-            native["endConditionValue"] = float(value)
+    native.update(_parse_end(step[kind], f"{path}.{kind}", errors))
 
     targets = [key for key in TARGETS if key in step]
     if len(targets) > 1:
@@ -310,24 +318,33 @@ def _parse_repeat(step: dict, path: str, sport: str | None, errors: _Errors, ord
     }
 
 
-def _parse_end(value, path: str, errors: _Errors) -> tuple[str, float | None] | None:
-    """("time", s) | ("distance", m) | ("lap", None), from "5:00", "1km", "200m" or "lap"."""
+def _parse_end(value, path: str, errors: _Errors) -> dict:
+    """The end fields of a native step, from "5:00", "1km", "200m", "lap" or "hr<150"."""
     if not isinstance(value, str):
-        errors.add(path, f"when the step ends: a duration {_END_HELP}; got {value!r}")
-        return None
+        errors.add(path, f"when the step ends: {_END_HELP}; got {value!r}")
+        return {}
     text = value.strip()
     if text.lower() == _LAP:
-        return _LAP, None
+        return {"endCondition": dict(_END_CONDITIONS[_LAP])}
     if (seconds := parse_duration(text)) is not None:
         if not 0 < seconds <= MAX_STEP_S:
             errors.add(path, f"{text} is not a step duration (more than 0, at most 10:00:00)")
-        return "time", seconds
+        return _end("time", seconds)
     if (meters := parse_distance(text)) is not None:
         if not 0 < meters <= MAX_STEP_M:
             errors.add(path, f"{text} is not a step distance (more than 0, at most 500km)")
-        return "distance", meters
-    errors.add(path, f"{value!r}: write a duration {_END_HELP}")
-    return None
+        return _end("distance", meters)
+    if match := _HR_END.match(text):
+        sign, bpm = match.group(1), int(match.group(2))
+        if not HR_BPM[0] <= bpm <= HR_BPM[1]:
+            errors.add(path, f"{bpm} bpm is out of {HR_BPM[0]}-{HR_BPM[1]}")
+        return {**_end("hr", bpm), "endConditionCompare": _HR_COMPARES[sign]}
+    errors.add(path, f"{value!r}: write {_END_HELP}")
+    return {}
+
+
+def _end(condition: str, value: float) -> dict:
+    return {"endCondition": dict(_END_CONDITIONS[condition]), "endConditionValue": float(value)}
 
 
 def _parse_target(key: str, value, path: str, sport: str | None, errors: _Errors) -> dict:
@@ -503,7 +520,12 @@ def _render_end(step: dict, not_readable: list[str]) -> str:
         return format_duration(value)
     if condition == "distance" and value:
         return format_distance(value)
+    compare = step.get("endConditionCompare")
+    if condition == "heart.rate" and value and compare in (*_HR_SIGNS, None):
+        return f"hr{_HR_SIGNS.get(compare, '>')}{round(value)}"
     as_text = f"{value:g} {condition}" if isinstance(value, (int, float)) else str(condition)
+    if compare is not None:
+        as_text += f" ({compare})"
     not_readable.append(f"ends on {as_text}")
     return as_text
 
@@ -700,7 +722,7 @@ def _step_totals(step: dict) -> tuple[float | None, float | None, str]:
         return value, None if speed is None else value * speed, "no pace"
     if condition == "distance" and value:
         return None if speed is None else value / speed, value, "no pace"
-    return None, None, "lap" if condition == "lap.button" else f"ends on {condition}"
+    return None, None, _render_end(step, [])
 
 
 def _mid_pace_speed(step: dict) -> float | None:

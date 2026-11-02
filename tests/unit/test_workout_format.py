@@ -25,7 +25,7 @@ def _errors(workout) -> str:
 # A step as Garmin Connect stores it (shape of a real answer).
 def _garmin_step(order, type_key, type_id, condition, value, target=None, one=None, two=None, **extra):
     target = target or {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target", "displayOrder": 1}
-    condition_ids = {"lap.button": 1, "time": 2, "distance": 3, "reps": 10}
+    condition_ids = {"lap.button": 1, "time": 2, "distance": 3, "heart.rate": 6, "reps": 10}
     return {
         "type": "ExecutableStepDTO", "stepId": 1000 + order, "stepOrder": order, "childStepId": None,
         "stepType": {"stepTypeId": type_id, "stepTypeKey": type_key, "displayOrder": type_id},
@@ -42,6 +42,23 @@ def _garmin_step(order, type_key, type_id, condition, value, target=None, one=No
 
 PACE = {"workoutTargetTypeId": 6, "workoutTargetTypeKey": "pace.zone", "displayOrder": 6}
 HR = {"workoutTargetTypeId": 4, "workoutTargetTypeKey": "heart.rate.zone", "displayOrder": 4}
+
+# A real step made in Garmin Connect (01/05/2026, "intensité cardio objectives"): a warmup at
+# 6:00-6:30/km that ends once the heart rate is above 165. Garmin's answer, as it came.
+GARMIN_CONNECT_HR_END_STEP = {
+    "type": "ExecutableStepDTO", "stepId": 13224475877, "stepOrder": 1,
+    "stepType": {"stepTypeId": 1, "stepTypeKey": "warmup", "displayOrder": 1},
+    "description": "",
+    "endCondition": {"conditionTypeId": 6, "conditionTypeKey": "heart.rate", "displayOrder": 6, "displayable": True},
+    "endConditionValue": 165.0,
+    "preferredEndConditionUnit": {"unitId": 2, "unitKey": "kilometer", "factor": 100000.0},
+    "endConditionCompare": "gt",
+    "targetType": {"workoutTargetTypeId": 6, "workoutTargetTypeKey": "pace.zone", "displayOrder": 6},
+    "targetValueOne": 2.7777778, "targetValueTwo": 2.5641026,
+    "strokeType": {"strokeTypeId": 0, "displayOrder": 0},
+    "equipmentType": {"equipmentTypeId": 0, "displayOrder": 0},
+    "weightUnit": {"unitId": 8, "unitKey": "kilogram", "factor": 1000.0},
+}
 
 
 def _garmin_workout(*steps, sport=("running", 1)):
@@ -121,6 +138,24 @@ class TestToGarmin:
         assert step["endCondition"]["conditionTypeId"] == 1
         assert "endConditionValue" not in step
 
+    def test_heart_rate_end(self):
+        """Garmin Connect's "Duration: Heart Rate, Above / Below N bpm"."""
+        warmup, recover = _steps(fmt.to_garmin(_workout({"warmup": "hr>148"}, {"recover": "hr<150"})))
+        assert warmup["endCondition"] == {"conditionTypeId": 6, "conditionTypeKey": "heart.rate",
+                                          "displayOrder": 6, "displayable": True}
+        assert (warmup["endConditionValue"], warmup["endConditionCompare"]) == (148.0, "gt")
+        assert (recover["endConditionValue"], recover["endConditionCompare"]) == (150.0, "lt")
+
+    def test_heart_rate_end_is_the_garmin_connect_one(self):
+        (step,) = _steps(fmt.to_garmin(_workout({"warmup": "hr>165", "pace": "6:00-6:30"})))
+        for key in ("endCondition", "endConditionValue", "endConditionCompare", "targetType"):
+            assert step[key] == GARMIN_CONNECT_HR_END_STEP[key]
+
+    def test_heart_rate_end_spelling(self):
+        ends = [(s["endConditionValue"], s["endConditionCompare"]) for s in _steps(fmt.to_garmin(_workout(
+            {"recover": "HR < 150"}, {"run": " hr>170 "})))]
+        assert ends == [(150.0, "lt"), (170.0, "gt")]
+
     def test_every_step_kind(self):
         kinds = [s["stepType"]["stepTypeKey"] for s in _steps(fmt.to_garmin(_workout(
             {"warmup": "1:00"}, {"run": "1:00"}, {"recover": "1:00"}, {"rest": "1:00"},
@@ -154,6 +189,10 @@ class TestToGarmin:
         cycling = fmt.to_garmin(_workout({"run": "1:00"}, sport="cycling"))
         assert cycling["sportType"] == {"sportTypeId": 2, "sportTypeKey": "cycling", "displayOrder": 2}
         assert "isWheelchair" not in cycling
+
+    def test_heart_rate_end_passes_the_model(self):
+        WorkoutData.model_validate(fmt.to_garmin(_workout(
+            {"warmup": "hr>148"}, {"repeat": 4, "steps": [{"run": "hr>180", "pace": "5:00"}, {"recover": "hr<142"}]})))
 
     def test_payload_passes_the_model(self):
         native = fmt.to_garmin(_workout(
@@ -208,6 +247,11 @@ class TestEstimates:
         assert estimate.no_duration == ["steps[0] (lap)"]
         assert estimate.no_distance == ["steps[0] (lap)", "steps[1] (no pace)"]
 
+    def test_heart_rate_end_gives_no_estimate(self):
+        estimate = fmt.estimate(_steps(fmt.to_garmin(_workout({"recover": "hr<150"}, {"run": "1km", "pace": "5:00"}))))
+        assert estimate.duration_s is None
+        assert estimate.no_duration == ["steps[0] (hr<150)"]
+
     def test_no_estimate_is_sent_when_a_step_does_not_give_it(self):
         native = fmt.to_garmin(_workout({"warmup": "lap"}, {"run": "30:00"}))
         assert "estimatedDurationInSecs" not in native
@@ -227,9 +271,15 @@ class TestInvalidInput:
     def test_two_kinds(self):
         assert "several kinds: warmup, run" in _errors(_workout({"warmup": "5:00", "run": "5:00"}))
 
-    @pytest.mark.parametrize("value", [1800, "1800", "1800000", "5min", "5:7", "", "5:60"])
+    @pytest.mark.parametrize("value", [1800, "1800", "1800000", "5min", "5:7", "", "5:60",
+                                       "hr=150", "hr<", "hr<150bpm", "fc<150", "<150"])
     def test_end_must_say_its_unit(self, value):
-        assert '"m:ss" or "h:mm:ss", a distance like "1km" or "200m", or "lap"' in _errors(_workout({"run": value}))
+        assert ('a duration "m:ss" or "h:mm:ss", a distance like "1km" or "200m", "lap", '
+                'or a heart rate like "hr<150" or "hr>170"') in _errors(_workout({"run": value}))
+
+    @pytest.mark.parametrize("value", ["hr<20", "hr>240"])
+    def test_heart_rate_end_guard(self, value):
+        assert "bpm is out of 30-230" in _errors(_workout({"recover": value}))
 
     def test_duration_guard_catches_milliseconds(self):
         assert "at most 10:00:00" in _errors(_workout({"run": "30000:00"}))
@@ -368,6 +418,26 @@ class TestFromGarmin:
         assert fmt.from_garmin(raw)["steps"] == [
             {"warmup": "lap"}, {"run": "1:15:00", "hr_zone": 2}, {"rest": "1.609km"}]
 
+    def test_garmin_connect_heart_rate_end(self):
+        readable = fmt.from_garmin(_garmin_workout(GARMIN_CONNECT_HR_END_STEP))
+        assert readable["steps"] == [{"warmup": "hr>165", "pace": "6:00-6:30"}]
+        assert "warnings" not in readable
+
+    def test_heart_rate_end_below(self):
+        step = _garmin_step(1, "recovery", 4, "heart.rate", 142.0, endConditionCompare="lt")
+        assert fmt.from_garmin(_garmin_workout(step))["steps"] == [{"recover": "hr<142"}]
+
+    def test_heart_rate_end_without_compare_is_above(self):
+        """Garmin Connect shows a heart-rate end without `endConditionCompare` as "Above"
+        (01/05/2026: an update had dropped it, the recover step showed Above)."""
+        step = _garmin_step(1, "recovery", 4, "heart.rate", 138.0)
+        assert fmt.from_garmin(_garmin_workout(step))["steps"] == [{"recover": "hr>138"}]
+
+    def test_unknown_heart_rate_compare_is_not_readable(self):
+        step = _garmin_step(1, "recovery", 4, "heart.rate", 138.0, endConditionCompare="eq")
+        (readable,) = fmt.from_garmin(_garmin_workout(step))["steps"]
+        assert readable["not_readable"] == ["ends on 138 heart.rate (eq)"]
+
     def test_strength_steps_are_not_readable(self):
         raw = _garmin_workout(
             _garmin_step(1, "interval", 3, "reps", 10.0, category="PUSH_UP", exerciseName="PUSH_UP"),
@@ -436,6 +506,10 @@ class TestRoundTrip:
         [{"warmup": "lap"}, {"repeat": 8, "steps": [{"run": "400m", "pace": "3:50"}, {"recover": "1:30"}],
                              "skip_last_recover": True}, {"cooldown": "1.5km"}],
         [{"run": "1:00:00", "hr": "140-150"}, {"rest": "0:30"}, {"other": "2km", "hr_zone": 3}],
+        # The heart-rate driven workout of 01/05/2026, v2.
+        [{"warmup": "hr>148", "pace": "6:00-6:30"},
+         {"repeat": 4, "steps": [{"run": "hr>180", "pace": "4:58-5:02"}, {"recover": "hr<142"}]},
+         {"cooldown": "hr<125", "pace": "6:45-7:30"}],
     ])
     def test_readable_garmin_readable(self, steps):
         workout = _workout(*steps, description="d")
