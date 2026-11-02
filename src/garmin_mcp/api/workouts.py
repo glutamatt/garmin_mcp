@@ -44,7 +44,7 @@ class StepType(_Native):
 
 
 class EndCondition(_Native):
-    conditionTypeId: int = Field(description="1=lap.button, 2=time, 3=distance, 7=iterations")
+    conditionTypeId: int = Field(description="1=lap.button, 2=time, 3=distance, 6=heart.rate, 7=iterations")
     conditionTypeKey: str
     displayOrder: int
     displayable: bool
@@ -73,7 +73,10 @@ class WorkoutStep(_Native):
     stepOrder: int
     stepType: StepType
     endCondition: EndCondition
-    endConditionValue: Optional[float] = Field(default=None, description="Seconds (time) or meters (distance)")
+    endConditionValue: Optional[float] = Field(default=None,
+                                               description="Seconds (time), meters (distance) or bpm (heart.rate)")
+    endConditionCompare: Optional[Literal["lt", "gt"]] = Field(
+        default=None, description="heart.rate end: lt = once below, gt = once above")
     targetType: TargetType
     zoneNumber: Optional[int] = Field(default=None, description="Heart rate zone 1-5")
     targetValueOne: Optional[float] = Field(default=None, description="pace.zone: FASTER bound, m/s; hr/cadence: lower")
