@@ -3,10 +3,10 @@
 Architecture: CLI layer wraps the existing api/* pure functions.
 Same data, less tokens, filesystem as clipboard.
 
-Usage:
-    garmin [--format json|table] [--fields f1,f2,...] [--output path] <group> <command> [args]
-    garmin help
-    garmin <group> --help
+Usage (a command is typed without a program name, as the garmin_cli tool takes it):
+    [--format json|table] [--fields f1,f2,...] [--output path] <group> <command> [args]
+    help
+    <group> --help
 """
 
 import json
@@ -268,6 +268,11 @@ def _run_to_file(ctx, default_name: str, fn):
 # ── Main group ───────────────────────────────────────────────────────────────
 
 
+# The program name in "Usage: …" lines and errors. Empty: the model types `training load …` in the
+# garmin_cli tool, and "Usage: garmin training load" made it run `garmin …` in a shell (02/11/2026).
+PROG_NAME = ""
+
+
 @click.group(cls=SuggestingGroup)
 @click.option(
     "--format",
@@ -369,9 +374,9 @@ def describe(ctx, command_path):
     """Commands for an agent: an index, or options and output fields (JSON).
 
     \b
-    garmin describe                   Every command, one line each
-    garmin describe activities        A group: options and output field names
-    garmin describe activities get    One command: options and each output field's meaning
+    describe                   Every command, one line each
+    describe activities        A group: options and output field names
+    describe activities get    One command: options and each output field's meaning
     """
     # Accept both `describe workouts create` and `describe "workouts create"`
     parts = " ".join(command_path).split()
@@ -401,17 +406,17 @@ def help_cmd(ctx, command_path):
     """Show human-readable help for a command (alias for `<cmd> --help`).
 
     \b
-    garmin help                        Root help (same as `garmin --help`)
-    garmin help history                Group help (same as `garmin history --help`)
-    garmin help history sleep          Command help (same as `garmin history sleep --help`)
+    help                        Root help (same as `--help`)
+    help history                Group help (same as `history --help`)
+    help history sleep          Command help (same as `history sleep --help`)
 
     \b
     Use `describe` instead when you want structured JSON for programmatic
     introspection; use `help` for human-readable text.
     """
     # Walk down from root, building a parent ctx chain so the Usage line
-    # shows the full command path (e.g. "garmin history sleep"), not "help sleep".
-    parent = click.Context(garmin, info_name="garmin")
+    # shows the full command path (e.g. "history sleep"), not "help sleep".
+    parent = click.Context(garmin, info_name=PROG_NAME)
     current = garmin
     for i, part in enumerate(command_path):
         if not (isinstance(current, click.Group) and part in current.commands):
@@ -1449,8 +1454,8 @@ _WORKOUT_CREATE_HELP = """Create a workout (and optionally schedule it).
 
 \b
 The workout, in the readable format, inline or in a file:
-  garmin workouts create --json '{"name": "Easy 30", "sport": "running", "steps": [{"run": "30:00"}]}'
-  garmin workouts create --input workout.json --date 2026-03-20
+  workouts create --json '{"name": "Easy 30", "sport": "running", "steps": [{"run": "30:00"}]}'
+  workouts create --input workout.json --date 2026-03-20
 --dry-run: the steps as Garmin will store them (paces read back from m/s) and
 the estimated duration and distance; nothing is sent.
 
@@ -1459,8 +1464,8 @@ the estimated duration and distance; nothing is sent.
 _WORKOUT_UPDATE_HELP = """Replace a workout's definition (readable format, as `workouts get` gives it).
 
 \b
-  garmin workouts get 123 --output w.json   then edit w.json
-  garmin workouts update 123 --input w.json
+  workouts get 123 --output w.json   then edit w.json
+  workouts update 123 --input w.json
 --dry-run: the steps as Garmin will store them; nothing is sent.
 
 """
@@ -1938,7 +1943,7 @@ def execute(command: str, token: str, display_name: str = None, tmp_dir: str = N
 
     # Pass pre-created client via obj so _client(ctx) reuses it
     obj = {"client": client} if client else {}
-    result = runner.invoke(garmin, args, obj=obj, catch_exceptions=True)
+    result = runner.invoke(garmin, args, obj=obj, catch_exceptions=True, prog_name=PROG_NAME)
     # `result.output` mixes stderr into stdout since Click 8.2: read each stream on its own.
     stdout = result.stdout or ""
     stderr = result.stderr or ""
