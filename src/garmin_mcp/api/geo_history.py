@@ -337,8 +337,8 @@ def _build_meta(path: str, kind: str, params: dict, results: list,
     """Assemble the lightweight response Apex sees. Includes :
       - top_5_overall : highest-count entities all categories combined.
       - top_per_type  : top 3 per entity_type so small categories stay visible
-                       (avoids "0 routes visible → coureur urbain" false
-                       conclusion when routes have counts in the 1-5 range).
+                       (POIs with counts in the 1-5 range would otherwise
+                       never reach the overall top).
       - counts_by_type: row counts per entity_type — agent sees the breadth.
     """
     counts_by_type: dict[str, int] = {}

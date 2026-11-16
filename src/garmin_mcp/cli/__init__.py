@@ -601,7 +601,7 @@ def geographic_activity(ctx, activity_id):
       t_start    h:mm:ss elapsed since the run start
       dist_km    cumulative distance (km from start) at span begin
       rel        within | along  — see semantics below
-      type       admin | polygon | line | poi | route
+      type       admin | polygon | line | poi
       name       OSM display name (lowercased for noms communs : "forêt",
                  "chemin piéton" ; preserved for noms propres)
       duration   h:mm:ss span length
@@ -614,16 +614,15 @@ def geographic_activity(ctx, activity_id):
     Relation semantics :
       within     trace point geometrically INSIDE the feature. Only
                  meaningful for areas : `admin` (commune) and `polygon`
-                 (parc, forêt, étang, stade…). Lines/POIs/routes have no
+                 (parc, forêt, étang, stade…). Lines/POIs have no
                  inside.
       along      trace passes NEAR the feature within a per-type proximity
-                 cap. Applies to all 4 non-admin types :
+                 cap. Applies to the 3 non-admin types :
                    polygon → trace skirts the EDGE of the polygon
                             (e.g. running along a forest boundary)
                    line    → trace overlaps the linear feature
                             (rue, piste cyclable, sentier…)
                    poi     → trace passes within ~20 m of a point landmark
-                   route   → trace overlaps a named route (GR, VIF…)
                  `min_dist_m` is the closest the trace got — 0 means right
                  on the geometry, larger means "loose proximity".
 
@@ -654,8 +653,8 @@ def geo_history(ctx):
     """Long-term geographic history : auto-indexed per-user route DB.
 
     \b
-    Every Garmin run gets its geographic spans (parks, streets, POIs,
-    routes) deduped to a single row per (entity, run) and stored in a
+    Every Garmin run gets its geographic spans (communes, parks, streets,
+    POIs) deduped to a single row per (entity, run) and stored in a
     per-user DuckDB at /tmp/neural-runner/geo-history/<user>.duckdb.
     The hf-storage-sync sidecar persists it bidirectionally with the
     HF dataset, so no explicit pull/push is needed.
@@ -724,7 +723,7 @@ def history_update(ctx, limit):
 @click.option(
     "--entity-types",
     default=None,
-    help="Comma-separated subset of `polygon,admin,line,poi,route`. "
+    help="Comma-separated subset of `polygon,admin,line,poi`. "
     "Default: all types.",
 )
 @click.option(
@@ -753,7 +752,7 @@ def history_query(ctx, kind, since, until, exclusive, entity_types,
     \b
     Response = tiny metadata dict :
       path, size_kb, columns, rows, data_as_of, params,
-      counts_by_type      → {admin: N, polygon: N, line: N, poi: N, route: N}
+      counts_by_type      → {admin: N, polygon: N, line: N, poi: N}
       top_5_overall       → highest-count entities, all types combined
       top_per_type        → top 3 per entity_type (so small categories stay visible)
     Read the file with `pd.read_csv(path, sep="\\t", comment="#")` when
